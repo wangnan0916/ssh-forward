@@ -1,0 +1,24 @@
+# macOS
+.DS_Store
+
+# Go
+/bin/
+/dist/
+coverage.out
+*.prof
+*.test
+
+# Swift / Xcode
+.build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# Local runtime and diagnostics
+.tmp/
+*.log
+*.trace
+
+# Environment overrides
+.env
+.env.*

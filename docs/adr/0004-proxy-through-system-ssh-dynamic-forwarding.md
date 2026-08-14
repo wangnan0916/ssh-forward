@@ -1,0 +1,3 @@
+# Proxy through system SSH dynamic forwarding
+
+The Go core will own allocated loopback listeners on the Local Machine and proxy their connections through system-OpenSSH dynamic forwarding sessions. One lazily started local manager will serve CLI and desktop clients and manage zero or more Development Hosts; for each connected host it will launch one `ssh -T -D` process whose ephemeral remote scanner streams Listener Observations without installing a remote agent. This provides dynamic add/remove behavior across macOS, Linux, and Windows without embedding SSH or relying on Unix-only ControlMaster semantics.

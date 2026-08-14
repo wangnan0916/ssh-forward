@@ -1,0 +1,3 @@
+# Use a Command, Snapshot, and Watch Manager Interface
+
+The central Go Manager Module will expose `Execute`, `Snapshot`, `Watch`, and `Close` as its external Interface. CLI and desktop IPC are Adapters over that Seam; typed Commands enter it and complete, coalesced Snapshots leave it. A coordinator actor and per-host actors remain hidden in the Implementation, while true-external OpenSSH and deterministic time use private internal Seams. This hybrid was chosen over exposing the actor mailbox or a broad resource-method tree because it gives both callers a small, discoverable Interface without leaking reconciliation steps.
