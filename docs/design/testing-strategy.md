@@ -17,4 +17,6 @@ Fast Go behavior, Adapter, IPC, CLI, and loopback tests run without Docker. Swif
 
 The same image is used by local integration runs and Linux CI through Docker Engine 28 or newer on a local Unix socket; remote Docker daemons are rejected because loopback publication and bind-mount paths would refer to the wrong machine. Linux CI exercises real scanner, dynamic forwarding, SOCKS, half-close, disconnect, reconnect, and cleanup behavior. macOS CI exercises Darwin-specific core and Swift behavior through scripted OpenSSH Adapters; the developer's Mac plus the container covers the exact macOS-system-OpenSSH-to-Linux combination. Automated tests never resolve or connect to a configured Development Host. A real host may be used only in a separately invoked, explicit manual test authorized by the user.
 
+Fast local and macOS-CI checks run `go test ./...` and `go test -race ./...` from `cli/`. Local development and Linux CI invoke the same repository-level `./scripts/test-integration` command for the disposable SSH host.
+
 Shared CI runners record performance trends but do not enforce absolute CPU, RSS, latency, or throughput budgets. Those budgets are gated on the reference Tahoe Mac against direct `ssh -L` in the same container topology.

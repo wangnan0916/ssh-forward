@@ -16,6 +16,8 @@ After the design session reaches shared understanding and the user explicitly au
 │   └── internal/
 ├── desktop/
 ├── schema/
+├── scripts/
+├── test/
 ├── docs/
 ├── CONTEXT.md
 └── README.md

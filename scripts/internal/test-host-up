@@ -1,0 +1,104 @@
+#!/bin/sh
+
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+compose="$root/test/integration/ssh-host/compose.yaml"
+run_id=${SSH_FORWARD_TEST_RUN_ID:?SSH_FORWARD_TEST_RUN_ID is required}
+case "$run_id" in
+    *[!a-z0-9_-]*) printf 'invalid SSH_FORWARD_TEST_RUN_ID: %s\n' "$run_id" >&2; exit 2 ;;
+esac
+project=ssh-forward-integration-$run_id
+state_dir="$root/.tmp/integration/$run_id"
+docker_context=${SSH_FORWARD_TEST_DOCKER_CONTEXT:?SSH_FORWARD_TEST_DOCKER_CONTEXT is required}
+export SSH_FORWARD_TEST_AUTHORIZED_KEYS="$state_dir/authorized_keys"
+
+cleanup_on_error() {
+    status=$?
+    trap - 0 HUP INT TERM
+    if [ "$status" -ne 0 ]; then
+        "$root/scripts/internal/test-host-down" || status=1
+    fi
+    exit "$status"
+}
+
+context_host=$(docker context inspect "$docker_context" --format '{{.Endpoints.docker.Host}}')
+case "$context_host" in
+    unix://*) ;;
+    *) printf 'integration tests require a local Unix-socket Docker daemon, got %s\n' "$context_host" >&2; exit 1 ;;
+esac
+server_version=$(docker --context "$docker_context" version --format '{{.Server.Version}}')
+server_major=${server_version%%.*}
+case "$server_major" in
+    ''|*[!0-9]*) printf 'could not parse Docker server version %s\n' "$server_version" >&2; exit 1 ;;
+esac
+if [ "$server_major" -lt 28 ]; then
+    printf 'Docker Engine 28 or newer is required for loopback port isolation\n' >&2
+    exit 1
+fi
+
+trap cleanup_on_error 0
+trap 'exit 1' HUP INT TERM
+
+rm -rf "$state_dir"
+mkdir -p "$state_dir"
+chmod 700 "$state_dir"
+printf '%s\n' "$docker_context" >"$state_dir/docker_context"
+: >"$state_dir/context_validated"
+umask 077
+ssh-keygen -q -t ed25519 -N '' -C "ssh-forward-integration-$run_id" -f "$state_dir/id_ed25519"
+cp "$state_dir/id_ed25519.pub" "$state_dir/authorized_keys"
+: >"$state_dir/image_expected"
+
+docker --context "$docker_context" compose -p "$project" -f "$compose" up -d --build >/dev/null
+
+port=''
+attempt=0
+while [ "$attempt" -lt 100 ]; do
+    published=$(docker --context "$docker_context" compose -p "$project" -f "$compose" port ssh-host 22 2>/dev/null || true)
+    case "$published" in *:*) port=${published##*:} ;; esac
+    [ -n "$port" ] && break
+    attempt=$((attempt + 1))
+    sleep 0.1
+done
+[ -n "$port" ] || { printf '%s\n' 'could not determine container SSH port' >&2; exit 1; }
+
+attempt=0
+while [ "$attempt" -lt 100 ]; do
+    if ssh-keyscan -p "$port" 127.0.0.1 >"$state_dir/known_hosts.tmp" 2>/dev/null && [ -s "$state_dir/known_hosts.tmp" ]; then
+        mv "$state_dir/known_hosts.tmp" "$state_dir/known_hosts"
+        break
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+done
+[ -s "$state_dir/known_hosts" ] || { printf '%s\n' 'container SSH did not become ready' >&2; exit 1; }
+
+cat >"$state_dir/ssh_config" <<EOF
+Host ssh-forward-test-host
+    HostName 127.0.0.1
+    Port $port
+    User testdev
+    IdentityFile $state_dir/id_ed25519
+    IdentitiesOnly yes
+    IdentityAgent none
+    AddKeysToAgent no
+    ForwardAgent no
+    ProxyCommand none
+    ProxyJump none
+    StrictHostKeyChecking yes
+    UserKnownHostsFile $state_dir/known_hosts
+    GlobalKnownHostsFile none
+    BatchMode yes
+    ConnectTimeout 5
+    ConnectionAttempts 1
+    ControlMaster no
+    ControlPath none
+    ServerAliveInterval 5
+    ServerAliveCountMax 2
+    LogLevel ERROR
+EOF
+chmod 600 "$state_dir/ssh_config"
+/usr/bin/ssh -F "$state_dir/ssh_config" ssh-forward-test-host true </dev/null
+trap - 0 HUP INT TERM
+printf '%s\n' "$state_dir/ssh_config"

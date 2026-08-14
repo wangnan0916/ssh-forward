@@ -20,7 +20,7 @@ type SnapshotStream interface {
 
 `Command` is a sealed set of domain actions. Each command carries a manager-lifetime `CommandID` for idempotent retries and may carry an expected `Revision` when protecting interactive edits. IPC versioning and malformed JSON are Adapter concerns, not Manager errors.
 
-`Snapshot` is an immutable, deterministically ordered view at one manager-wide, monotonically increasing `Revision`. `Scope` selects one Development Host or all hosts. The first `SnapshotStream.Next` returns a complete snapshot at the subscription point; later calls return complete, coalesced snapshots only after caller-visible changes. Slow watchers never block reconciliation and receive `ErrResyncRequired` when they must open a new stream.
+`Snapshot` is an immutable, deterministically ordered view at one manager-wide, monotonically increasing `Revision`; a newly constructed Manager begins at revision `0` before any caller-visible transition. `Scope` selects one Development Host or all hosts. The first `SnapshotStream.Next` returns a complete snapshot at the subscription point; later calls return complete, coalesced snapshots only after caller-visible changes. Slow watchers never block reconciliation and receive `ErrResyncRequired` when they must open a new stream.
 
 `Execute` is concurrency-safe and linearizable. Persistent intent commands return after an atomic configuration write. Forward commands return after the Local Endpoint is allocated or an explainable typed error occurs. Cancellation stops waiting but does not imply rollback after a command has committed.
 

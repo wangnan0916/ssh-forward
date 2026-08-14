@@ -1,0 +1,21 @@
+services:
+  ssh-host:
+    image: "ssh-forward-test-host:${SSH_FORWARD_TEST_RUN_ID}"
+    build:
+      context: .
+      args:
+        ALL_PROXY: "${SSH_FORWARD_TEST_ALL_PROXY:-}"
+        HTTP_PROXY: "${SSH_FORWARD_TEST_HTTP_PROXY:-}"
+        HTTPS_PROXY: "${SSH_FORWARD_TEST_HTTPS_PROXY:-}"
+        NO_PROXY: "${SSH_FORWARD_TEST_NO_PROXY:-}"
+        all_proxy: "${SSH_FORWARD_TEST_ALL_PROXY:-}"
+        http_proxy: "${SSH_FORWARD_TEST_HTTP_PROXY:-}"
+        https_proxy: "${SSH_FORWARD_TEST_HTTPS_PROXY:-}"
+        no_proxy: "${SSH_FORWARD_TEST_NO_PROXY:-}"
+    init: true
+    labels:
+      io.ssh-forward.integration-run: "${SSH_FORWARD_TEST_RUN_ID}"
+    ports:
+      - "127.0.0.1::22"
+    volumes:
+      - "${SSH_FORWARD_TEST_AUTHORIZED_KEYS}:/run/fixture/authorized_keys:ro"
