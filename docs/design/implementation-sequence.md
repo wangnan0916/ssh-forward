@@ -2,12 +2,12 @@
 
 ## Risk spike
 
-Before production code, an isolated throwaway branch validates one system `ssh -T -D … sh -s` connection carrying both scanner observations and SOCKS-proxied traffic. It measures dynamic Local Endpoint add/remove, dual-stack allocation, TCP half-close, disconnect/reconnect behavior, and latency/throughput/CPU/RSS against direct `ssh -L`. Only conclusions and updated decisions return to the main branch; spike code is discarded.
+The completed throwaway spike validated one system `ssh -T -D … sh -s` connection carrying both scanner observations and SOCKS-proxied traffic. A disposable Ubuntu SSH container—not a configured Development Host—provided the remote environment. Dynamic Local Endpoint add/remove, dual-stack allocation, TCP half-close, disconnect/reconnect behavior, and measured transport budgets passed. The [transport spike verdict](./transport-spike-verdict.md) records the evidence and implementation constraints; the spike code and branch were discarded.
 
 ## Vertical slices
 
 1. Initialize the new local repository and preserve the accepted design baseline.
-2. Establish the Go module, Manager Interface, and JSON-RPC hello/status path.
+2. Establish the Go module, disposable Linux integration harness, Manager Interface, and JSON-RPC hello/status path.
 3. Deliver one-host Manual Forward end to end.
 4. Add agentless discovery and Snapshot Watch.
 5. Add Policy, Listener Lifetime, and continuous reconciliation.

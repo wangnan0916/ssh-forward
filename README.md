@@ -6,7 +6,7 @@ A private, greenfield remote-development localhost bridge.
 
 ## Status
 
-The repository currently contains the accepted product and architecture baseline. Production code has not started. The pre-existing shell utility is an unrelated legacy tool and is intentionally not reused, migrated, controlled, or uninstalled by this project.
+The repository currently contains the accepted product and architecture baseline. The isolated transport risk spike is complete and accepted; production code has not started. The pre-existing shell utility is an unrelated legacy tool and is intentionally not reused, migrated, controlled, or uninstalled by this project.
 
 The private MVP targets one Apple Silicon Mac running macOS Tahoe and one Linux Development Host.
 
@@ -15,6 +15,7 @@ The private MVP targets one Apple Silicon Mac running macOS Tahoe and one Linux 
 - [Domain language](./CONTEXT.md)
 - [Private MVP](./docs/product/mvp.md)
 - [Implementation sequence](./docs/design/implementation-sequence.md)
+- [Transport spike verdict](./docs/design/transport-spike-verdict.md)
 - [Core Manager Interface](./docs/design/core-interface.md)
 - [ADRs](./docs/adr/)
 - [Threat model](./docs/security/threat-model.md)

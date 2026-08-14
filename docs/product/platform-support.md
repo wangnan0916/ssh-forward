@@ -13,4 +13,4 @@ The prototype and first MVP make no compatibility claim for older macOS releases
 
 ## Portability discipline
 
-The Go core must still keep platform behavior behind private Adapters and build-tagged files so Tahoe-specific assumptions do not enter policy, observation, reconciliation, or Manager domain code. Linux and Windows local Adapters are deferred rather than simulated without hardware. Remote Linux behavior is covered through opt-in integration tests against the configured Development Host.
+The Go core must still keep platform behavior behind private Adapters and build-tagged files so Tahoe-specific assumptions do not enter policy, observation, reconciliation, or Manager domain code. Linux and Windows local Adapters are deferred rather than simulated without hardware. Remote Linux behavior is covered by default through disposable containerized Ubuntu SSH hosts shared by local and CI integration tests. Automated tests never connect to the configured Development Host. Any real-host smoke test requires a separate, explicit user authorization.

@@ -6,7 +6,7 @@ _Date: 2026-08-14. Scope: the settled Go core/CLI and native macOS client archit
 
 Keep the implementation mostly in the Go and Apple standard libraries. The justified Go modules are:
 
-1. [`golang.org/x/net/proxy`](https://pkg.go.dev/golang.org/x/net/proxy) for SOCKS5 client dialing;
+1. A narrow SOCKS5 Dial Adapter, with [`golang.org/x/net/proxy`](https://pkg.go.dev/golang.org/x/net/proxy) retained only if the implementation preserves both context cancellation and TCP half-close;
 2. [`github.com/tailscale/hujson`](https://github.com/tailscale/hujson) for comment-preserving JSONC/JWCC;
 3. [`golang.org/x/sys`](https://pkg.go.dev/golang.org/x/sys) for the small OS-specific surface: Unix locking/process groups and Windows locks, jobs, and process APIs;
 4. [`github.com/Microsoft/go-winio`](https://github.com/microsoft/go-winio) only in Windows builds, when named-pipe support is implemented;
@@ -22,11 +22,13 @@ Go's [`flag`](https://pkg.go.dev/flag) package provides `FlagSet`, selectable er
 
 [Cobra](https://github.com/spf13/cobra) provides nested commands, POSIX/GNU-style short and long flags, suggestions, generated help/completions, and command grouping. It is Apache-2.0 licensed ([license](https://github.com/spf13/cobra/blob/main/LICENSE.txt)) and itself uses `pflag` and, on Windows, `mousetrap` ([module file](https://github.com/spf13/cobra/blob/main/go.mod)). That is good value for a large public CLI, but unnecessary machinery for the anticipated manager-oriented command surface. **Defer Cobra**; reconsider only if discoverability, deep nesting, or generated shell completions become product requirements.
 
-### SOCKS5 client into `ssh -D`: use `x/net/proxy`
+### SOCKS5 client into `ssh -D`: require cancellable half-close
 
-[`proxy.SOCKS5`](https://pkg.go.dev/golang.org/x/net/proxy#SOCKS5) returns a dialer implementing SOCKS v5, with optional RFC 1929 authentication; this project needs only unauthenticated loopback access to the system `ssh -D` endpoint. Use a `net.Dialer` as the forwarding dialer and call `DialContext` through the package's `ContextDialer` interface. The documentation notes that context controls establishment, not the lifetime of a successfully returned connection, so cancellation must close the resulting connection explicitly.
+[`proxy.SOCKS5`](https://pkg.go.dev/golang.org/x/net/proxy#SOCKS5) supplies mature RFC 1928 framing and remains the preferred dependency candidate. The transport spike exposed an API mismatch in the tested `x/net` v0.58.0 API that must be resolved before production adoption, however: its legacy `Dial` path returns the raw TCP connection and therefore preserves `CloseWrite`, but does not bound the SOCKS CONNECT handshake; its `ContextDialer.DialContext` path bounds establishment but returns the package's SOCKS connection wrapper, whose public method set does not expose the underlying TCP `CloseWrite`. The proxy pump needs both properties for cancellable Endpoint shutdown and correct response-after-client-EOF protocols.
 
-`x/net` is maintained by the Go project and BSD-3-Clause licensed ([license](https://github.com/golang/net/blob/master/LICENSE)). Pin a tested module version and update it with the Go security/update cadence. This is preferable to implementing RFC 1928 framing or adding a SOCKS server/full-proxy module.
+The formal Transport Adapter must therefore be selected behind behavior tests that prove bounded cancellation, IPv4/IPv6 CONNECT, and TCP half-close. Prefer a maintained library or a small upstreamable adapter; do not use reflection to unwrap private library state. The throwaway spike used a minimal no-auth CONNECT dialer only to establish feasibility, not as an automatic production-code choice. If no narrow maintained client satisfies the Seam, a small audited RFC 1928 Adapter with protocol-limit and malformed-response tests is safer than importing a full proxy stack.
+
+`x/net` is maintained by the Go project and BSD-3-Clause licensed ([license](https://github.com/golang/net/blob/master/LICENSE)). If retained, pin a tested module version and update it with the Go security/update cadence.
 
 ### Bidirectional TCP proxy: standard `io`/`net`, with a small custom pump
 
@@ -107,7 +109,7 @@ SwiftUI/Foundation are OS SDK frameworks rather than redistributed third-party l
 | Dependency | Use | License | Caveat |
 |---|---|---|---|
 | Go standard library (`flag`, `context`, `os/exec`, `net`, `io`, `encoding/json`, `log/slog`, `testing`) | CLI, process baseline, sockets/TCP, proxy pump, protocol, logs, tests | BSD-3-Clause | Windows named pipes/jobs and JSONC syntax preservation are not covered |
-| `golang.org/x/net/proxy` | SOCKS5 CONNECT to loopback `ssh -D` | BSD-3-Clause | Context covers dialing, not connection lifetime |
+| `golang.org/x/net/proxy` (candidate) | SOCKS5 CONNECT to loopback `ssh -D` | BSD-3-Clause | Direct APIs do not simultaneously expose cancellable CONNECT and TCP `CloseWrite`; retain only behind the tested Dial Adapter |
 | `github.com/tailscale/hujson` | Parse, preserve, patch, and format JSONC/JWCC | BSD-3-Clause | Typed decode and semantic validation still use project code plus `encoding/json`; pin a Go-compatible release |
 | `golang.org/x/sys` | Unix/Windows locks and process/job primitives | BSD-3-Clause | Build-tag OS code; pin/update with Go toolchain |
 | `github.com/Microsoft/go-winio` (Windows build only, when Windows starts) | Named pipes as `net.Listener`/`net.Conn` | MIT | Windows Vista+; configure SDDL; test version-specific behavior |

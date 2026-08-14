@@ -21,7 +21,7 @@ After the design session reaches shared understanding and the user explicitly au
 └── README.md
 ```
 
-No legacy source directory is included. The first commit captures the accepted design documents before formal code. The transport spike runs on a separate throwaway branch; only its verdict and any resulting decision changes return to the main branch.
+No legacy source directory is included. The first commit captures the accepted design documents before formal code. The transport spike ran on a separate throwaway branch; only its verdict and resulting decision changes returned to `main`.
 
 ## Versions
 

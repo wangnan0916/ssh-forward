@@ -10,7 +10,9 @@ For each Forwarding Session, the core streams one fixed, versioned scanner scrip
 
 ## Cadence and degradation
 
-A healthy session produces an observation about every two seconds. Scans never overlap. If scan cost becomes excessive, cadence slows and the host reports degraded discovery. Scanning stops when the session disconnects and is independent of whether the Dashboard is open.
+A healthy session produces an observation about every two seconds. Each cadence first computes a low-cost listener fingerprint from `/proc/net/tcp` and `/proc/net/tcp6`. Expensive process attribution through `ss`, `/proc/<pid>/fd`, or `lsof` runs when the listener fingerprint changes, on bounded backoff while a visible listener lacks Process Metadata, and on a slower periodic refresh so `exec` or ancestry changes cannot remain stale indefinitely. Stable observations otherwise reuse the last bounded attribution result. This preserves sub-three-second listener detection without paying full process-discovery cost every cadence while the host is idle.
+
+Scans never overlap. If scan cost becomes excessive, cadence slows and the host reports degraded discovery. Scanning stops when the session disconnects and is independent of whether the Dashboard is open.
 
 ## Protocol safety
 

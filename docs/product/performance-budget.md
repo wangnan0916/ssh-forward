@@ -13,4 +13,6 @@ These are prototype engineering budgets, initially measured on the current Apple
 | Additional local connection-establishment latency | ≤ 2 ms |
 | Remote scanner average CPU | ≤ 0.5% |
 
+The disposable-container [transport spike](../design/transport-spike-verdict.md) passed the discovery, proxy-latency, relative-throughput, scanner-CPU, and provisional Manager-plus-SSH idle budgets on the reference Mac. CLI and desktop budgets remain unmeasured, and all resource gates must be rerun against production code.
+
 Benchmarks must record hardware, OS, Go version, OpenSSH version, network conditions, listener count, active-forward count, and sampling duration. Idle measurements include child processes owned by the product. Public wording should remain “near-zero idle overhead and near-native SSH forwarding performance” until repeated measurements justify stronger claims.
