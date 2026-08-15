@@ -39,6 +39,7 @@ func (m *manager) buildSnapshotLocked() Snapshot {
 			Connection:           m.hostState.connection,
 			Discovery:            m.hostState.discovery,
 			ListenerObservations: m.hostState.listenerObservations,
+			ListenerLifetimes:    m.hostState.listenerLifetimes,
 			Forwards:             m.forwards.snapshots(),
 		},
 	}
@@ -60,6 +61,9 @@ func cloneSnapshot(snapshot Snapshot) Snapshot {
 	host := *snapshot.Host
 	if snapshot.Host.ListenerObservations != nil {
 		host.ListenerObservations = cloneListenerObservations(snapshot.Host.ListenerObservations)
+	}
+	if snapshot.Host.ListenerLifetimes != nil {
+		host.ListenerLifetimes = append([]ListenerLifetimeSnapshot(nil), snapshot.Host.ListenerLifetimes...)
 	}
 	if snapshot.Host.Forwards != nil {
 		host.Forwards = make([]ForwardSnapshot, len(snapshot.Host.Forwards))

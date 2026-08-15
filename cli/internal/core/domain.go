@@ -159,6 +159,7 @@ type HostSnapshot struct {
 	Connection           ConnectionState
 	Discovery            DiscoverySnapshot
 	ListenerObservations []ListenerObservation
+	ListenerLifetimes    []ListenerLifetimeSnapshot
 	Forwards             []ForwardSnapshot
 }
 

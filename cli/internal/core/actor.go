@@ -21,6 +21,7 @@ type hostState struct {
 	connection           ConnectionState
 	discovery            DiscoverySnapshot
 	listenerObservations []ListenerObservation
+	listenerLifetimes    []ListenerLifetimeSnapshot
 }
 
 type hostActorOptions struct {
@@ -53,9 +54,11 @@ type hostActor struct {
 	connection              ConnectionState
 	discovery               DiscoverySnapshot
 	listenerObservations    []ListenerObservation
+	listenerLifetimes       []ListenerLifetimeSnapshot
 	lastObservationSequence uint64
 
-	done chan struct{}
+	tracker *lifetimeTracker
+	done    chan struct{}
 }
 
 func newHostActor(options hostActorOptions) *hostActor {
@@ -69,6 +72,7 @@ func newHostActor(options hostActorOptions) *hostActor {
 		ctx:        options.ctx,
 		connection: ConnectionDisconnected,
 		discovery:  stoppedDiscovery(),
+		tracker:    newLifetimeTracker(defaultListenerGraceCycles),
 		done:       make(chan struct{}),
 	}
 }
@@ -214,6 +218,7 @@ func (a *hostActor) applyObservationSet(set ObservationSet) {
 	}
 	a.discovery = discovery
 	a.listenerObservations = observations
+	a.listenerLifetimes = a.tracker.advance(observations)
 	a.publishLocked()
 }
 
@@ -269,6 +274,7 @@ func (a *hostActor) publishLocked() {
 		connection:           a.connection,
 		discovery:            a.discovery,
 		listenerObservations: a.listenerObservations,
+		listenerLifetimes:    a.listenerLifetimes,
 	})
 }
 
