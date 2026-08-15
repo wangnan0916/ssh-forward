@@ -126,6 +126,37 @@ func (s *resyncSnapshotStream) Close() error {
 	return nil
 }
 
+type errorSnapshotStream struct {
+	mu     sync.Mutex
+	first  bool
+	closed chan struct{}
+}
+
+func newErrorSnapshotStream() *errorSnapshotStream {
+	return &errorSnapshotStream{first: true, closed: make(chan struct{})}
+}
+
+func (s *errorSnapshotStream) Next(context.Context) (core.Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.first {
+		s.first = false
+		return core.Snapshot{Revision: 1}, nil
+	}
+	return core.Snapshot{}, core.ErrSnapshotStreamClosed
+}
+
+func (s *errorSnapshotStream) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-s.closed:
+	default:
+		close(s.closed)
+	}
+	return nil
+}
+
 type scriptedSnapshotStream struct {
 	snapshots chan core.Snapshot
 	closed    chan struct{}
@@ -203,6 +234,31 @@ func TestServeForwardsManagerResyncRequirement(t *testing.T) {
 	}
 	want := `{"jsonrpc":"2.0","method":"manager.resync_required","params":{"watch_id":"watch-1","reason":"manager_resync_required"}}`
 	assertJSONEqual(t, notification, []byte(want))
+}
+
+func TestServeEndsWatchSilentlyOnStreamCloseError(t *testing.T) {
+	manager := &watchManager{
+		snapshotManager: &snapshotManager{scopes: make(chan core.Scope, 1)},
+		stream:          newErrorSnapshotStream(),
+	}
+	session := newTestSessionWithManager(t, manager)
+	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":["watch-snapshot-v1"]}}`)
+	session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.watch","params":{"scope":{"kind":"all"}}}`)
+
+	deadline := time.Now().Add(100 * time.Millisecond)
+	if err := session.client.SetReadDeadline(deadline); err != nil {
+		t.Fatalf("set client read deadline: %v", err)
+	}
+	if frame, err := session.reader.ReadBytes('\n'); err == nil {
+		t.Fatalf("stream close emitted a frame: %s", frame)
+	}
+	if err := session.client.SetReadDeadline(time.Time{}); err != nil {
+		t.Fatalf("clear client read deadline: %v", err)
+	}
+
+	response := session.exchange(t, `{"jsonrpc":"2.0","id":"3","method":"manager.unwatch","params":{"watch_id":"watch-1"}}`)
+	want := `{"jsonrpc":"2.0","id":"3","result":{"watch_id":"watch-1","stopped":false}}`
+	assertJSONEqual(t, response, []byte(want))
 }
 
 func TestSnapshotNotificationDoesNotReleaseRequestAdmission(t *testing.T) {

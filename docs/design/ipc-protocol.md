@@ -25,7 +25,7 @@ JSON-RPC request IDs correlate one attempt. Mutating commands additionally carry
 - `manager.unwatch` — idempotently end one Watch by `watch_id` and report whether it was active. Its response is ordered after any already-started bounded notification write, and no notification for that Watch follows the response.
 - `system.cancel` — best-effort cancellation using the negotiated versioned shape.
 
-Each watcher keeps bounded initial/latest-value state; it is not a durable event log. One IPC connection may own at most eight active Watches, and the Manager admits at most 128 globally. Notifications never consume inbound request-admission slots. Revisions may skip because intermediate states are coalesced. An oversized Snapshot or lost Manager stream yields `manager.resync_required` and ends that Watch; if bounded delivery fails, the connection closes and the client reconnects for a fresh complete Snapshot.
+Each watcher keeps bounded initial/latest-value state; it is not a durable event log. One IPC connection may own at most eight active Watches, and the Manager admits at most 128 globally. Notifications never consume inbound request-admission slots. Revisions may skip because intermediate states are coalesced. An oversized Snapshot or a Manager-required resync yields `manager.resync_required` and ends that Watch; any other stream end stops the Watch silently. If even the small resync notification cannot be delivered, the connection closes and the client reconnects for a fresh complete Snapshot.
 
 ## Errors and safety
 

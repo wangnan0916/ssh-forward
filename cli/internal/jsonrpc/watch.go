@@ -146,12 +146,8 @@ func (s *connectionSession) runWatch(watch *connectionWatch) {
 	for {
 		snapshot, err := watch.stream.Next(s.ctx)
 		if err != nil {
-			if s.ctx.Err() == nil {
-				reason := "snapshot_stream_error"
-				if errors.Is(err, core.ErrResyncRequired) {
-					reason = "manager_resync_required"
-				}
-				s.sendResyncRequired(watch, reason)
+			if s.ctx.Err() == nil && errors.Is(err, core.ErrResyncRequired) {
+				s.sendResyncRequired(watch, "manager_resync_required")
 			}
 			return
 		}
