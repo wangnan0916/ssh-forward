@@ -95,45 +95,15 @@ func (s *staleResultSnapshotStream) Next(ctx context.Context) (core.Snapshot, er
 // Close cannot revoke the result already committed by the in-flight Next.
 func (*staleResultSnapshotStream) Close() error { return nil }
 
-type resyncSnapshotStream struct {
-	mu     sync.Mutex
-	first  bool
-	closed chan struct{}
-}
-
-func newResyncSnapshotStream() *resyncSnapshotStream {
-	return &resyncSnapshotStream{first: true, closed: make(chan struct{})}
-}
-
-func (s *resyncSnapshotStream) Next(context.Context) (core.Snapshot, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.first {
-		s.first = false
-		return core.Snapshot{Revision: 1}, nil
-	}
-	return core.Snapshot{}, core.ErrResyncRequired
-}
-
-func (s *resyncSnapshotStream) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	select {
-	case <-s.closed:
-	default:
-		close(s.closed)
-	}
-	return nil
-}
-
 type errorSnapshotStream struct {
 	mu     sync.Mutex
 	first  bool
 	closed chan struct{}
+	err    error
 }
 
-func newErrorSnapshotStream() *errorSnapshotStream {
-	return &errorSnapshotStream{first: true, closed: make(chan struct{})}
+func newErrorSnapshotStream(err error) *errorSnapshotStream {
+	return &errorSnapshotStream{first: true, closed: make(chan struct{}), err: err}
 }
 
 func (s *errorSnapshotStream) Next(context.Context) (core.Snapshot, error) {
@@ -143,7 +113,7 @@ func (s *errorSnapshotStream) Next(context.Context) (core.Snapshot, error) {
 		s.first = false
 		return core.Snapshot{Revision: 1}, nil
 	}
-	return core.Snapshot{}, core.ErrSnapshotStreamClosed
+	return core.Snapshot{}, s.err
 }
 
 func (s *errorSnapshotStream) Close() error {
@@ -190,15 +160,39 @@ func (s *scriptedSnapshotStream) Close() error {
 	return nil
 }
 
+const (
+	helloWithWatch = `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":["watch-snapshot-v1"]}}`
+	watchRequest   = `{"jsonrpc":"2.0","id":"2","method":"manager.watch","params":{"scope":{"kind":"all"}}}`
+)
+
+func startWatchSession(t *testing.T, manager core.Manager) *testSession {
+	t.Helper()
+	session := newTestSessionWithManager(t, manager)
+	session.exchange(t, helloWithWatch)
+	session.exchange(t, watchRequest)
+	return session
+}
+
+func assertNoFrameWithin(t *testing.T, session *testSession, what string) {
+	t.Helper()
+	if err := session.client.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		t.Fatalf("set client read deadline: %v", err)
+	}
+	if frame, err := session.reader.ReadBytes('\n'); err == nil {
+		t.Fatalf("%s: %s", what, frame)
+	}
+	if err := session.client.SetReadDeadline(time.Time{}); err != nil {
+		t.Fatalf("clear client read deadline: %v", err)
+	}
+}
+
 func TestServeDoesNotNotifyAfterUnwatchResponse(t *testing.T) {
 	stream := newStaleResultSnapshotStream()
 	manager := &watchManager{
 		snapshotManager: &snapshotManager{scopes: make(chan core.Scope, 1)},
 		stream:          stream,
 	}
-	session := newTestSessionWithManager(t, manager)
-	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":["watch-snapshot-v1"]}}`)
-	session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.watch","params":{"scope":{"kind":"all"}}}`)
+	session := startWatchSession(t, manager)
 	select {
 	case <-stream.waiting:
 	case <-time.After(time.Second):
@@ -209,25 +203,15 @@ func TestServeDoesNotNotifyAfterUnwatchResponse(t *testing.T) {
 	assertJSONEqual(t, response, []byte(want))
 	close(stream.release)
 
-	if err := session.client.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
-		t.Fatalf("set client read deadline: %v", err)
-	}
-	if frame, err := session.reader.ReadBytes('\n'); err == nil {
-		t.Fatalf("notification followed unwatch response: %s", frame)
-	}
-	if err := session.client.SetReadDeadline(time.Time{}); err != nil {
-		t.Fatalf("clear client read deadline: %v", err)
-	}
+	assertNoFrameWithin(t, session, "notification followed unwatch response")
 }
 
 func TestServeForwardsManagerResyncRequirement(t *testing.T) {
 	manager := &watchManager{
 		snapshotManager: &snapshotManager{scopes: make(chan core.Scope, 1)},
-		stream:          newResyncSnapshotStream(),
+		stream:          newErrorSnapshotStream(core.ErrResyncRequired),
 	}
-	session := newTestSessionWithManager(t, manager)
-	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":["watch-snapshot-v1"]}}`)
-	session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.watch","params":{"scope":{"kind":"all"}}}`)
+	session := startWatchSession(t, manager)
 	notification, err := session.reader.ReadBytes('\n')
 	if err != nil {
 		t.Fatalf("read resync notification: %v", err)
@@ -239,22 +223,10 @@ func TestServeForwardsManagerResyncRequirement(t *testing.T) {
 func TestServeEndsWatchSilentlyOnStreamCloseError(t *testing.T) {
 	manager := &watchManager{
 		snapshotManager: &snapshotManager{scopes: make(chan core.Scope, 1)},
-		stream:          newErrorSnapshotStream(),
+		stream:          newErrorSnapshotStream(core.ErrSnapshotStreamClosed),
 	}
-	session := newTestSessionWithManager(t, manager)
-	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":["watch-snapshot-v1"]}}`)
-	session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.watch","params":{"scope":{"kind":"all"}}}`)
-
-	deadline := time.Now().Add(100 * time.Millisecond)
-	if err := session.client.SetReadDeadline(deadline); err != nil {
-		t.Fatalf("set client read deadline: %v", err)
-	}
-	if frame, err := session.reader.ReadBytes('\n'); err == nil {
-		t.Fatalf("stream close emitted a frame: %s", frame)
-	}
-	if err := session.client.SetReadDeadline(time.Time{}); err != nil {
-		t.Fatalf("clear client read deadline: %v", err)
-	}
+	session := startWatchSession(t, manager)
+	assertNoFrameWithin(t, session, "stream close emitted a frame")
 
 	response := session.exchange(t, `{"jsonrpc":"2.0","id":"3","method":"manager.unwatch","params":{"watch_id":"watch-1"}}`)
 	want := `{"jsonrpc":"2.0","id":"3","result":{"watch_id":"watch-1","stopped":false}}`
@@ -267,9 +239,7 @@ func TestSnapshotNotificationDoesNotReleaseRequestAdmission(t *testing.T) {
 		blockingManager: &blockingManager{started: make(chan struct{}, 8)},
 		stream:          stream,
 	}
-	session := newTestSessionWithManager(t, manager)
-	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":["watch-snapshot-v1"]}}`)
-	session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.watch","params":{"scope":{"kind":"all"}}}`)
+	session := startWatchSession(t, manager)
 
 	var requests bytes.Buffer
 	padding := strings.Repeat("x", 16<<10)
@@ -325,9 +295,7 @@ func TestServeRequestsResyncInsteadOfSendingOversizedSnapshot(t *testing.T) {
 		snapshotManager: &snapshotManager{scopes: make(chan core.Scope, 1)},
 		stream:          stream,
 	}
-	session := newTestSessionWithManager(t, manager)
-	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":["watch-snapshot-v1"]}}`)
-	session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.watch","params":{"scope":{"kind":"all"}}}`)
+	session := startWatchSession(t, manager)
 	notification, err := session.reader.ReadBytes('\n')
 	if err != nil {
 		t.Fatalf("read resync notification: %v", err)
@@ -337,9 +305,7 @@ func TestServeRequestsResyncInsteadOfSendingOversizedSnapshot(t *testing.T) {
 
 func TestServeClosesWatchesWhenConnectionEnds(t *testing.T) {
 	manager := &multiWatchManager{snapshotManager: &snapshotManager{scopes: make(chan core.Scope, 1)}}
-	session := newTestSessionWithManager(t, manager)
-	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":["watch-snapshot-v1"]}}`)
-	session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.watch","params":{"scope":{"kind":"all"}}}`)
+	session := startWatchSession(t, manager)
 	session.cancel()
 	_ = session.client.Close()
 	if err := session.wait(); err != nil {
@@ -357,9 +323,8 @@ func TestServeClosesWatchesWhenConnectionEnds(t *testing.T) {
 
 func TestServeBoundsActiveWatchesPerConnection(t *testing.T) {
 	manager := &multiWatchManager{snapshotManager: &snapshotManager{scopes: make(chan core.Scope, 1)}}
-	session := newTestSessionWithManager(t, manager)
-	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":["watch-snapshot-v1"]}}`)
-	for index := 1; index <= 8; index++ {
+	session := startWatchSession(t, manager)
+	for index := 2; index <= 8; index++ {
 		request := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"manager.watch","params":{"scope":{"kind":"all"}}}`, index+1)
 		response := session.exchange(t, request)
 		want := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"result":{"watch_id":"watch-%d","snapshot":{"revision":%d,"hosts":[]}}}`, index+1, index, index)
@@ -394,9 +359,7 @@ func TestServeUnwatchIsIdempotentAndStopsStream(t *testing.T) {
 		snapshotManager: &snapshotManager{scopes: make(chan core.Scope, 1)},
 		stream:          stream,
 	}
-	session := newTestSessionWithManager(t, manager)
-	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":["watch-snapshot-v1"]}}`)
-	session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.watch","params":{"scope":{"kind":"all"}}}`)
+	session := startWatchSession(t, manager)
 
 	response := session.exchange(t, `{"jsonrpc":"2.0","id":"3","method":"manager.unwatch","params":{"watch_id":"watch-1"}}`)
 	want := `{"jsonrpc":"2.0","id":"3","result":{"watch_id":"watch-1","stopped":true}}`
