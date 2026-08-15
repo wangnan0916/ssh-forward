@@ -145,11 +145,11 @@ func waitForConnected(t *testing.T, manager core.Manager) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		snapshot, err := manager.Snapshot(context.Background(), core.AllHosts())
+		snapshot, err := manager.Snapshot(context.Background())
 		if err != nil {
 			t.Fatalf("Manager Snapshot: %v", err)
 		}
-		if len(snapshot.Hosts) == 1 && snapshot.Hosts[0].Connection == core.ConnectionConnected {
+		if snapshot.Host != nil && snapshot.Host.Connection == core.ConnectionConnected {
 			return
 		}
 		if time.Now().After(deadline) {

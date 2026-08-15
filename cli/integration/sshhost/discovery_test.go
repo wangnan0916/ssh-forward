@@ -42,11 +42,11 @@ func TestAgentlessDiscoveryThroughDisposableDevelopmentHost(t *testing.T) {
 	deadline := time.Now().Add(8 * time.Second)
 	var snapshot core.Snapshot
 	for {
-		snapshot, err = manager.Snapshot(context.Background(), core.AllHosts())
+		snapshot, err = manager.Snapshot(context.Background())
 		if err != nil {
 			t.Fatalf("Snapshot: %v", err)
 		}
-		if len(snapshot.Hosts) == 1 && snapshot.Hosts[0].Discovery.BaselineEstablished {
+		if snapshot.Host != nil && snapshot.Host.Discovery.BaselineEstablished {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -54,7 +54,7 @@ func TestAgentlessDiscoveryThroughDisposableDevelopmentHost(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	host := snapshot.Hosts[0]
+	host := snapshot.Host
 	if host.Discovery.State != core.DiscoveryHealthy && host.Discovery.State != core.DiscoveryDegraded {
 		t.Fatalf("Discovery State = %q, want healthy or degraded", host.Discovery.State)
 	}
@@ -66,7 +66,7 @@ func TestAgentlessDiscoveryThroughDisposableDevelopmentHost(t *testing.T) {
 
 	baselineRevision := snapshot.Revision
 	time.Sleep(2200 * time.Millisecond)
-	repeated, err := manager.Snapshot(context.Background(), core.AllHosts())
+	repeated, err := manager.Snapshot(context.Background())
 	if err != nil {
 		t.Fatalf("Snapshot after repeated scan: %v", err)
 	}
