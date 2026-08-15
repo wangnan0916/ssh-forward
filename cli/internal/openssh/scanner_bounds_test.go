@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -29,7 +30,7 @@ func TestScannerRequiresCanonicalDecimalIdentities(t *testing.T) {
 func TestScannerRejectsProcessEvidenceExpansionAcrossListenerEndpoints(t *testing.T) {
 	hexText := func(value string) string { return hex.EncodeToString([]byte(value)) }
 	var input strings.Builder
-	fmt.Fprintf(&input, "SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\n", hexText("boot"), hexText("net"))
+	fmt.Fprintf(&input, "SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t256\t256\t512\t131072\n", hexText("boot"), hexText("net"))
 	for index := 0; index < maxObservedListeners; index++ {
 		fmt.Fprintf(&input, "SF1\tL\t1\tipv4\tloopback\t%d\t42\n", 10000+index)
 	}
@@ -57,7 +58,7 @@ func TestScannerRejectsProcessEvidenceExpansionAcrossListenerEndpoints(t *testin
 func TestScannerDowngradesIncompleteProcessChain(t *testing.T) {
 	hexText := func(value string) string { return hex.EncodeToString([]byte(value)) }
 	input := fmt.Sprintf(
-		"SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\n"+
+		"SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t256\t256\t512\t131072\n"+
 			"SF1\tL\t1\tipv4\tloopback\t8080\t42\n"+
 			"SF1\tP\t1\t42\t7\t1\t6\t%s\t%s\t%s\n"+
 			"SF1\tE\t1\n",
@@ -135,6 +136,72 @@ printf '%%s|%%s|%%s\n' "$scanner_source" "$scan_status" "$current_listeners"
 	}
 	if got := strings.Fields(string(attempted)); fmt.Sprint(got) != "[proc ss lsof]" {
 		t.Fatalf("fallback attempts = %v, want proc, ss, lsof", got)
+	}
+}
+
+func TestScannerRejectsDeclaredBudgetBeyondFrameLimits(t *testing.T) {
+	hexText := func(value string) string { return hex.EncodeToString([]byte(value)) }
+	for name, budget := range map[string]string{
+		"listeners": "257\t256\t512\t131072",
+		"sockets":   "256\t513\t512\t131072",
+		"processes": "256\t256\t513\t131072",
+		"metadata":  "256\t256\t512\t131073",
+		"zero":      "0\t256\t512\t131072",
+	} {
+		t.Run(name, func(t *testing.T) {
+			input := fmt.Sprintf("SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t%s\nSF1\tE\t1\n", hexText("boot"), hexText("net"), budget)
+			var facts []core.SessionFact
+			scanObservationFrames(strings.NewReader(input), func(fact core.SessionFact) {
+				facts = append(facts, fact)
+			})
+			if len(facts) != 1 {
+				t.Fatalf("scanner facts = %#v, want one invalid frame change", facts)
+			}
+			change, ok := facts[0].(core.DiscoveryChange)
+			if !ok || change.Diagnostic != "invalid_scanner_frame" {
+				t.Fatalf("scanner fact = %#v, want invalid frame change", facts[0])
+			}
+		})
+	}
+}
+
+func TestScannerRejectsRecordsBeyondDeclaredBudget(t *testing.T) {
+	hexText := func(value string) string { return hex.EncodeToString([]byte(value)) }
+	input := fmt.Sprintf(
+		"SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t2\t1\t1\t128\n"+
+			"SF1\tL\t1\tipv4\tloopback\t8080\t42\n"+
+			"SF1\tL\t1\tipv6\tloopback\t8080\t43\n"+
+			"SF1\tE\t1\n",
+		hexText("boot"), hexText("net"),
+	)
+	var facts []core.SessionFact
+	scanObservationFrames(strings.NewReader(input), func(fact core.SessionFact) {
+		facts = append(facts, fact)
+	})
+	if len(facts) != 1 {
+		t.Fatalf("scanner facts = %#v, want one invalid frame change", facts)
+	}
+	if change, ok := facts[0].(core.DiscoveryChange); !ok || change.Diagnostic != "invalid_scanner_frame" {
+		t.Fatalf("scanner fact = %#v, want invalid frame change", facts[0])
+	}
+}
+
+func TestScannerParsesDeclaredBudget(t *testing.T) {
+	hexText := func(value string) string { return hex.EncodeToString([]byte(value)) }
+	input := fmt.Sprintf(
+		"SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t256\t256\t512\t131072\n"+
+			"SF1\tE\t1\n",
+		hexText("boot"), hexText("net"),
+	)
+	var set core.ObservationSet
+	scanObservationFrames(strings.NewReader(input), func(fact core.SessionFact) {
+		if observation, ok := fact.(core.ObservationSet); ok {
+			set = observation
+		}
+	})
+	want := core.ObservationBudget{Listeners: 256, Sockets: 256, ProcessRecords: 512, MetadataBytes: 131072}
+	if !reflect.DeepEqual(set.Budget, want) {
+		t.Fatalf("declared Budget = %#v, want %#v", set.Budget, want)
 	}
 }
 

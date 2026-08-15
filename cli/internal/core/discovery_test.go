@@ -58,6 +58,11 @@ func (c oneSessionConnector) Connect(context.Context, HostAlias) (hostSession, e
 	return c.session, nil
 }
 
+var (
+	fullObservationBudget = ObservationBudget{Listeners: 256, Sockets: 256, ProcessRecords: 512, MetadataBytes: 128 << 10}
+	fullTestCapability    = DiscoveryCapability{RemoteListeners: CapabilityFull, SocketIdentity: CapabilityFull, ProcessMetadata: CapabilityFull}
+)
+
 func TestPartialObservationMergeKeepsFixedEvidenceBounds(t *testing.T) {
 	makeListeners := func(firstPort, count int) []ListenerObservation {
 		observations := make([]ListenerObservation, count)
@@ -178,7 +183,7 @@ func TestManagerRetainsObservationsUntilReconnectGetsCompleteReplacement(t *test
 		SocketIdentity:  CapabilityFull,
 		ProcessMetadata: CapabilityPartial,
 	}
-	first.facts <- ObservationSet{Sequence: 1, Capability: full, Observations: []ListenerObservation{observation}}
+	first.facts <- ObservationSet{Sequence: 1, Capability: full, Observations: []ListenerObservation{observation}, Budget: fullObservationBudget}
 	waitForDiscoveryBaseline(t, manager, true)
 	first.terminal <- &SessionError{Disposition: SessionRetry, Reason: SessionReasonTransport}
 	starting := waitForDiscoveryState(t, manager, DiscoveryStarting)
@@ -190,7 +195,7 @@ func TestManagerRetainsObservationsUntilReconnectGetsCompleteReplacement(t *test
 		SocketIdentity:  CapabilityPartial,
 		ProcessMetadata: CapabilityUnavailable,
 	}
-	second.facts <- ObservationSet{Sequence: 1, Capability: partial}
+	second.facts <- ObservationSet{Sequence: 1, Capability: partial, Budget: fullObservationBudget}
 	degraded := waitForDiscoveryCapability(t, manager, partial)
 	if degraded.Host.Discovery.BaselineEstablished {
 		t.Fatalf("partial reconnect established baseline: %#v", degraded.Host.Discovery)
@@ -268,6 +273,7 @@ func TestManagerPublishesDiscoveryBaselineAtomically(t *testing.T) {
 	session.facts <- ObservationSet{
 		Sequence:     1,
 		Capability:   capability,
+		Budget:       fullObservationBudget,
 		Observations: []ListenerObservation{observation},
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -309,7 +315,7 @@ func TestManagerPublishesDiscoveryBaselineAtomically(t *testing.T) {
 			Executable: "/usr/bin/new-owner",
 		}}}},
 	}
-	session.facts <- ObservationSet{Sequence: 2, Capability: partialCapability, Observations: []ListenerObservation{partialObservation}}
+	session.facts <- ObservationSet{Sequence: 2, Capability: partialCapability, Observations: []ListenerObservation{partialObservation}, Budget: fullObservationBudget}
 	partial, err := stream.Next(ctx)
 	if err != nil {
 		t.Fatalf("partial Next: %v", err)
@@ -332,7 +338,7 @@ func TestManagerPublishesDiscoveryBaselineAtomically(t *testing.T) {
 		SocketIdentity:  CapabilityFull,
 		ProcessMetadata: CapabilityFull,
 	}
-	session.facts <- ObservationSet{Sequence: 3, Capability: claimedCapability, Observations: []ListenerObservation{boundedObservation}}
+	session.facts <- ObservationSet{Sequence: 3, Capability: claimedCapability, Observations: []ListenerObservation{boundedObservation}, Budget: fullObservationBudget}
 	bounded, err := stream.Next(ctx)
 	if err != nil {
 		t.Fatalf("bounded evidence Next: %v", err)
@@ -345,7 +351,7 @@ func TestManagerPublishesDiscoveryBaselineAtomically(t *testing.T) {
 		t.Fatalf("published evidence exceeded bounds: %#v", boundedEvidence)
 	}
 
-	session.facts <- ObservationSet{Sequence: 3, Capability: capability}
+	session.facts <- ObservationSet{Sequence: 3, Capability: capability, Budget: fullObservationBudget}
 	failed, err := stream.Next(ctx)
 	if err != nil {
 		t.Fatalf("invalid fact Next: %v", err)
@@ -372,13 +378,13 @@ func TestManagerDegradesDiscoveryOnObservationSequenceGap(t *testing.T) {
 		SocketIdentity:  CapabilityFull,
 		ProcessMetadata: CapabilityFull,
 	}
-	session.facts <- ObservationSet{Sequence: 1, Capability: fullCapability, Observations: []ListenerObservation{}}
+	session.facts <- ObservationSet{Sequence: 1, Capability: fullCapability, Observations: []ListenerObservation{}, Budget: fullObservationBudget}
 	baseline := waitForDiscoveryBaseline(t, manager, true)
 	if got := baseline.Host.Discovery.Diagnostic; got != "" {
 		t.Fatalf("baseline Diagnostic = %q, want empty", got)
 	}
 
-	session.facts <- ObservationSet{Sequence: 3, Capability: fullCapability, Observations: []ListenerObservation{}}
+	session.facts <- ObservationSet{Sequence: 3, Capability: fullCapability, Observations: []ListenerObservation{}, Budget: fullObservationBudget}
 	gapped := waitForDiscoveryState(t, manager, DiscoveryDegraded)
 	if got := gapped.Host.Discovery.Diagnostic; got != "observation_resync" {
 		t.Fatalf("gap Diagnostic = %q, want observation_resync", got)
@@ -387,7 +393,7 @@ func TestManagerDegradesDiscoveryOnObservationSequenceGap(t *testing.T) {
 		t.Fatal("sequence gap discarded the established Baseline")
 	}
 
-	session.facts <- ObservationSet{Sequence: 4, Capability: fullCapability, Observations: []ListenerObservation{}}
+	session.facts <- ObservationSet{Sequence: 4, Capability: fullCapability, Observations: []ListenerObservation{}, Budget: fullObservationBudget}
 	recovered := waitForDiscoveryState(t, manager, DiscoveryHealthy)
 	if got := recovered.Host.Discovery.Diagnostic; got != "" {
 		t.Fatalf("recovered Diagnostic = %q, want empty", got)
@@ -411,13 +417,56 @@ func TestManagerRejectsStaleObservationSequence(t *testing.T) {
 		SocketIdentity:  CapabilityFull,
 		ProcessMetadata: CapabilityFull,
 	}
-	session.facts <- ObservationSet{Sequence: 2, Capability: fullCapability, Observations: []ListenerObservation{}}
+	session.facts <- ObservationSet{Sequence: 2, Capability: fullCapability, Observations: []ListenerObservation{}, Budget: fullObservationBudget}
 	waitForDiscoveryBaseline(t, manager, true)
-	session.facts <- ObservationSet{Sequence: 2, Capability: fullCapability, Observations: []ListenerObservation{}}
+	session.facts <- ObservationSet{Sequence: 2, Capability: fullCapability, Observations: []ListenerObservation{}, Budget: fullObservationBudget}
 	failed := waitForDiscoveryState(t, manager, DiscoveryFailed)
 	if got := failed.Host.Discovery.Diagnostic; got != "invalid_session_fact" {
 		t.Fatalf("stale sequence Diagnostic = %q, want invalid_session_fact", got)
 	}
+}
+
+func TestManagerRejectsObservationBudgetViolations(t *testing.T) {
+	for name, budget := range map[string]ObservationBudget{
+		"missing":    {},
+		"oversized":  {Listeners: maxRetainedListenerObservations + 1, Sockets: 256, ProcessRecords: 512, MetadataBytes: 128 << 10},
+		"zeroSocket": {Listeners: 256, Sockets: 0, ProcessRecords: 512, MetadataBytes: 128 << 10},
+	} {
+		t.Run(name, func(t *testing.T) {
+			session := newScriptedDiscoverySession()
+			manager := newManager(managerOptions{
+				host:      HostAlias("development"),
+				connector: oneSessionConnector{session: session},
+			})
+			manager.workers.Add(1)
+			go func() {
+				defer manager.workers.Done()
+				manager.connect()
+			}()
+			waitForDiscoveryState(t, manager, DiscoveryStarting)
+			session.facts <- ObservationSet{Sequence: 1, Capability: fullTestCapability, Budget: budget}
+			failed := waitForDiscoveryState(t, manager, DiscoveryFailed)
+			if got := failed.Host.Discovery.Diagnostic; got != "invalid_session_fact" {
+				t.Fatalf("budget %s Diagnostic = %q, want invalid_session_fact", name, got)
+			}
+		})
+	}
+}
+
+func TestManagerAcceptsDeclaredObservationBudget(t *testing.T) {
+	session := newScriptedDiscoverySession()
+	manager := newManager(managerOptions{
+		host:      HostAlias("development"),
+		connector: oneSessionConnector{session: session},
+	})
+	manager.workers.Add(1)
+	go func() {
+		defer manager.workers.Done()
+		manager.connect()
+	}()
+	waitForDiscoveryState(t, manager, DiscoveryStarting)
+	session.facts <- ObservationSet{Sequence: 1, Capability: fullTestCapability, Budget: fullObservationBudget}
+	waitForDiscoveryState(t, manager, DiscoveryHealthy)
 }
 
 func waitForDiscoveryBaseline(t *testing.T, manager Manager, established bool) Snapshot {

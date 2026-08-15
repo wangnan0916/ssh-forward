@@ -35,6 +35,7 @@ type scannerParser struct {
 	boot           string
 	network        string
 	capability     core.DiscoveryCapability
+	budget         core.ObservationBudget
 	listeners      []scannerListener
 	listenerKeys   map[string]struct{}
 	inodeListeners map[string]string
@@ -151,7 +152,7 @@ func (p *scannerParser) accept(line string) (core.SessionFact, bool, error) {
 }
 
 func (p *scannerParser) begin(fields []string) error {
-	if p.active || len(fields) != 8 {
+	if p.active || len(fields) != 12 {
 		return errInvalidScannerFrame
 	}
 	sequence, err := parseUint(fields[2], 64)
@@ -178,6 +179,10 @@ func (p *scannerParser) begin(fields []string) error {
 	if err != nil {
 		return err
 	}
+	budget, err := parseObservationBudget(fields[8], fields[9], fields[10], fields[11])
+	if err != nil {
+		return err
+	}
 	p.active = true
 	p.sequence = sequence
 	p.boot = boot
@@ -187,6 +192,7 @@ func (p *scannerParser) begin(fields []string) error {
 		SocketIdentity:  socketIdentity,
 		ProcessMetadata: processMetadata,
 	}
+	p.budget = budget
 	p.listeners = nil
 	p.listenerKeys = make(map[string]struct{})
 	p.inodeListeners = make(map[string]string)
@@ -198,7 +204,7 @@ func (p *scannerParser) begin(fields []string) error {
 }
 
 func (p *scannerParser) listener(fields []string) error {
-	if !p.active || len(fields) != 7 || fields[2] != strconv.FormatUint(p.sequence, 10) || len(p.listeners) >= maxObservedSockets {
+	if !p.active || len(fields) != 7 || fields[2] != strconv.FormatUint(p.sequence, 10) || len(p.listeners) >= p.budget.Sockets {
 		return errInvalidScannerFrame
 	}
 	family := core.AddressFamily(fields[3])
@@ -240,7 +246,7 @@ func (p *scannerParser) listener(fields []string) error {
 }
 
 func (p *scannerParser) process(fields []string) error {
-	if !p.active || len(fields) != 10 || fields[2] != strconv.FormatUint(p.sequence, 10) || p.processCount >= maxProcessRecords {
+	if !p.active || len(fields) != 10 || fields[2] != strconv.FormatUint(p.sequence, 10) || p.processCount >= p.budget.ProcessRecords {
 		return errInvalidScannerFrame
 	}
 	inode, err := parseDecimalIdentity(fields[3])
@@ -263,7 +269,7 @@ func (p *scannerParser) process(fields []string) error {
 		return err
 	}
 	recordSize, err := encodedMetadataSize(fields[7], fields[8], fields[9])
-	if err != nil || p.metadataSize+recordSize > maxObservationMetadataBytes {
+	if err != nil || p.metadataSize+recordSize > p.budget.MetadataBytes {
 		return errInvalidScannerFrame
 	}
 	executable, executableAvailable, err := decodeMetadataText(fields[7])
@@ -314,7 +320,7 @@ func (p *scannerParser) end(fields []string) (core.ObservationSet, error) {
 		key := fmt.Sprintf("%s\x00%s\x00%05d", listener.family, listener.scope, listener.port)
 		observation := observations[key]
 		if observation == nil {
-			if len(observations) >= maxObservedListeners {
+			if len(observations) >= p.budget.Listeners {
 				return core.ObservationSet{}, errInvalidScannerFrame
 			}
 			observation = &core.ListenerObservation{
@@ -338,6 +344,7 @@ func (p *scannerParser) end(fields []string) (core.ObservationSet, error) {
 		ScannerVersion:  scannerVersion,
 		ScannerChecksum: embeddedScannerChecksum,
 		Capability:      p.capability,
+		Budget:          p.budget,
 		Observations:    items,
 	}
 	p.lastSequence = p.sequence
@@ -378,6 +385,7 @@ func (p *scannerParser) abort() {
 	p.boot = ""
 	p.network = ""
 	p.capability = core.DiscoveryCapability{}
+	p.budget = core.ObservationBudget{}
 	p.listeners = nil
 	p.listenerKeys = nil
 	p.inodeListeners = nil
@@ -385,6 +393,34 @@ func (p *scannerParser) abort() {
 	p.processes = nil
 	p.processCount = 0
 	p.metadataSize = 0
+}
+
+// parseObservationBudget validates the declared evidence budget: each
+// dimension must be at least one and within the scanner's own frame limits, so
+// a mismatched script cannot silently change what core may retain.
+func parseObservationBudget(listeners, sockets, processRecords, metadataBytes string) (core.ObservationBudget, error) {
+	parse := func(value string, maximum uint64) (int, error) {
+		parsed, err := parseUint(value, 32)
+		if err != nil || parsed == 0 || parsed > maximum {
+			return 0, errInvalidScannerFrame
+		}
+		return int(parsed), nil
+	}
+	budget := core.ObservationBudget{}
+	var err error
+	if budget.Listeners, err = parse(listeners, maxObservedListeners); err != nil {
+		return core.ObservationBudget{}, err
+	}
+	if budget.Sockets, err = parse(sockets, maxObservedSockets); err != nil {
+		return core.ObservationBudget{}, err
+	}
+	if budget.ProcessRecords, err = parse(processRecords, maxProcessRecords); err != nil {
+		return core.ObservationBudget{}, err
+	}
+	if budget.MetadataBytes, err = parse(metadataBytes, maxObservationMetadataBytes); err != nil {
+		return core.ObservationBudget{}, err
+	}
+	return budget, nil
 }
 
 func parseCapability(value string) (core.CapabilityAvailability, error) {

@@ -54,7 +54,7 @@ func (m *manager) applyObservationSet(set ObservationSet) {
 	if m.closed {
 		return
 	}
-	if set.Sequence == 0 || set.Sequence <= m.lastObservationSequence || !validDiscoveryCapability(set.Capability) {
+	if set.Sequence == 0 || set.Sequence <= m.lastObservationSequence || !validDiscoveryCapability(set.Capability) || !validObservationBudget(set.Budget) {
 		m.failDiscoveryLocked("invalid_session_fact")
 		return
 	}
@@ -141,6 +141,16 @@ func validCapabilityAvailability(capability CapabilityAvailability) bool {
 	default:
 		return false
 	}
+}
+
+// validObservationBudget requires the adapter's declared evidence budget to be
+// present and within core's retention caps, so every full scan the adapter
+// promises fits within what core retains.
+func validObservationBudget(budget ObservationBudget) bool {
+	return budget.Listeners >= 1 && budget.Listeners <= maxRetainedListenerObservations &&
+		budget.Sockets >= 1 && budget.Sockets <= maxRetainedSocketIdentities &&
+		budget.ProcessRecords >= 1 && budget.ProcessRecords <= maxRetainedProcessRecords &&
+		budget.MetadataBytes >= 1 && budget.MetadataBytes <= maxRetainedProcessMetadataBytes
 }
 
 func discoveryStateForCapability(capability DiscoveryCapability) DiscoveryState {

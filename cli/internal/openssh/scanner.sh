@@ -9,6 +9,11 @@ process_records=''
 process_capability=unavailable
 scans_since_attribution=30
 attribution_interval=30
+listener_limit=256
+socket_record_limit=256
+process_record_limit=512
+metadata_bytes_limit=131072
+metadata_hex_limit=$((metadata_bytes_limit * 2))
 
 hex_stream() {
     od -An -v -tx1 | tr -d ' \n'
@@ -201,7 +206,7 @@ scan_listeners() {
         lsof) raw_listeners=$(scan_lsof) || return 1 ;;
         *) return 0 ;;
     esac
-    printf '%s\n' "$raw_listeners" | LC_ALL=C sort -u | head -n 256
+    printf '%s\n' "$raw_listeners" | LC_ALL=C sort -u | head -n "$listener_limit"
 }
 
 scan_current_listeners() {
@@ -219,7 +224,7 @@ scan_current_listeners() {
 }
 
 apply_listener_record_limit() {
-    if [ "$listener_count" -lt 256 ]; then
+    if [ "$listener_count" -lt "$listener_limit" ]; then
         return
     fi
     listener_capability=partial
@@ -311,7 +316,7 @@ attribute_processes() {
             while IFS= read -r chain_record; do
                 [ -n "$chain_record" ] || continue
                 record_hex_size=${#chain_record}
-                if [ "$process_record_count" -lt 512 ] && [ $((process_metadata_hex_size + record_hex_size)) -le 262144 ]; then
+                if [ "$process_record_count" -lt "$process_record_limit" ] && [ $((process_metadata_hex_size + record_hex_size)) -le "$metadata_hex_limit" ]; then
                     process_records=$(append_line "$process_records" "$inode	$owner	$chain_record")
                     process_record_count=$((process_record_count + 1))
                     process_metadata_hex_size=$((process_metadata_hex_size + record_hex_size))
@@ -341,8 +346,9 @@ EOF_CHAIN
 
 emit_observation() {
     sequence=$((sequence + 1))
-    printf 'SF1\tB\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$sequence" "$boot_hex" "$network_hex" "$listener_capability" "$socket_capability" "$process_capability"
+    printf 'SF1\tB\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$sequence" "$boot_hex" "$network_hex" "$listener_capability" "$socket_capability" "$process_capability" \
+        "$listener_limit" "$socket_record_limit" "$process_record_limit" "$metadata_bytes_limit"
     while IFS= read -r listener_record; do
         [ -n "$listener_record" ] || continue
         printf 'SF1\tL\t%s\t%b\n' "$sequence" "$listener_record"

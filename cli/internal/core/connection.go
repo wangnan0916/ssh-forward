@@ -32,7 +32,18 @@ type ObservationSet struct {
 	ScannerVersion  int
 	ScannerChecksum string
 	Capability      DiscoveryCapability
+	Budget          ObservationBudget
 	Observations    []ListenerObservation
+}
+
+// ObservationBudget is the evidence the adapter declares its scans are
+// bounded to; core validates it against its own retention caps so a
+// mismatched scanner cannot silently exceed what a full scan may retain.
+type ObservationBudget struct {
+	Listeners      int
+	Sockets        int
+	ProcessRecords int
+	MetadataBytes  int
 }
 
 func (ObservationSet) isSessionFact() {}

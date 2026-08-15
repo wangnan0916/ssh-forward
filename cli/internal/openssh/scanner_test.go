@@ -24,15 +24,15 @@ func TestSessionReturnsValidatedListenerObservation(t *testing.T) {
 	hexText := func(value string) string { return hex.EncodeToString([]byte(value)) }
 	var queued strings.Builder
 	for sequence := 2; sequence <= 12; sequence++ {
-		fmt.Fprintf(&queued, "SF1\tB\t%d\t%s\t%s\tfull\tfull\tpartial\n", sequence, hexText("boot-1"), hexText("net:[42]"))
+		fmt.Fprintf(&queued, "SF1\tB\t%d\t%s\t%s\tfull\tfull\tpartial\t256\t256\t512\t131072\n", sequence, hexText("boot-1"), hexText("net:[42]"))
 		fmt.Fprintf(&queued, "SF1\tE\t%d\n", sequence)
 	}
 	queued.WriteString("invalid-one\n")
-	fmt.Fprintf(&queued, "SF1\tB\t13\t%s\t%s\tfull\tfull\tpartial\n", hexText("boot-1"), hexText("net:[42]"))
+	fmt.Fprintf(&queued, "SF1\tB\t13\t%s\t%s\tfull\tfull\tpartial\t256\t256\t512\t131072\n", hexText("boot-1"), hexText("net:[42]"))
 	queued.WriteString("invalid-two\n")
-	fmt.Fprintf(&queued, "SF1\tB\t14\t%s\t%s\tfull\tfull\tpartial\n", hexText("boot-1"), hexText("net:[42]"))
+	fmt.Fprintf(&queued, "SF1\tB\t14\t%s\t%s\tfull\tfull\tpartial\t256\t256\t512\t131072\n", hexText("boot-1"), hexText("net:[42]"))
 	queued.WriteString("invalid-three\n")
-	fmt.Fprintf(&queued, "SF1\tB\t15\t%s\t%s\tfull\tfull\tpartial\n", hexText("boot-1"), hexText("net:[42]"))
+	fmt.Fprintf(&queued, "SF1\tB\t15\t%s\t%s\tfull\tfull\tpartial\t256\t256\t512\t131072\n", hexText("boot-1"), hexText("net:[42]"))
 	script := fmt.Sprintf(`#!/usr/bin/python3
 import json
 import signal
@@ -80,7 +80,7 @@ while running:
 listener.close()
 `,
 		strconv.Quote(scannerPath),
-		strconv.Quote(strings.Join([]string{"SF1", "B", "1", hexText("boot-1"), hexText("net:[42]"), "full", "full", "partial"}, "\t")),
+		strconv.Quote(strings.Join([]string{"SF1", "B", "1", hexText("boot-1"), hexText("net:[42]"), "full", "full", "partial", "256", "256", "512", "131072"}, "\t")),
 		strconv.Quote(strings.Join([]string{"SF1", "L", "1", "ipv4", "loopback", "38080", "12345"}, "\t")),
 		strconv.Quote(strings.Join([]string{"SF1", "P", "1", "12345", "42", "0", "42", hexText("/usr/bin/python3"), hexText("/workspace"), hexText("python3\x00fixture.py\x00")}, "\t")),
 		strconv.Quote(strings.Join([]string{"SF1", "E", "1"}, "\t")),
