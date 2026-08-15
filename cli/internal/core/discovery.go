@@ -58,6 +58,7 @@ func (m *manager) applyObservationSet(set ObservationSet) {
 		m.failDiscoveryLocked("invalid_session_fact")
 		return
 	}
+	gapped := set.Sequence != m.lastObservationSequence+1
 	m.lastObservationSequence = set.Sequence
 	capability := set.Capability
 	observations, truncated := boundListenerObservations(canonicalListenerObservations(set.Observations))
@@ -74,7 +75,7 @@ func (m *manager) applyObservationSet(set ObservationSet) {
 		ScannerVersion:      set.ScannerVersion,
 		ScannerChecksum:     set.ScannerChecksum,
 	}
-	if set.Resync {
+	if gapped {
 		discovery.State = DiscoveryDegraded
 		discovery.Diagnostic = "observation_resync"
 	}

@@ -14,7 +14,6 @@ type sessionFactQueue struct {
 	notify            chan struct{}
 	closed            bool
 	baselineDelivered bool
-	resyncPending     bool
 	terminalDiscovery *core.DiscoveryChange
 }
 
@@ -37,37 +36,19 @@ func (q *sessionFactQueue) push(fact core.SessionFact) {
 		return
 	}
 	if len(q.items) < maxQueuedSessionFacts {
-		q.items = append(q.items, q.markResync(fact))
+		q.items = append(q.items, fact)
 		q.signalLocked()
 		return
 	}
 	last := len(q.items) - 1
 	if !q.baselineDelivered {
 		if _, protected := q.items[last].(core.ObservationSet); protected {
-			if _, dropped := fact.(core.ObservationSet); dropped {
-				q.resyncPending = true
-			}
 			q.signalLocked()
 			return
 		}
 	}
-	if _, dropped := q.items[last].(core.ObservationSet); dropped {
-		q.resyncPending = true
-	}
-	q.items[last] = q.markResync(fact)
+	q.items[last] = fact
 	q.signalLocked()
-}
-
-func (q *sessionFactQueue) markResync(fact core.SessionFact) core.SessionFact {
-	observation, ok := fact.(core.ObservationSet)
-	if !ok {
-		return fact
-	}
-	if q.resyncPending {
-		observation.Resync = true
-		q.resyncPending = false
-	}
-	return observation
 }
 
 func (q *sessionFactQueue) pop() (core.SessionFact, bool, bool) {

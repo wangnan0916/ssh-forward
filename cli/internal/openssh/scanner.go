@@ -335,7 +335,6 @@ func (p *scannerParser) end(fields []string) (core.ObservationSet, error) {
 	}
 	set := core.ObservationSet{
 		Sequence:        p.sequence,
-		Resync:          p.lastSequence != 0 && p.sequence != p.lastSequence+1,
 		ScannerVersion:  scannerVersion,
 		ScannerChecksum: embeddedScannerChecksum,
 		Capability:      p.capability,

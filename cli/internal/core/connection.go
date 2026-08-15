@@ -29,7 +29,6 @@ type SessionFact interface {
 
 type ObservationSet struct {
 	Sequence        uint64
-	Resync          bool
 	ScannerVersion  int
 	ScannerChecksum string
 	Capability      DiscoveryCapability

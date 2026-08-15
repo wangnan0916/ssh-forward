@@ -355,6 +355,71 @@ func TestManagerPublishesDiscoveryBaselineAtomically(t *testing.T) {
 	}
 }
 
+func TestManagerDegradesDiscoveryOnObservationSequenceGap(t *testing.T) {
+	session := newScriptedDiscoverySession()
+	manager := newManager(managerOptions{
+		host:      HostAlias("development"),
+		connector: oneSessionConnector{session: session},
+	})
+	manager.workers.Add(1)
+	go func() {
+		defer manager.workers.Done()
+		manager.connect()
+	}()
+	waitForDiscoveryState(t, manager, DiscoveryStarting)
+	fullCapability := DiscoveryCapability{
+		RemoteListeners: CapabilityFull,
+		SocketIdentity:  CapabilityFull,
+		ProcessMetadata: CapabilityFull,
+	}
+	session.facts <- ObservationSet{Sequence: 1, Capability: fullCapability, Observations: []ListenerObservation{}}
+	baseline := waitForDiscoveryBaseline(t, manager, true)
+	if got := baseline.Hosts[0].Discovery.Diagnostic; got != "" {
+		t.Fatalf("baseline Diagnostic = %q, want empty", got)
+	}
+
+	session.facts <- ObservationSet{Sequence: 3, Capability: fullCapability, Observations: []ListenerObservation{}}
+	gapped := waitForDiscoveryState(t, manager, DiscoveryDegraded)
+	if got := gapped.Hosts[0].Discovery.Diagnostic; got != "observation_resync" {
+		t.Fatalf("gap Diagnostic = %q, want observation_resync", got)
+	}
+	if !gapped.Hosts[0].Discovery.BaselineEstablished {
+		t.Fatal("sequence gap discarded the established Baseline")
+	}
+
+	session.facts <- ObservationSet{Sequence: 4, Capability: fullCapability, Observations: []ListenerObservation{}}
+	recovered := waitForDiscoveryState(t, manager, DiscoveryHealthy)
+	if got := recovered.Hosts[0].Discovery.Diagnostic; got != "" {
+		t.Fatalf("recovered Diagnostic = %q, want empty", got)
+	}
+}
+
+func TestManagerRejectsStaleObservationSequence(t *testing.T) {
+	session := newScriptedDiscoverySession()
+	manager := newManager(managerOptions{
+		host:      HostAlias("development"),
+		connector: oneSessionConnector{session: session},
+	})
+	manager.workers.Add(1)
+	go func() {
+		defer manager.workers.Done()
+		manager.connect()
+	}()
+	waitForDiscoveryState(t, manager, DiscoveryStarting)
+	fullCapability := DiscoveryCapability{
+		RemoteListeners: CapabilityFull,
+		SocketIdentity:  CapabilityFull,
+		ProcessMetadata: CapabilityFull,
+	}
+	session.facts <- ObservationSet{Sequence: 2, Capability: fullCapability, Observations: []ListenerObservation{}}
+	waitForDiscoveryBaseline(t, manager, true)
+	session.facts <- ObservationSet{Sequence: 2, Capability: fullCapability, Observations: []ListenerObservation{}}
+	failed := waitForDiscoveryState(t, manager, DiscoveryFailed)
+	if got := failed.Hosts[0].Discovery.Diagnostic; got != "invalid_session_fact" {
+		t.Fatalf("stale sequence Diagnostic = %q, want invalid_session_fact", got)
+	}
+}
+
 func waitForDiscoveryBaseline(t *testing.T, manager Manager, established bool) Snapshot {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
