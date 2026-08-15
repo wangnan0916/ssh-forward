@@ -25,6 +25,9 @@ type manager struct {
 	revision         Revision
 	connection       ConnectionState
 	forwards         forwardTable
+	snapshot         Snapshot
+	watchers         map[uint64]*snapshotStream
+	nextWatchID      uint64
 	commands         map[CommandID]commandRecord
 	pending          map[CommandID]*pendingCommand
 	dialer           *currentDialer
@@ -61,12 +64,13 @@ func newManager(options managerOptions) *manager {
 	if allocator == nil {
 		allocator = proxyForwardAllocator{dialer: dialer}
 	}
-	return &manager{
+	m := &manager{
 		host:             options.host,
 		connector:        options.connector,
 		forwardAllocator: allocator,
 		connection:       ConnectionDisconnected,
 		forwards:         newForwardTable(),
+		watchers:         make(map[uint64]*snapshotStream),
 		commands:         make(map[CommandID]commandRecord),
 		pending:          make(map[CommandID]*pendingCommand),
 		dialer:           dialer,
@@ -75,6 +79,8 @@ func newManager(options managerOptions) *manager {
 		ctx:              ctx,
 		cancel:           cancel,
 	}
+	m.snapshot = m.buildSnapshotLocked()
+	return m
 }
 
 func (m *manager) Execute(ctx context.Context, command Command) (Outcome, error) {
@@ -135,12 +141,12 @@ func (m *manager) addManualForward(ctx context.Context, add AddManualForward) (O
 		closeOwnedForward(owner)
 		return Outcome{}, &DomainError{Kind: ErrorCommandIDConflict}
 	}
-	m.revision++
 	startConnection := m.connection == ConnectionDisconnected
 	if startConnection {
 		m.connection = ConnectionConnecting
 		m.workers.Add(1)
 	}
+	m.publishLocked()
 	outcome := Outcome{Kind: OutcomeForwardAdded, Revision: m.revision, Forward: cloneForward(forward)}
 	m.completeCommandLocked(add.CommandID, add, outcome)
 	m.mu.Unlock()
@@ -225,7 +231,7 @@ func (m *manager) completeRemoval(remove RemoveForward, forward ForwardSnapshot)
 	if removed, found := m.forwards.completeRemoval(remove.ForwardID, remove.CommandID); found {
 		forward = removed
 	}
-	m.revision++
+	m.publishLocked()
 	outcome := Outcome{Kind: OutcomeForwardRemoved, Revision: m.revision, Forward: cloneForward(forward)}
 	m.completeCommandLocked(remove.CommandID, remove, outcome)
 	return outcome
@@ -252,23 +258,13 @@ func familyForAddress(address netip.Addr) AddressFamily {
 	return FamilyIPv6
 }
 
-func (m *manager) Snapshot(context.Context, Scope) (Snapshot, error) {
+func (m *manager) Snapshot(ctx context.Context, _ Scope) (Snapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return Snapshot{}, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if m.host == "" {
-		return Snapshot{Revision: m.revision}, nil
-	}
-	forwards := m.forwards.snapshots()
-	return Snapshot{
-		Revision: m.revision,
-		Hosts: []HostSnapshot{
-			{
-				Alias:      m.host,
-				Connection: m.connection,
-				Forwards:   forwards,
-			},
-		},
-	}, nil
+	return cloneSnapshot(m.snapshot), nil
 }
 
 func cloneOutcome(outcome Outcome) Outcome {
@@ -281,15 +277,15 @@ func cloneForward(forward ForwardSnapshot) ForwardSnapshot {
 	return forward
 }
 
-func (m *manager) Watch(context.Context, WatchOptions) (SnapshotStream, error) {
-	return nil, errors.New("Watch is not implemented")
-}
-
 func (m *manager) Close(ctx context.Context) error {
 	m.mu.Lock()
 	if !m.closed {
 		m.closed = true
 		m.cancel()
+		for id, stream := range m.watchers {
+			delete(m.watchers, id)
+			stream.finish(&DomainError{Kind: ErrorManagerClosed, Retryable: true})
+		}
 	}
 	forwards := m.forwards.owners()
 	session := m.session

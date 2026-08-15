@@ -66,6 +66,7 @@ const (
 	ErrorLocalPortConflict ErrorKind = "local_port_conflict"
 	ErrorForwardNotFound   ErrorKind = "forward_not_found"
 	ErrorManagerClosed     ErrorKind = "manager_closed"
+	ErrorWatchLimit        ErrorKind = "watch_limit"
 )
 
 type DomainError struct {

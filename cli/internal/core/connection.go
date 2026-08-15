@@ -34,9 +34,9 @@ func (m *manager) connect() {
 		if err != nil {
 			if !retryableConnectionError(err) {
 				m.mu.Lock()
-				if !m.closed {
+				if !m.closed && m.connection != ConnectionDisconnected {
 					m.connection = ConnectionDisconnected
-					m.revision++
+					m.publishLocked()
 				}
 				m.mu.Unlock()
 				return
@@ -57,7 +57,7 @@ func (m *manager) connect() {
 		m.session = session
 		m.dialer.Set(session)
 		m.connection = ConnectionConnected
-		m.revision++
+		m.publishLocked()
 		m.mu.Unlock()
 
 		select {
@@ -77,7 +77,7 @@ func (m *manager) connect() {
 			} else {
 				m.connection = ConnectionDisconnected
 			}
-			m.revision++
+			m.publishLocked()
 		}
 		m.mu.Unlock()
 		if !retry || !m.waitToReconnect(retryAttempt) {
