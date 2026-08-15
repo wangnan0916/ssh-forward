@@ -213,15 +213,17 @@ func (a *hostActor) applyObservationSet(set ObservationSet) {
 		discovery.State = DiscoveryDegraded
 		discovery.Diagnostic = "observation_resync"
 	}
-	if reflect.DeepEqual(a.discovery, discovery) && reflect.DeepEqual(a.listenerObservations, observations) {
-		// Nothing changed, so the lifetime tracker would also classify this
-		// generation identically (same identities, grace already zero); leave
-		// it untouched rather than churn the published verdicts.
+	// The tracker always advances: absent listeners accrue grace even when
+	// the observation set itself is unchanged, and only crossing the grace
+	// threshold changes a verdict, so comparing the verdicts below keeps the
+	// no-change publish deduplication without freezing lifetime progression.
+	verdicts := a.tracker.advance(observations)
+	if reflect.DeepEqual(a.discovery, discovery) && reflect.DeepEqual(a.listenerObservations, observations) && reflect.DeepEqual(a.listenerLifetimes, verdicts) {
 		return
 	}
 	a.discovery = discovery
 	a.listenerObservations = observations
-	a.listenerLifetimes = a.tracker.advance(observations)
+	a.listenerLifetimes = verdicts
 	a.publishLocked()
 }
 
