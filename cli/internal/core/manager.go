@@ -22,7 +22,7 @@ type manager struct {
 	host             HostAlias
 	forwardAllocator forwardAllocator
 	revision         Revision
-	hostState        hostState
+	hostSnapshot     HostSnapshot
 	actor            *hostActor
 	forwards         forwardTable
 	snapshot         Snapshot
@@ -66,10 +66,11 @@ func newManager(options managerOptions) *manager {
 		watchers:         make(map[uint64]*snapshotStream),
 		commands:         make(map[CommandID]commandRecord),
 		pending:          make(map[CommandID]*pendingCommand),
-		hostState: hostState{
-			connection:           ConnectionDisconnected,
-			discovery:            stoppedDiscovery(),
-			listenerObservations: make([]ListenerObservation, 0),
+		hostSnapshot: HostSnapshot{
+			Alias:                options.host,
+			Connection:           ConnectionDisconnected,
+			Discovery:            stoppedDiscovery(),
+			ListenerObservations: make([]ListenerObservation, 0),
 		},
 		ctx:    ctx,
 		cancel: cancel,
@@ -87,15 +88,15 @@ func newManager(options managerOptions) *manager {
 	return m
 }
 
-// publishHostState is the only writer of the Manager's hostState copy; the
+// publishHostState is the only writer of the Manager's hostSnapshot copy; the
 // hostActor calls it after every per-host transition it owns.
-func (m *manager) publishHostState(state hostState) {
+func (m *manager) publishHostState(state HostSnapshot) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
 		return
 	}
-	m.hostState = state
+	m.hostSnapshot = state
 	m.publishLocked()
 }
 
@@ -157,9 +158,9 @@ func (m *manager) addManualForward(ctx context.Context, add AddManualForward) (O
 		closeOwnedForward(owner)
 		return Outcome{}, &DomainError{Kind: ErrorCommandIDConflict}
 	}
-	startConnection := m.hostState.connection == ConnectionDisconnected
+	startConnection := m.hostSnapshot.Connection == ConnectionDisconnected
 	if startConnection {
-		m.hostState.connection = ConnectionConnecting
+		m.hostSnapshot.Connection = ConnectionConnecting
 	}
 	m.publishLocked()
 	outcome := Outcome{Kind: OutcomeForwardAdded, Revision: m.revision, Forward: cloneForward(forward)}

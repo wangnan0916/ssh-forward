@@ -13,22 +13,14 @@ import (
 	"ssh-forward/cli/internal/proxy"
 )
 
-// hostState is the per-host state the hostActor publishes to the Manager for
-// canonical Snapshot publication. The actor owns the authoritative state; the
-// Manager's copy changes only through publishHostState, so the two never
-// diverge by convention.
-type hostState struct {
-	connection           ConnectionState
-	discovery            DiscoverySnapshot
-	listenerObservations []ListenerObservation
-	listenerLifetimes    []ListenerLifetimeSnapshot
-}
-
+// The actor publishes the published host shape directly (Forwards are filled
+// in by the Manager at publication time), so the Manager's copy and the
+// Snapshot never diverge by construction.
 type hostActorOptions struct {
 	host       HostAlias
 	connector  hostConnector
 	dialer     *currentDialer
-	publish    func(hostState)
+	publish    func(HostSnapshot)
 	retryDelay func(int) time.Duration
 	retryWait  func(context.Context, time.Duration) bool
 	ctx        context.Context
@@ -43,7 +35,7 @@ type hostActor struct {
 	host       HostAlias
 	connector  hostConnector
 	dialer     *currentDialer
-	publish    func(hostState)
+	publish    func(HostSnapshot)
 	retryDelay func(int) time.Duration
 	retryWait  func(context.Context, time.Duration) bool
 	ctx        context.Context
@@ -226,7 +218,6 @@ func (a *hostActor) applyObservationSet(set ObservationSet) {
 	a.listenerLifetimes = verdicts
 	a.publishLocked()
 }
-
 func (a *hostActor) applyDiscoveryChange(change DiscoveryChange) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -275,11 +266,12 @@ func (a *hostActor) publishConnectionFailure() {
 }
 
 func (a *hostActor) publishLocked() {
-	a.publish(hostState{
-		connection:           a.connection,
-		discovery:            a.discovery,
-		listenerObservations: a.listenerObservations,
-		listenerLifetimes:    a.listenerLifetimes,
+	a.publish(HostSnapshot{
+		Alias:                a.host,
+		Connection:           a.connection,
+		Discovery:            a.discovery,
+		ListenerObservations: a.listenerObservations,
+		ListenerLifetimes:    a.listenerLifetimes,
 	})
 }
 

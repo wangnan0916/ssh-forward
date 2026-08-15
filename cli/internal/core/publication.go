@@ -32,16 +32,11 @@ func (m *manager) buildSnapshotLocked() Snapshot {
 	if m.host == "" {
 		return Snapshot{Revision: m.revision}
 	}
+	host := m.hostSnapshot
+	host.Forwards = m.forwards.snapshots()
 	return Snapshot{
 		Revision: m.revision,
-		Host: &HostSnapshot{
-			Alias:                m.host,
-			Connection:           m.hostState.connection,
-			Discovery:            m.hostState.discovery,
-			ListenerObservations: m.hostState.listenerObservations,
-			ListenerLifetimes:    m.hostState.listenerLifetimes,
-			Forwards:             m.forwards.snapshots(),
-		},
+		Host:     &host,
 	}
 }
 
