@@ -3,33 +3,10 @@ package core
 import (
 	"context"
 	"errors"
-	"net"
-	"net/netip"
 	"reflect"
-	"strconv"
-	"sync"
 	"testing"
 	"time"
-
-	"ssh-forward/cli/internal/proxy"
 )
-
-type delayedDialSession struct {
-	*directHostSession
-	started     chan struct{}
-	release     chan struct{}
-	releaseOnce sync.Once
-}
-
-func (s *delayedDialSession) DialContext(context.Context, netip.AddrPort) (proxy.HalfCloseConn, error) {
-	close(s.started)
-	<-s.release
-	return nil, errors.New("dial released after Endpoint shutdown")
-}
-
-func (s *delayedDialSession) releaseDial() {
-	s.releaseOnce.Do(func() { close(s.release) })
-}
 
 type removeResult struct {
 	outcome Outcome
@@ -37,14 +14,14 @@ type removeResult struct {
 }
 
 func TestIdempotentRemoveWaitsUntilEndpointStops(t *testing.T) {
-	manager, session, added, connection := setupDelayedRemoval(t)
+	manager, owner, added := setupDelayedRemoval(t)
 	command := RemoveForward{CommandID: CommandID("operation-remove"), ForwardID: added.Forward.ID}
 	firstDone := executeRemove(manager, command)
-	waitForEndpointStop(t, connection)
+	waitForForwardClosure(t, owner)
 	retryDone := executeRemove(manager, command)
 	assertRemoveStillWaiting(t, retryDone)
 
-	session.releaseDial()
+	releaseForwardClosure(owner)
 	first := <-firstDone
 	retry := <-retryDone
 	if first.err != nil || retry.err != nil {
@@ -56,7 +33,7 @@ func TestIdempotentRemoveWaitsUntilEndpointStops(t *testing.T) {
 }
 
 func TestCancelledRemoveFinishesCommittedShutdownInBackground(t *testing.T) {
-	manager, session, added, connection := setupDelayedRemoval(t)
+	manager, owner, added := setupDelayedRemoval(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	command := RemoveForward{CommandID: CommandID("operation-remove"), ForwardID: added.Forward.ID}
 	done := make(chan removeResult, 1)
@@ -64,7 +41,7 @@ func TestCancelledRemoveFinishesCommittedShutdownInBackground(t *testing.T) {
 		outcome, err := manager.Execute(ctx, command)
 		done <- removeResult{outcome: outcome, err: err}
 	}()
-	waitForEndpointStop(t, connection)
+	waitForForwardClosure(t, owner)
 	cancel()
 	result := <-done
 	if !errors.Is(result.err, context.Canceled) {
@@ -75,10 +52,10 @@ func TestCancelledRemoveFinishesCommittedShutdownInBackground(t *testing.T) {
 		t.Fatalf("Snapshot: %v", err)
 	}
 	if len(snapshot.Hosts[0].Forwards) != 1 {
-		t.Fatalf("removal published before Endpoint workers stopped: %#v", snapshot)
+		t.Fatalf("removal published before Local Endpoint workers stopped: %#v", snapshot)
 	}
 
-	session.releaseDial()
+	releaseForwardClosure(owner)
 	deadline := time.Now().Add(time.Second)
 	for {
 		snapshot, err = manager.Snapshot(context.Background(), AllHosts())
@@ -99,19 +76,19 @@ func TestCancelledRemoveFinishesCommittedShutdownInBackground(t *testing.T) {
 }
 
 func TestConcurrentDifferentRemoveWaitsForConsistentSnapshot(t *testing.T) {
-	manager, session, added, connection := setupDelayedRemoval(t)
+	manager, owner, added := setupDelayedRemoval(t)
 	firstDone := executeRemove(manager, RemoveForward{
 		CommandID: CommandID("operation-remove-1"),
 		ForwardID: added.Forward.ID,
 	})
-	waitForEndpointStop(t, connection)
+	waitForForwardClosure(t, owner)
 	secondDone := executeRemove(manager, RemoveForward{
 		CommandID: CommandID("operation-remove-2"),
 		ForwardID: added.Forward.ID,
 	})
 	assertRemoveStillWaiting(t, secondDone)
 
-	session.releaseDial()
+	releaseForwardClosure(owner)
 	if result := <-firstDone; result.err != nil {
 		t.Fatalf("first remove: %v", result.err)
 	}
@@ -129,41 +106,42 @@ func TestConcurrentDifferentRemoveWaitsForConsistentSnapshot(t *testing.T) {
 	}
 }
 
-func setupDelayedRemoval(t *testing.T) (*manager, *delayedDialSession, Outcome, net.Conn) {
+func setupDelayedRemoval(t *testing.T) (*manager, *scriptedOwnedForward, Outcome) {
 	t.Helper()
-	session := &delayedDialSession{
-		directHostSession: newDirectHostSession(),
-		started:           make(chan struct{}),
-		release:           make(chan struct{}),
+	owner := &scriptedOwnedForward{
+		projection: ForwardSnapshot{
+			ID:                 ForwardID("manual:operation-add"),
+			Kind:               ForwardManual,
+			RemotePort:         8080,
+			RemoteFamily:       FamilyIPv4,
+			AllocatedLocalPort: 8087,
+			LocalFamilies:      []AddressFamily{FamilyIPv4, FamilyIPv6},
+		},
+		closeStart: make(chan struct{}),
+		closeDone:  make(chan struct{}),
 	}
 	manager := newManager(managerOptions{
 		host:      HostAlias("development"),
-		connector: immediateConnector{session: session},
+		connector: blockingConnector{started: make(chan HostAlias, 1)},
+		forwardAllocator: scriptedForwardAllocator{
+			requests: make(chan forwardSpec, 1),
+			owner:    owner,
+		},
 	})
-	t.Cleanup(func() { _ = manager.Close(context.Background()) })
-	t.Cleanup(session.releaseDial)
+	t.Cleanup(func() {
+		releaseForwardClosure(owner)
+		_ = manager.Close(context.Background())
+	})
 	added, err := manager.Execute(context.Background(), AddManualForward{
 		CommandID:  CommandID("operation-add"),
 		Host:       HostAlias("development"),
-		RemotePort: freePort(t),
+		RemotePort: 8080,
 		Family:     FamilyAuto,
 	})
 	if err != nil {
 		t.Fatalf("add Manual Forward: %v", err)
 	}
-	waitForConnectionState(t, manager, ConnectionConnected, 2)
-	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(added.Forward.AllocatedLocalPort)))
-	connection, err := net.DialTimeout("tcp4", address, time.Second)
-	if err != nil {
-		t.Fatalf("connect to Local Endpoint: %v", err)
-	}
-	t.Cleanup(func() { _ = connection.Close() })
-	select {
-	case <-session.started:
-	case <-time.After(time.Second):
-		t.Fatal("proxied dial did not start")
-	}
-	return manager, session, added, connection
+	return manager, owner, added
 }
 
 func executeRemove(manager Manager, command RemoveForward) <-chan removeResult {
@@ -175,22 +153,24 @@ func executeRemove(manager Manager, command RemoveForward) <-chan removeResult {
 	return done
 }
 
-func waitForEndpointStop(t *testing.T, connection net.Conn) {
+func waitForForwardClosure(t *testing.T, owner *scriptedOwnedForward) {
 	t.Helper()
-	if err := connection.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
-		t.Fatalf("set Local Endpoint deadline: %v", err)
+	select {
+	case <-owner.closeStart:
+	case <-time.After(time.Second):
+		t.Fatal("Local Endpoint closure did not start")
 	}
-	buffer := make([]byte, 1)
-	if _, err := connection.Read(buffer); err == nil {
-		t.Fatal("Local Endpoint remained open after removal started")
-	}
+}
+
+func releaseForwardClosure(owner *scriptedOwnedForward) {
+	owner.release()
 }
 
 func assertRemoveStillWaiting(t *testing.T, done <-chan removeResult) {
 	t.Helper()
 	select {
 	case result := <-done:
-		t.Fatalf("remove returned before Endpoint stopped: %#v", result)
+		t.Fatalf("remove returned before Local Endpoint stopped: %#v", result)
 	case <-time.After(50 * time.Millisecond):
 	}
 }

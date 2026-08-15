@@ -1,11 +1,6 @@
 package core
 
-import (
-	"context"
-	"time"
-
-	"ssh-forward/cli/internal/proxy"
-)
+import "context"
 
 type commandRecord struct {
 	command Command
@@ -92,10 +87,4 @@ func sameCommand(left, right Command) bool {
 	default:
 		return false
 	}
-}
-
-func closeEndpoint(endpoint *proxy.Endpoint) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	_ = endpoint.Close(ctx)
 }

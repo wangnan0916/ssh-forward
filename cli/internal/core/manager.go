@@ -1,38 +1,34 @@
 package core
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"net/netip"
-	"slices"
 	"sync"
 	"time"
-
-	"ssh-forward/cli/internal/proxy"
 )
 
 type managerOptions struct {
-	host       HostAlias
-	connector  hostConnector
-	retryDelay func(int) time.Duration
-	retryWait  func(context.Context, time.Duration) bool
+	host             HostAlias
+	connector        hostConnector
+	forwardAllocator forwardAllocator
+	retryDelay       func(int) time.Duration
+	retryWait        func(context.Context, time.Duration) bool
 }
 
 type manager struct {
-	mu         sync.RWMutex
-	closed     bool
-	host       HostAlias
-	connector  hostConnector
-	revision   Revision
-	connection ConnectionState
-	forwards   []ForwardSnapshot
-	endpoints  []*proxy.Endpoint
-	commands   map[CommandID]commandRecord
-	pending    map[CommandID]*pendingCommand
-	removing   map[ForwardID]CommandID
-	dialer     *currentDialer
-	session    hostSession
+	mu               sync.RWMutex
+	closed           bool
+	host             HostAlias
+	connector        hostConnector
+	forwardAllocator forwardAllocator
+	revision         Revision
+	connection       ConnectionState
+	forwards         forwardTable
+	commands         map[CommandID]commandRecord
+	pending          map[CommandID]*pendingCommand
+	dialer           *currentDialer
+	session          hostSession
 
 	retryDelay func(int) time.Duration
 	retryWait  func(context.Context, time.Duration) bool
@@ -60,18 +56,24 @@ func newManager(options managerOptions) *manager {
 	if retryWait == nil {
 		retryWait = waitForRetry
 	}
+	dialer := &currentDialer{}
+	allocator := options.forwardAllocator
+	if allocator == nil {
+		allocator = proxyForwardAllocator{dialer: dialer}
+	}
 	return &manager{
-		host:       options.host,
-		connector:  options.connector,
-		connection: ConnectionDisconnected,
-		commands:   make(map[CommandID]commandRecord),
-		pending:    make(map[CommandID]*pendingCommand),
-		removing:   make(map[ForwardID]CommandID),
-		dialer:     &currentDialer{},
-		retryDelay: retryDelay,
-		retryWait:  retryWait,
-		ctx:        ctx,
-		cancel:     cancel,
+		host:             options.host,
+		connector:        options.connector,
+		forwardAllocator: allocator,
+		connection:       ConnectionDisconnected,
+		forwards:         newForwardTable(),
+		commands:         make(map[CommandID]commandRecord),
+		pending:          make(map[CommandID]*pendingCommand),
+		dialer:           dialer,
+		retryDelay:       retryDelay,
+		retryWait:        retryWait,
+		ctx:              ctx,
+		cancel:           cancel,
 	}
 }
 
@@ -101,45 +103,38 @@ func (m *manager) addManualForward(ctx context.Context, add AddManualForward) (O
 		return Outcome{}, err
 	}
 
-	endpoint, err := proxy.OpenEndpoint(proxy.EndpointOptions{
-		PreferredPort: add.RemotePort,
-		Remote:        remote,
-		Dialer:        m.dialer,
+	owner, err := m.forwardAllocator.Allocate(ctx, forwardSpec{
+		ID:                 ForwardID("manual:" + string(add.CommandID)),
+		Kind:               ForwardManual,
+		Remote:             remote,
+		PreferredLocalPort: add.RemotePort,
 	})
 	if err != nil {
 		m.failCommand(add.CommandID)
-		if errors.Is(err, proxy.ErrLocalPortConflict) {
+		if errors.Is(err, errLocalEndpointConflict) {
 			return Outcome{}, &DomainError{Kind: ErrorLocalPortConflict, Retryable: true}
 		}
 		return Outcome{}, err
 	}
-	if err := ctx.Err(); err != nil {
-		closeEndpoint(endpoint)
-		m.failCommand(add.CommandID)
-		return Outcome{}, err
-	}
-	forward := ForwardSnapshot{
-		ID:                 ForwardID("manual:" + string(add.CommandID)),
-		Kind:               ForwardManual,
-		RemotePort:         add.RemotePort,
-		RemoteFamily:       familyForAddress(remote.Addr()),
-		AllocatedLocalPort: endpoint.LocalPort(),
-		LocalFamilies:      []AddressFamily{FamilyIPv4, FamilyIPv6},
-	}
+	forward := owner.Projection()
 
 	m.mu.Lock()
 	if m.closed || ctx.Err() != nil {
 		closed := m.closed
 		m.failCommandLocked(add.CommandID)
 		m.mu.Unlock()
-		closeEndpoint(endpoint)
+		closeOwnedForward(owner)
 		if closed {
 			return Outcome{}, &DomainError{Kind: ErrorManagerClosed, Retryable: true}
 		}
 		return Outcome{}, ctx.Err()
 	}
-	m.endpoints = append(m.endpoints, endpoint)
-	m.forwards = append(m.forwards, forward)
+	if !m.forwards.add(owner) {
+		m.failCommandLocked(add.CommandID)
+		m.mu.Unlock()
+		closeOwnedForward(owner)
+		return Outcome{}, &DomainError{Kind: ErrorCommandIDConflict}
+	}
 	m.revision++
 	startConnection := m.connection == ConnectionDisconnected
 	if startConnection {
@@ -160,7 +155,7 @@ func (m *manager) removeForward(ctx context.Context, remove RemoveForward) (Outc
 	if outcome, replayed, err := m.beginCommand(ctx, remove.CommandID, remove); replayed || err != nil {
 		return outcome, err
 	}
-	endpoint, forward, err := m.reserveRemoval(ctx, remove)
+	owner, forward, err := m.reserveRemoval(ctx, remove)
 	if err != nil {
 		m.failCommand(remove.CommandID)
 		m.workers.Done()
@@ -169,7 +164,7 @@ func (m *manager) removeForward(ctx context.Context, remove RemoveForward) (Outc
 
 	closed := make(chan error, 1)
 	go func() {
-		closed <- endpoint.Close(context.Background())
+		closed <- owner.Close(context.Background())
 	}()
 	select {
 	case closeErr := <-closed:
@@ -189,7 +184,7 @@ func (m *manager) removeForward(ctx context.Context, remove RemoveForward) (Outc
 	}
 }
 
-func (m *manager) reserveRemoval(ctx context.Context, remove RemoveForward) (*proxy.Endpoint, ForwardSnapshot, error) {
+func (m *manager) reserveRemoval(ctx context.Context, remove RemoveForward) (ownedForward, ForwardSnapshot, error) {
 	for {
 		m.mu.Lock()
 		if err := ctx.Err(); err != nil {
@@ -200,7 +195,12 @@ func (m *manager) reserveRemoval(ctx context.Context, remove RemoveForward) (*pr
 			m.mu.Unlock()
 			return nil, ForwardSnapshot{}, &DomainError{Kind: ErrorManagerClosed, Retryable: true}
 		}
-		if operationID, found := m.removing[remove.ForwardID]; found {
+		owner, forward, operationID, state := m.forwards.reserveRemoval(remove.ForwardID, remove.CommandID)
+		switch state {
+		case removalAvailable:
+			m.mu.Unlock()
+			return owner, cloneForward(forward), nil
+		case removalInProgress:
 			pending := m.pending[operationID]
 			m.mu.Unlock()
 			if pending == nil {
@@ -212,30 +212,19 @@ func (m *manager) reserveRemoval(ctx context.Context, remove RemoveForward) (*pr
 			case <-pending.done:
 				continue
 			}
+		default:
+			m.mu.Unlock()
+			return nil, ForwardSnapshot{}, &DomainError{Kind: ErrorForwardNotFound}
 		}
-		for index, forward := range m.forwards {
-			if forward.ID == remove.ForwardID {
-				m.removing[remove.ForwardID] = remove.CommandID
-				m.mu.Unlock()
-				return m.endpoints[index], cloneForward(forward), nil
-			}
-		}
-		m.mu.Unlock()
-		return nil, ForwardSnapshot{}, &DomainError{Kind: ErrorForwardNotFound}
 	}
 }
 
 func (m *manager) completeRemoval(remove RemoveForward, forward ForwardSnapshot) Outcome {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for index, candidate := range m.forwards {
-		if candidate.ID == remove.ForwardID {
-			m.forwards = append(m.forwards[:index], m.forwards[index+1:]...)
-			m.endpoints = append(m.endpoints[:index], m.endpoints[index+1:]...)
-			break
-		}
+	if removed, found := m.forwards.completeRemoval(remove.ForwardID, remove.CommandID); found {
+		forward = removed
 	}
-	delete(m.removing, remove.ForwardID)
 	m.revision++
 	outcome := Outcome{Kind: OutcomeForwardRemoved, Revision: m.revision, Forward: cloneForward(forward)}
 	m.completeCommandLocked(remove.CommandID, remove, outcome)
@@ -269,13 +258,7 @@ func (m *manager) Snapshot(context.Context, Scope) (Snapshot, error) {
 	if m.host == "" {
 		return Snapshot{Revision: m.revision}, nil
 	}
-	forwards := make([]ForwardSnapshot, len(m.forwards))
-	for index, forward := range m.forwards {
-		forwards[index] = cloneForward(forward)
-	}
-	slices.SortFunc(forwards, func(left, right ForwardSnapshot) int {
-		return cmp.Compare(left.ID, right.ID)
-	})
+	forwards := m.forwards.snapshots()
 	return Snapshot{
 		Revision: m.revision,
 		Hosts: []HostSnapshot{
@@ -308,13 +291,13 @@ func (m *manager) Close(ctx context.Context) error {
 		m.closed = true
 		m.cancel()
 	}
-	endpoints := append([]*proxy.Endpoint(nil), m.endpoints...)
+	forwards := m.forwards.owners()
 	session := m.session
 	m.mu.Unlock()
 
 	var errs []error
-	for _, endpoint := range endpoints {
-		errs = append(errs, endpoint.Close(ctx))
+	for _, forward := range forwards {
+		errs = append(errs, forward.Close(ctx))
 	}
 	if session != nil {
 		errs = append(errs, session.Close(ctx))
