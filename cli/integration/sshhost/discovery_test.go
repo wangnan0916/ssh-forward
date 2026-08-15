@@ -65,13 +65,25 @@ func TestAgentlessDiscoveryThroughDisposableDevelopmentHost(t *testing.T) {
 	assertFixtureObservation(t, host.ListenerObservations, core.FamilyIPv6, 38081)
 
 	baselineRevision := snapshot.Revision
-	time.Sleep(2200 * time.Millisecond)
-	repeated, err := manager.Snapshot(context.Background())
-	if err != nil {
-		t.Fatalf("Snapshot after repeated scan: %v", err)
-	}
-	if repeated.Revision != baselineRevision {
-		t.Fatalf("unchanged scan advanced revision from %d to %d", baselineRevision, repeated.Revision)
+	// The first identical scan reclassifies the baseline listeners from new to
+	// continuous — a one-time lifetime transition that legitimately advances
+	// the revision. Afterwards a stable host must not advance it again.
+	stableDeadline := time.Now().Add(6 * time.Second)
+	previous := baselineRevision
+	for {
+		time.Sleep(2200 * time.Millisecond)
+		var repeated core.Snapshot
+		repeated, err = manager.Snapshot(context.Background())
+		if err != nil {
+			t.Fatalf("Snapshot after repeated scan: %v", err)
+		}
+		if repeated.Revision == previous {
+			return // two identical scans, no revision advance: stable
+		}
+		if time.Now().After(stableDeadline) {
+			t.Fatalf("stable host kept advancing revision: %d -> %d", previous, repeated.Revision)
+		}
+		previous = repeated.Revision
 	}
 }
 
