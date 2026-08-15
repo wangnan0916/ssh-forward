@@ -309,14 +309,13 @@ func (m *manager) Close(ctx context.Context) error {
 	for _, forward := range forwards {
 		errs = append(errs, forward.Close(ctx))
 	}
-	if !m.actor.isStarted() {
-		return errors.Join(errs...)
-	}
 	errs = append(errs, m.actor.closeSession(ctx))
 	done := make(chan struct{})
 	go func() {
 		m.workers.Wait()
-		<-m.actor.done
+		if m.actor.isStarted() {
+			<-m.actor.done
+		}
 		close(done)
 	}()
 	select {

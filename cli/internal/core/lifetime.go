@@ -68,14 +68,14 @@ func (t *lifetimeTracker) advance(observations []ListenerObservation) []Listener
 		switch {
 		case record == nil:
 			t.lifetimes[key] = &listenerLifetime{identities: identities}
-			verdicts = append(verdicts, lifetimeVerdict(observation, LifetimeNew))
+			verdicts = append(verdicts, lifetimeVerdict(key, LifetimeNew))
 		case len(record.identities) != 0 && len(identities) != 0 && !overlappingIdentities(record.identities, identities):
 			t.lifetimes[key] = &listenerLifetime{identities: identities}
-			verdicts = append(verdicts, lifetimeVerdict(observation, LifetimeReplaced))
+			verdicts = append(verdicts, lifetimeVerdict(key, LifetimeReplaced))
 		default:
 			record.identities = identities
 			record.grace = 0
-			verdicts = append(verdicts, lifetimeVerdict(observation, LifetimeContinuous))
+			verdicts = append(verdicts, lifetimeVerdict(key, LifetimeContinuous))
 		}
 	}
 	for key, record := range t.lifetimes {
@@ -85,18 +85,10 @@ func (t *lifetimeTracker) advance(observations []ListenerObservation) []Listener
 		record.grace++
 		if record.grace > t.graceCycles {
 			delete(t.lifetimes, key)
-			verdicts = append(verdicts, lifetimeVerdict(ListenerObservation{
-				Family:     key.family,
-				BindScope:  key.scope,
-				RemotePort: key.port,
-			}, LifetimeEnded))
+			verdicts = append(verdicts, lifetimeVerdict(key, LifetimeEnded))
 			continue
 		}
-		verdicts = append(verdicts, lifetimeVerdict(ListenerObservation{
-			Family:     key.family,
-			BindScope:  key.scope,
-			RemotePort: key.port,
-		}, LifetimeGrace))
+		verdicts = append(verdicts, lifetimeVerdict(key, LifetimeGrace))
 	}
 	slices.SortFunc(verdicts, func(left, right ListenerLifetimeSnapshot) int {
 		if order := cmp.Compare(left.Family, right.Family); order != 0 {
@@ -127,11 +119,11 @@ func overlappingIdentities(previous, current map[SocketIdentity]struct{}) bool {
 	return false
 }
 
-func lifetimeVerdict(observation ListenerObservation, status LifetimeStatus) ListenerLifetimeSnapshot {
+func lifetimeVerdict(key remoteListenerKey, status LifetimeStatus) ListenerLifetimeSnapshot {
 	return ListenerLifetimeSnapshot{
-		Family:     observation.Family,
-		BindScope:  observation.BindScope,
-		RemotePort: observation.RemotePort,
+		Family:     key.family,
+		BindScope:  key.scope,
+		RemotePort: key.port,
 		Status:     status,
 	}
 }

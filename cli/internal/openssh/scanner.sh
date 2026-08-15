@@ -10,7 +10,9 @@ process_capability=unavailable
 scans_since_attribution=30
 attribution_interval=30
 listener_limit=256
-socket_record_limit=256
+# One listener line per observed socket, so the per-scan socket budget is
+# the same cap applied to listener records.
+socket_record_limit=$listener_limit
 process_record_limit=512
 metadata_bytes_limit=131072
 metadata_hex_limit=$((metadata_bytes_limit * 2))

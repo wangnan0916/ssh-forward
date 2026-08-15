@@ -362,13 +362,7 @@ func TestManagerPublishesDiscoveryBaselineAtomically(t *testing.T) {
 }
 
 func TestManagerDegradesDiscoveryOnObservationSequenceGap(t *testing.T) {
-	session := newScriptedDiscoverySession()
-	manager := newManager(managerOptions{
-		host:      HostAlias("development"),
-		connector: oneSessionConnector{session: session},
-	})
-	manager.actor.start()
-	waitForDiscoveryState(t, manager, DiscoveryStarting)
+	manager, session := newDiscoveryManager(t)
 	fullCapability := DiscoveryCapability{
 		RemoteListeners: CapabilityFull,
 		SocketIdentity:  CapabilityFull,
@@ -397,13 +391,7 @@ func TestManagerDegradesDiscoveryOnObservationSequenceGap(t *testing.T) {
 }
 
 func TestManagerRejectsStaleObservationSequence(t *testing.T) {
-	session := newScriptedDiscoverySession()
-	manager := newManager(managerOptions{
-		host:      HostAlias("development"),
-		connector: oneSessionConnector{session: session},
-	})
-	manager.actor.start()
-	waitForDiscoveryState(t, manager, DiscoveryStarting)
+	manager, session := newDiscoveryManager(t)
 	fullCapability := DiscoveryCapability{
 		RemoteListeners: CapabilityFull,
 		SocketIdentity:  CapabilityFull,
@@ -425,13 +413,7 @@ func TestManagerRejectsObservationBudgetViolations(t *testing.T) {
 		"zeroSocket": {Listeners: 256, Sockets: 0, ProcessRecords: 512, MetadataBytes: 128 << 10},
 	} {
 		t.Run(name, func(t *testing.T) {
-			session := newScriptedDiscoverySession()
-			manager := newManager(managerOptions{
-				host:      HostAlias("development"),
-				connector: oneSessionConnector{session: session},
-			})
-			manager.actor.start()
-			waitForDiscoveryState(t, manager, DiscoveryStarting)
+			manager, session := newDiscoveryManager(t)
 			session.facts <- ObservationSet{Sequence: 1, Capability: fullTestCapability, Budget: budget}
 			failed := waitForDiscoveryState(t, manager, DiscoveryFailed)
 			if got := failed.Host.Discovery.Diagnostic; got != "invalid_session_fact" {
@@ -442,15 +424,26 @@ func TestManagerRejectsObservationBudgetViolations(t *testing.T) {
 }
 
 func TestManagerAcceptsDeclaredObservationBudget(t *testing.T) {
+	manager, session := newDiscoveryManager(t)
+	session.facts <- ObservationSet{Sequence: 1, Capability: fullTestCapability, Budget: fullObservationBudget}
+	waitForDiscoveryState(t, manager, DiscoveryHealthy)
+}
+
+func newDiscoveryManager(t *testing.T) (*manager, *scriptedDiscoverySession) {
+	t.Helper()
 	session := newScriptedDiscoverySession()
 	manager := newManager(managerOptions{
 		host:      HostAlias("development"),
 		connector: oneSessionConnector{session: session},
 	})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = manager.Close(ctx)
+	})
 	manager.actor.start()
 	waitForDiscoveryState(t, manager, DiscoveryStarting)
-	session.facts <- ObservationSet{Sequence: 1, Capability: fullTestCapability, Budget: fullObservationBudget}
-	waitForDiscoveryState(t, manager, DiscoveryHealthy)
+	return manager, session
 }
 
 func waitForDiscoveryBaseline(t *testing.T, manager Manager, established bool) Snapshot {

@@ -7,23 +7,6 @@ import (
 	"time"
 )
 
-func newDiscoveryManager(t *testing.T) (*manager, *scriptedDiscoverySession) {
-	t.Helper()
-	session := newScriptedDiscoverySession()
-	manager := newManager(managerOptions{
-		host:      HostAlias("development"),
-		connector: oneSessionConnector{session: session},
-	})
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		_ = manager.Close(ctx)
-	})
-	manager.actor.start()
-	waitForDiscoveryState(t, manager, DiscoveryStarting)
-	return manager, session
-}
-
 func TestManagerPublishesListenerLifetimes(t *testing.T) {
 	manager, session := newDiscoveryManager(t)
 

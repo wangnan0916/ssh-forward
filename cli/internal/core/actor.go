@@ -214,6 +214,9 @@ func (a *hostActor) applyObservationSet(set ObservationSet) {
 		discovery.Diagnostic = "observation_resync"
 	}
 	if reflect.DeepEqual(a.discovery, discovery) && reflect.DeepEqual(a.listenerObservations, observations) {
+		// Nothing changed, so the lifetime tracker would also classify this
+		// generation identically (same identities, grace already zero); leave
+		// it untouched rather than churn the published verdicts.
 		return
 	}
 	a.discovery = discovery
