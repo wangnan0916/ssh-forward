@@ -441,7 +441,7 @@ func newDiscoveryManager(t *testing.T) (*manager, *scriptedDiscoverySession) {
 		defer cancel()
 		_ = manager.Close(ctx)
 	})
-	manager.actor.start()
+	manager.actor.startIfNeeded()
 	waitForDiscoveryState(t, manager, DiscoveryStarting)
 	return manager, session
 }

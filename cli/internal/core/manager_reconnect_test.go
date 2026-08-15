@@ -214,3 +214,70 @@ func waitForConnectionState(t *testing.T, manager Manager, state ConnectionState
 		time.Sleep(time.Millisecond)
 	}
 }
+
+// countingSuspendConnector records every connection attempt and fails each
+// one terminally, like an SSH authentication failure.
+type countingSuspendConnector struct {
+	mu       sync.Mutex
+	attempts int
+	started  chan int
+}
+
+func (c *countingSuspendConnector) Connect(context.Context, HostAlias) (hostSession, error) {
+	c.mu.Lock()
+	c.attempts++
+	attempt := c.attempts
+	c.mu.Unlock()
+	c.started <- attempt
+	return nil, &SessionError{Disposition: SessionSuspend, Reason: SessionReasonAuthentication}
+}
+
+// A terminal failure must not leave the Manager permanently unable to
+// reconnect: a later command that needs transport re-arms the host actor.
+func TestManagerRearmsConnectionAfterTerminalFailure(t *testing.T) {
+	connector := &countingSuspendConnector{started: make(chan int, 4)}
+	manager := newManager(managerOptions{
+		host:      HostAlias("development"),
+		connector: connector,
+		retryWait: func(context.Context, time.Duration) bool {
+			t.Fatal("terminal failure unexpectedly entered retry backoff")
+			return false
+		},
+	})
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	if _, err := manager.Execute(context.Background(), AddManualForward{
+		CommandID:  CommandID("operation-1"),
+		Host:       HostAlias("development"),
+		RemotePort: freePort(t),
+		Family:     FamilyAuto,
+	}); err != nil {
+		t.Fatalf("first add Manual Forward: %v", err)
+	}
+	select {
+	case attempt := <-connector.started:
+		if attempt != 1 {
+			t.Fatalf("first connection attempt = %d, want 1", attempt)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first connection attempt did not start")
+	}
+	waitForConnectionState(t, manager, ConnectionDisconnected, 2)
+
+	if _, err := manager.Execute(context.Background(), AddManualForward{
+		CommandID:  CommandID("operation-2"),
+		Host:       HostAlias("development"),
+		RemotePort: freePort(t),
+		Family:     FamilyAuto,
+	}); err != nil {
+		t.Fatalf("second add Manual Forward: %v", err)
+	}
+	select {
+	case attempt := <-connector.started:
+		if attempt != 2 {
+			t.Fatalf("re-arm connection attempt = %d, want 2", attempt)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("re-arm connection attempt did not start")
+	}
+}

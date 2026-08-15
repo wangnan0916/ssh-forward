@@ -90,6 +90,18 @@ func newManager(options managerOptions) *manager {
 
 // publishHostState is the only writer of the Manager's hostSnapshot copy; the
 // hostActor calls it after every per-host transition it owns.
+// beginConnectionLocked marks a disconnected host as Connecting without
+// publishing: the caller publishes once with the command outcome, so the
+// transition is visible in the same revision as the command result. The
+// hostActor then takes over state publication from Connected onward.
+func (m *manager) beginConnectionLocked() bool {
+	if m.hostSnapshot.Connection != ConnectionDisconnected {
+		return false
+	}
+	m.hostSnapshot.Connection = ConnectionConnecting
+	return true
+}
+
 func (m *manager) publishHostState(state HostSnapshot) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -158,17 +170,14 @@ func (m *manager) addManualForward(ctx context.Context, add AddManualForward) (O
 		closeOwnedForward(owner)
 		return Outcome{}, &DomainError{Kind: ErrorCommandIDConflict}
 	}
-	startConnection := m.hostSnapshot.Connection == ConnectionDisconnected
-	if startConnection {
-		m.hostSnapshot.Connection = ConnectionConnecting
-	}
+	startConnection := m.beginConnectionLocked()
 	m.publishLocked()
 	outcome := Outcome{Kind: OutcomeForwardAdded, Revision: m.revision, Forward: cloneForward(forward)}
 	m.completeCommandLocked(add.CommandID, add, outcome)
 	m.mu.Unlock()
 
 	if startConnection {
-		m.actor.start()
+		m.actor.startIfNeeded()
 	}
 	return outcome, nil
 }
@@ -314,7 +323,7 @@ func (m *manager) Close(ctx context.Context) error {
 	done := make(chan struct{})
 	go func() {
 		m.workers.Wait()
-		if m.actor.isStarted() {
+		if m.actor.isActive() {
 			<-m.actor.done
 		}
 		close(done)

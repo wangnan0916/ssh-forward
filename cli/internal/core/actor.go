@@ -41,7 +41,7 @@ type hostActor struct {
 	ctx        context.Context
 
 	mu                      sync.Mutex
-	started                 bool
+	active                  bool
 	session                 hostSession
 	connection              ConnectionState
 	discovery               DiscoverySnapshot
@@ -69,28 +69,40 @@ func newHostActor(options hostActorOptions) *hostActor {
 	}
 }
 
-// start launches the connect loop exactly once. The Manager has already
-// published the Connecting transition synchronously under its own lock, so
-// start publishes nothing itself; the loop publishes from Connected onward.
-func (a *hostActor) start() {
+// startIfNeeded launches the connect loop unless one is already running or
+// the Manager is shutting down. It is idempotent and re-arms after the loop
+// ends, so a later command can retry a terminally failed session. The
+// Manager has already published the Connecting transition synchronously
+// under its own lock, so startIfNeeded publishes nothing itself; the loop
+// publishes from Connected onward.
+func (a *hostActor) startIfNeeded() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.started {
+	if a.active || a.ctx.Err() != nil {
 		return
 	}
-	a.started = true
+	a.active = true
 	a.connection = ConnectionConnecting
+	a.done = make(chan struct{})
 	go a.run()
 }
 
-func (a *hostActor) isStarted() bool {
+func (a *hostActor) isActive() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.started
+	return a.active
 }
 
+// run marks the loop inactive on the way out. The connect loop itself also
+// sets active false before publishing its final Disconnected transition, so
+// a concurrently arriving command sees a completed session and can re-arm.
 func (a *hostActor) run() {
-	defer close(a.done)
+	defer func() {
+		a.mu.Lock()
+		a.active = false
+		close(a.done)
+		a.mu.Unlock()
+	}()
 	a.connect()
 }
 
@@ -135,6 +147,7 @@ func (a *hostActor) connect() {
 			a.connection = ConnectionConnecting
 		} else {
 			a.connection = ConnectionDisconnected
+			a.active = false
 		}
 		a.discovery = stoppedDiscovery()
 		a.publishLocked()
@@ -257,6 +270,7 @@ func (a *hostActor) failDiscoveryLocked(diagnostic string) {
 func (a *hostActor) publishConnectionFailure() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.active = false
 	if a.connection == ConnectionDisconnected {
 		return
 	}
