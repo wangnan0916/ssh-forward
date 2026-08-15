@@ -15,12 +15,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"ssh-forward/cli/internal/core"
 	"ssh-forward/cli/internal/proxy"
 )
-
-// sessionPlaceholder keeps the slice-3 transport alive until discovery replaces
-// it with the fixed versioned scanner in the next vertical slice.
-const sessionPlaceholder = "set -eu\nwhile :; do sleep 3600; done\n"
 
 var ErrInvalidAlias = errors.New("invalid Development Host alias")
 
@@ -61,6 +58,41 @@ func New(options Options) (*Adapter, error) {
 	}, nil
 }
 
+func (a *Adapter) Connect(ctx context.Context, host core.HostAlias) (core.HostSession, error) {
+	alias := string(host)
+	if err := a.ValidateAlias(ctx, alias); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, &core.SessionError{
+			Disposition: core.SessionSuspend,
+			Reason:      core.SessionReasonInvalidAlias,
+			Diagnostic:  "alias_validation_failed",
+		}
+	}
+	session, err := a.Start(ctx, alias)
+	if err == nil {
+		return session, nil
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	var connectionError *ConnectionError
+	if !errors.As(err, &connectionError) {
+		return nil, &core.SessionError{Disposition: core.SessionRetry, Reason: core.SessionReasonTransport}
+	}
+	switch connectionError.Kind {
+	case ExitAuthentication:
+		return nil, &core.SessionError{Disposition: core.SessionSuspend, Reason: core.SessionReasonAuthentication}
+	case ExitHostKey:
+		return nil, &core.SessionError{Disposition: core.SessionSuspend, Reason: core.SessionReasonHostKey}
+	case ExitCancelled:
+		return nil, &core.SessionError{Disposition: core.SessionClosed, Reason: core.SessionReasonClosed}
+	default:
+		return nil, &core.SessionError{Disposition: core.SessionRetry, Reason: core.SessionReasonTransport}
+	}
+}
+
 func (a *Adapter) ValidateAlias(ctx context.Context, alias string) error {
 	if !validAlias(alias) {
 		return ErrInvalidAlias
@@ -93,8 +125,11 @@ func (a *Adapter) Start(ctx context.Context, alias string) (*Session, error) {
 	)
 	command := exec.Command(a.executable, arguments...)
 	stderr := &boundedBuffer{limit: 64 << 10}
-	command.Stdin = strings.NewReader(sessionPlaceholder)
-	command.Stdout = io.Discard
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	command.Stdin = strings.NewReader(scannerScript)
 	command.Stderr = stderr
 	command.Env = approvedEnvironment()
 	command.WaitDelay = a.waitDelay
@@ -103,11 +138,14 @@ func (a *Adapter) Start(ctx context.Context, alias string) (*Session, error) {
 		return nil, err
 	}
 	session := &Session{
-		command: command,
-		dialer:  proxy.NewSOCKS5Dialer(socksAddress),
-		done:    make(chan struct{}),
-		stderr:  stderr,
+		command:     command,
+		dialer:      proxy.NewSOCKS5Dialer(socksAddress),
+		done:        make(chan struct{}),
+		stderr:      stderr,
+		facts:       newSessionFactQueue(),
+		scannerDone: make(chan struct{}),
 	}
+	go session.readScanner(stdout)
 	go session.wait()
 	if err := session.waitUntilReady(ctx, socksAddress, a.readyTimeout); err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Second)

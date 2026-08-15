@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"ssh-forward/cli/internal/core"
 	"ssh-forward/cli/internal/openssh"
 )
 
@@ -191,6 +192,30 @@ listener.close()
 		if argument == "ClearAllForwardings=yes" {
 			t.Fatal("OpenSSH arguments contain ClearAllForwardings=yes")
 		}
+	}
+}
+
+func TestConnectReturnsCoreClassifiedAuthenticationFailure(t *testing.T) {
+	directory := t.TempDir()
+	executable := filepath.Join(directory, "ssh")
+	script := `#!/bin/sh
+for argument in "$@"; do
+    [ "$argument" != "-G" ] || exit 0
+done
+printf '%s\n' 'Permission denied (publickey).' >&2
+exit 255
+`
+	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
+		t.Fatalf("write scripted OpenSSH: %v", err)
+	}
+	adapter, err := openssh.New(openssh.Options{Executable: executable, ReadyTimeout: 5 * time.Second, WaitDelay: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, err = adapter.Connect(context.Background(), core.HostAlias("development"))
+	var sessionError *core.SessionError
+	if !errors.As(err, &sessionError) || sessionError.Disposition != core.SessionSuspend || sessionError.Reason != core.SessionReasonAuthentication {
+		t.Fatalf("Connect error = %#v, want suspended authentication SessionError", err)
 	}
 }
 

@@ -2,12 +2,14 @@ package openssh
 
 import (
 	"context"
+	"io"
 	"net/netip"
 	"os/exec"
 	"strings"
 	"sync"
 	"sync/atomic"
 
+	"ssh-forward/cli/internal/core"
 	"ssh-forward/cli/internal/proxy"
 )
 
@@ -30,11 +32,13 @@ func (e *ConnectionError) Error() string {
 }
 
 type Session struct {
-	command *exec.Cmd
-	dialer  proxy.Dialer
-	done    chan struct{}
-	stderr  *boundedBuffer
-	closing atomic.Bool
+	command     *exec.Cmd
+	dialer      proxy.Dialer
+	done        chan struct{}
+	stderr      *boundedBuffer
+	facts       *sessionFactQueue
+	scannerDone chan struct{}
+	closing     atomic.Bool
 
 	exitMu   sync.Mutex
 	exitKind ExitKind
@@ -48,6 +52,29 @@ func (s *Session) DialContext(ctx context.Context, target netip.AddrPort) (proxy
 
 func (s *Session) Done() <-chan struct{} {
 	return s.done
+}
+
+func (s *Session) Next(ctx context.Context) (core.SessionFact, error) {
+	for {
+		fact, found, scannerClosed := s.facts.pop()
+		if found {
+			return fact, nil
+		}
+		if scannerClosed {
+			select {
+			case <-s.done:
+				return nil, s.terminalError()
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		select {
+		case <-s.facts.notify:
+		case <-s.done:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 }
 
 func (s *Session) Close(ctx context.Context) error {
@@ -64,8 +91,17 @@ func (s *Session) Close(ctx context.Context) error {
 	}
 }
 
+func (s *Session) readScanner(stdout io.Reader) {
+	defer close(s.scannerDone)
+	defer s.facts.close()
+	scanObservationFrames(stdout, s.facts.push)
+}
+
 func (s *Session) wait() {
 	err := s.command.Wait()
+	_ = terminateProcess(s.command)
+	_ = killProcess(s.command)
+	<-s.scannerDone
 	s.exitMu.Lock()
 	s.exitKind = classifyExit(err, s.stderr.String(), s.closing.Load())
 	s.exitMu.Unlock()
@@ -77,6 +113,19 @@ func (s *Session) ExitKind() ExitKind {
 	s.exitMu.Lock()
 	defer s.exitMu.Unlock()
 	return s.exitKind
+}
+
+func (s *Session) terminalError() error {
+	switch s.ExitKind() {
+	case ExitCancelled:
+		return &core.SessionError{Disposition: core.SessionClosed, Reason: core.SessionReasonClosed}
+	case ExitAuthentication:
+		return &core.SessionError{Disposition: core.SessionSuspend, Reason: core.SessionReasonAuthentication}
+	case ExitHostKey:
+		return &core.SessionError{Disposition: core.SessionSuspend, Reason: core.SessionReasonHostKey}
+	default:
+		return &core.SessionError{Disposition: core.SessionRetry, Reason: core.SessionReasonTransport}
+	}
 }
 
 func classifyExit(err error, stderr string, cancelled bool) ExitKind {

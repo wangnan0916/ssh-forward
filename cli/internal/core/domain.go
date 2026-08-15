@@ -26,6 +26,67 @@ const (
 	ConnectionConnected    ConnectionState = "connected"
 )
 
+type DiscoveryState string
+
+const (
+	DiscoveryStopped  DiscoveryState = "stopped"
+	DiscoveryStarting DiscoveryState = "starting"
+	DiscoveryHealthy  DiscoveryState = "healthy"
+	DiscoveryDegraded DiscoveryState = "degraded"
+	DiscoveryFailed   DiscoveryState = "failed"
+)
+
+type CapabilityAvailability string
+
+const (
+	CapabilityUnavailable CapabilityAvailability = "unavailable"
+	CapabilityPartial     CapabilityAvailability = "partial"
+	CapabilityFull        CapabilityAvailability = "full"
+)
+
+type DiscoveryCapability struct {
+	RemoteListeners CapabilityAvailability
+	SocketIdentity  CapabilityAvailability
+	ProcessMetadata CapabilityAvailability
+}
+
+type DiscoverySnapshot struct {
+	State               DiscoveryState
+	Capability          DiscoveryCapability
+	BaselineEstablished bool
+	ScannerVersion      int
+	ScannerChecksum     string
+	Diagnostic          string
+}
+
+type ListenerBindScope string
+
+const (
+	BindLoopback ListenerBindScope = "loopback"
+	BindWildcard ListenerBindScope = "wildcard"
+)
+
+type SocketIdentity string
+
+type ProcessMetadata struct {
+	PID              int
+	Executable       string
+	WorkingDirectory string
+	Arguments        []string
+}
+
+type ProcessChain struct {
+	Processes []ProcessMetadata
+}
+
+type ListenerObservation struct {
+	Family           AddressFamily
+	BindScope        ListenerBindScope
+	RemotePort       uint16
+	SocketIdentities []SocketIdentity
+	Processes        []ProcessChain
+}
+
 type ForwardKind string
 
 const ForwardManual ForwardKind = "manual"
@@ -102,9 +163,11 @@ type ForwardSnapshot struct {
 }
 
 type HostSnapshot struct {
-	Alias      HostAlias
-	Connection ConnectionState
-	Forwards   []ForwardSnapshot
+	Alias                HostAlias
+	Connection           ConnectionState
+	Discovery            DiscoverySnapshot
+	ListenerObservations []ListenerObservation
+	Forwards             []ForwardSnapshot
 }
 
 type Snapshot struct {

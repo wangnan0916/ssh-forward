@@ -16,6 +16,10 @@ _Avoid_: Client, Mac
 An eligible TCP listening endpoint identified by its Development Host, address family, bind scope, and remote port. It may bind loopback or a wildcard address and is identified independently of whichever processes currently hold its sockets.
 _Avoid_: Service, remote service, process
 
+**Socket Identity**:
+An opaque equality token for one observed listening socket on a Development Host. It remains comparable across Forwarding Sessions only while the Development Host boot and observed network namespace remain the same.
+_Avoid_: Inode, socket ID, process identity
+
 **Wildcard Listener**:
 A Remote Listener bound to all network interfaces rather than only loopback. It is treated as already exposed on the Development Host and requires an explicit policy before automatic forwarding.
 _Avoid_: Public service, loopback listener
@@ -44,6 +48,14 @@ _Avoid_: Preference, policy, saved rule
 The live, dedicated SSH connection carrying Active Forwards for one Development Host.
 _Avoid_: Terminal session, editor session
 
+**Discovery State**:
+The current health of Remote Listener observation for one Development Host, independent of whether its Forwarding Session can still carry Manual Forwards.
+_Avoid_: Connection State, Forwarding Session State
+
+**Discovery Capability**:
+The observation evidence currently available for a Development Host, distinguishing Remote Listener visibility from socket and process attribution.
+_Avoid_: Discovery State, permission level
+
 **Listener Observation**:
 A point-in-time snapshot of a Remote Listener and any processes observed holding its sockets. Process information may be absent, ambiguous, or change between observations.
 _Avoid_: Service record, stable process identity
@@ -53,7 +65,7 @@ The first complete set of Listener Observations after connecting to a Developmen
 _Avoid_: Saved state, Forwarding Policy
 
 **Listener Lifetime**:
-The period during which a Remote Listener retains continuity across successful observations, including a short disappearance grace period. It ends when the endpoint disappears or all previously observed sockets are replaced, even if the same remote port remains occupied.
+The period during which a Remote Listener retains continuity across successful observations, including a short disappearance grace period. It ends when the endpoint disappears or all previously observed Socket Identities are replaced, even if the same remote port remains occupied.
 _Avoid_: Process lifetime, Forwarding Session
 
 **One-time Approval**:

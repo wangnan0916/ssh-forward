@@ -44,9 +44,11 @@ func TestConfiguredManagerStartsDisconnectedWithoutConnecting(t *testing.T) {
 		Revision: 0,
 		Hosts: []HostSnapshot{
 			{
-				Alias:      HostAlias("development"),
-				Connection: ConnectionDisconnected,
-				Forwards:   []ForwardSnapshot{},
+				Alias:                HostAlias("development"),
+				Connection:           ConnectionDisconnected,
+				Discovery:            stoppedDiscovery(),
+				ListenerObservations: []ListenerObservation{},
+				Forwards:             []ForwardSnapshot{},
 			},
 		},
 	}
@@ -111,9 +113,11 @@ func TestAddManualForwardAllocatesEndpointAndConnectsLazily(t *testing.T) {
 		Revision: 1,
 		Hosts: []HostSnapshot{
 			{
-				Alias:      HostAlias("development"),
-				Connection: ConnectionConnecting,
-				Forwards:   []ForwardSnapshot{wantForward},
+				Alias:                HostAlias("development"),
+				Connection:           ConnectionConnecting,
+				Discovery:            stoppedDiscovery(),
+				ListenerObservations: []ListenerObservation{},
+				Forwards:             []ForwardSnapshot{wantForward},
 			},
 		},
 	}

@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net"
 	"strconv"
@@ -39,7 +38,7 @@ type permanentFailureConnector struct {
 
 func (c permanentFailureConnector) Connect(context.Context, HostAlias) (hostSession, error) {
 	close(c.started)
-	return nil, permanentConnectionError{err: errors.New("authentication failed")}
+	return nil, &SessionError{Disposition: SessionSuspend, Reason: SessionReasonAuthentication}
 }
 
 func TestManagerSuspendsReconnectAfterPermanentSSHFailure(t *testing.T) {

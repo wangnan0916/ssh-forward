@@ -35,9 +35,11 @@ func (m *manager) buildSnapshotLocked() Snapshot {
 	return Snapshot{
 		Revision: m.revision,
 		Hosts: []HostSnapshot{{
-			Alias:      m.host,
-			Connection: m.connection,
-			Forwards:   m.forwards.snapshots(),
+			Alias:                m.host,
+			Connection:           m.connection,
+			Discovery:            m.discovery,
+			ListenerObservations: m.listenerObservations,
+			Forwards:             m.forwards.snapshots(),
 		}},
 	}
 }
@@ -60,6 +62,10 @@ func cloneSnapshot(snapshot Snapshot) Snapshot {
 		cloned.Hosts[hostIndex] = HostSnapshot{
 			Alias:      host.Alias,
 			Connection: host.Connection,
+			Discovery:  host.Discovery,
+		}
+		if host.ListenerObservations != nil {
+			cloned.Hosts[hostIndex].ListenerObservations = cloneListenerObservations(host.ListenerObservations)
 		}
 		if host.Forwards == nil {
 			continue

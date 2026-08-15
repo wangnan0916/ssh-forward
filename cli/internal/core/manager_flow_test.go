@@ -35,8 +35,13 @@ func (*directHostSession) DialContext(ctx context.Context, target netip.AddrPort
 	return tcpConnection, nil
 }
 
-func (s *directHostSession) Done() <-chan struct{} {
-	return s.done
+func (s *directHostSession) Next(ctx context.Context) (SessionFact, error) {
+	select {
+	case <-s.done:
+		return nil, &SessionError{Disposition: SessionRetry, Reason: SessionReasonTransport}
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func (s *directHostSession) Close(context.Context) error {

@@ -17,21 +17,24 @@ type managerOptions struct {
 }
 
 type manager struct {
-	mu               sync.RWMutex
-	closed           bool
-	host             HostAlias
-	connector        hostConnector
-	forwardAllocator forwardAllocator
-	revision         Revision
-	connection       ConnectionState
-	forwards         forwardTable
-	snapshot         Snapshot
-	watchers         map[uint64]*snapshotStream
-	nextWatchID      uint64
-	commands         map[CommandID]commandRecord
-	pending          map[CommandID]*pendingCommand
-	dialer           *currentDialer
-	session          hostSession
+	mu                      sync.RWMutex
+	closed                  bool
+	host                    HostAlias
+	connector               hostConnector
+	forwardAllocator        forwardAllocator
+	revision                Revision
+	connection              ConnectionState
+	discovery               DiscoverySnapshot
+	listenerObservations    []ListenerObservation
+	lastObservationSequence uint64
+	forwards                forwardTable
+	snapshot                Snapshot
+	watchers                map[uint64]*snapshotStream
+	nextWatchID             uint64
+	commands                map[CommandID]commandRecord
+	pending                 map[CommandID]*pendingCommand
+	dialer                  *currentDialer
+	session                 hostSession
 
 	retryDelay func(int) time.Duration
 	retryWait  func(context.Context, time.Duration) bool
@@ -65,19 +68,21 @@ func newManager(options managerOptions) *manager {
 		allocator = proxyForwardAllocator{dialer: dialer}
 	}
 	m := &manager{
-		host:             options.host,
-		connector:        options.connector,
-		forwardAllocator: allocator,
-		connection:       ConnectionDisconnected,
-		forwards:         newForwardTable(),
-		watchers:         make(map[uint64]*snapshotStream),
-		commands:         make(map[CommandID]commandRecord),
-		pending:          make(map[CommandID]*pendingCommand),
-		dialer:           dialer,
-		retryDelay:       retryDelay,
-		retryWait:        retryWait,
-		ctx:              ctx,
-		cancel:           cancel,
+		host:                 options.host,
+		connector:            options.connector,
+		forwardAllocator:     allocator,
+		connection:           ConnectionDisconnected,
+		discovery:            stoppedDiscovery(),
+		listenerObservations: make([]ListenerObservation, 0),
+		forwards:             newForwardTable(),
+		watchers:             make(map[uint64]*snapshotStream),
+		commands:             make(map[CommandID]commandRecord),
+		pending:              make(map[CommandID]*pendingCommand),
+		dialer:               dialer,
+		retryDelay:           retryDelay,
+		retryWait:            retryWait,
+		ctx:                  ctx,
+		cancel:               cancel,
 	}
 	m.snapshot = m.buildSnapshotLocked()
 	return m

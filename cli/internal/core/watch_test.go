@@ -226,9 +226,11 @@ func TestWatchReturnsSubscriptionSnapshotBeforeCoalescedLatest(t *testing.T) {
 	wantInitial := Snapshot{
 		Revision: 0,
 		Hosts: []HostSnapshot{{
-			Alias:      HostAlias("development"),
-			Connection: ConnectionDisconnected,
-			Forwards:   []ForwardSnapshot{},
+			Alias:                HostAlias("development"),
+			Connection:           ConnectionDisconnected,
+			Discovery:            stoppedDiscovery(),
+			ListenerObservations: []ListenerObservation{},
+			Forwards:             []ForwardSnapshot{},
 		}},
 	}
 	if !reflect.DeepEqual(initial, wantInitial) {
@@ -242,9 +244,11 @@ func TestWatchReturnsSubscriptionSnapshotBeforeCoalescedLatest(t *testing.T) {
 	wantLatest := Snapshot{
 		Revision: 1,
 		Hosts: []HostSnapshot{{
-			Alias:      HostAlias("development"),
-			Connection: ConnectionConnecting,
-			Forwards:   []ForwardSnapshot{owner.projection},
+			Alias:                HostAlias("development"),
+			Connection:           ConnectionConnecting,
+			Discovery:            stoppedDiscovery(),
+			ListenerObservations: []ListenerObservation{},
+			Forwards:             []ForwardSnapshot{owner.projection},
 		}},
 	}
 	if !reflect.DeepEqual(latest, wantLatest) {

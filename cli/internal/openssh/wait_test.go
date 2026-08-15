@@ -2,8 +2,11 @@ package openssh_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"syscall"
 	"testing"
 	"time"
 
@@ -11,8 +14,10 @@ import (
 )
 
 func TestSessionWaitBoundsInheritedDiagnosticPipe(t *testing.T) {
-	executable := filepath.Join(t.TempDir(), "ssh")
-	script := `#!/usr/bin/python3
+	directory := t.TempDir()
+	executable := filepath.Join(directory, "ssh")
+	childPath := filepath.Join(directory, "child-pid")
+	script := fmt.Sprintf(`#!/usr/bin/python3
 import socket
 import subprocess
 import sys
@@ -35,10 +40,12 @@ with connection:
         greeting += chunk
     if greeting == bytes([5, 1, 0]):
         connection.sendall(bytes([5, 0]))
-subprocess.Popen(["/bin/sleep", "5"])
+child = subprocess.Popen(["/bin/sleep", "5"])
+with open(%s, "w") as output:
+    output.write(str(child.pid))
 time.sleep(0.1)
 listener.close()
-`
+`, strconv.Quote(childPath))
 	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
 		t.Fatalf("write scripted OpenSSH: %v", err)
 	}
@@ -63,5 +70,25 @@ listener.close()
 	case <-session.Done():
 	case <-time.After(time.Second):
 		t.Fatal("Session.Wait remained blocked on descendant-held stderr")
+	}
+	contents, err := os.ReadFile(childPath)
+	if err != nil {
+		t.Fatalf("read descendant PID: %v", err)
+	}
+	childPID, err := strconv.Atoi(string(contents))
+	if err != nil {
+		t.Fatalf("parse descendant PID: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := session.Close(ctx); err != nil {
+		t.Fatalf("close completed Session: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for syscall.Kill(childPID, 0) == nil {
+		if time.Now().After(deadline) {
+			t.Fatalf("descendant %d survived Session.Close", childPID)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
