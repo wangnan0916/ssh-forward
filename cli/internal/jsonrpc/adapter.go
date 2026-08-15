@@ -32,6 +32,7 @@ func Serve(ctx context.Context, conn net.Conn, manager core.Manager) error {
 
 	pending := newPendingChannel(frames, maxPendingCalls)
 	session := newConnectionSession(ctx, manager, capabilities, pending)
+	pending.onResponse = session.onResponseSent
 	defer session.close()
 	methods := handler.Map{
 		"manager.execute": func(ctx context.Context, request *jrpc2.Request) (any, error) {

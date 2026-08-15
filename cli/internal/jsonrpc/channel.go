@@ -139,15 +139,17 @@ func (c *validatingChannel) reject(code jrpc2.Code, message string, result error
 	return result
 }
 
-// pendingChannel bounds jrpc2's inbound queue and activates each Watch only
-// after the response that introduces its server-assigned ID is written.
+// pendingChannel bounds jrpc2's inbound queue. It reports each successfully
+// written response to onResponse (installed by the connection session, which
+// owns any response-triggered activation); the channel itself is
+// protocol-agnostic beyond the response/notification distinction required for
+// slot release.
 type pendingChannel struct {
 	channel.Channel
 	slots chan struct{}
 	done  chan struct{}
 
-	hooksMu    sync.Mutex
-	watchHooks map[string]func()
+	onResponse func(message []byte)
 
 	closeOnce sync.Once
 	closeErr  error
@@ -155,10 +157,9 @@ type pendingChannel struct {
 
 func newPendingChannel(base channel.Channel, maxPending int) *pendingChannel {
 	return &pendingChannel{
-		Channel:    base,
-		slots:      make(chan struct{}, maxPending),
-		done:       make(chan struct{}),
-		watchHooks: make(map[string]func()),
+		Channel: base,
+		slots:   make(chan struct{}, maxPending),
+		done:    make(chan struct{}),
 	}
 }
 
@@ -192,29 +193,10 @@ func (c *pendingChannel) Send(message []byte) error {
 		return err
 	}
 	c.release()
-	if err != nil {
-		return err
-	}
-	if watchID, ok := watchResponseID(message); ok {
-		c.fireWatchResponseHook(watchID)
+	if err == nil && c.onResponse != nil {
+		c.onResponse(message)
 	}
 	return nil
-}
-
-func (c *pendingChannel) afterWatchResponse(watchID string, hook func()) {
-	c.hooksMu.Lock()
-	defer c.hooksMu.Unlock()
-	c.watchHooks[watchID] = hook
-}
-
-func (c *pendingChannel) fireWatchResponseHook(watchID string) {
-	c.hooksMu.Lock()
-	hook := c.watchHooks[watchID]
-	delete(c.watchHooks, watchID)
-	c.hooksMu.Unlock()
-	if hook != nil {
-		hook()
-	}
 }
 
 func isResponse(message []byte) bool {
@@ -227,23 +209,6 @@ func isResponse(message []byte) bool {
 	}
 	_, found := object["id"]
 	return found
-}
-
-func watchResponseID(message []byte) (string, bool) {
-	var envelope struct {
-		Result json.RawMessage `json:"result"`
-	}
-	if json.Unmarshal(message, &envelope) != nil || len(envelope.Result) == 0 {
-		return "", false
-	}
-	var result struct {
-		WatchID  string          `json:"watch_id"`
-		Snapshot json.RawMessage `json:"snapshot"`
-	}
-	if json.Unmarshal(envelope.Result, &result) != nil || result.WatchID == "" || len(result.Snapshot) == 0 {
-		return "", false
-	}
-	return result.WatchID, true
 }
 
 func (c *pendingChannel) Close() error {

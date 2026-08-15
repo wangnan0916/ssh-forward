@@ -95,7 +95,6 @@ func (s *connectionSession) handleWatch(ctx context.Context, request *jrpc2.Requ
 	s.watches[watchID] = watch
 	s.mu.Unlock()
 
-	s.channel.afterWatchResponse(watchID, func() { close(watch.activate) })
 	s.workers.Add(1)
 	go func() {
 		defer s.workers.Done()
@@ -105,6 +104,48 @@ func (s *connectionSession) handleWatch(ctx context.Context, request *jrpc2.Requ
 		WatchID:  watchID,
 		Snapshot: marshalSnapshot(initial),
 	}, nil
+}
+
+// watchResponseID reports the server-assigned Watch ID introduced by a
+// manager.watch response that carries a Snapshot.
+func watchResponseID(message []byte) (string, bool) {
+	var envelope struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if json.Unmarshal(message, &envelope) != nil || len(envelope.Result) == 0 {
+		return "", false
+	}
+	var result struct {
+		WatchID  string          `json:"watch_id"`
+		Snapshot json.RawMessage `json:"snapshot"`
+	}
+	if json.Unmarshal(envelope.Result, &result) != nil || result.WatchID == "" || len(result.Snapshot) == 0 {
+		return "", false
+	}
+	return result.WatchID, true
+}
+
+// onResponseSent runs after a response frame is written, so no notification
+// can overtake the response that introduces a Watch. The handler committed
+// the Watch to s.watches before the response was sent, so the lookup always
+// succeeds for watch responses; the guard keeps the activation channel closed
+// at most once.
+func (s *connectionSession) onResponseSent(message []byte) {
+	watchID, ok := watchResponseID(message)
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	watch := s.watches[watchID]
+	s.mu.Unlock()
+	if watch == nil {
+		return
+	}
+	select {
+	case <-watch.activate:
+	default:
+		close(watch.activate)
+	}
 }
 
 func (s *connectionSession) handleUnwatch(_ context.Context, request *jrpc2.Request) (any, error) {
