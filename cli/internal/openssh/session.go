@@ -2,6 +2,7 @@ package openssh
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/netip"
 	"os/exec"
@@ -22,6 +23,8 @@ const (
 	ExitAuthentication ExitKind = "authentication"
 	ExitHostKey        ExitKind = "host_key"
 )
+
+var errInvalidSessionTarget = errors.New("OpenSSH Forwarding Session target must be remote loopback")
 
 type ConnectionError struct {
 	Kind ExitKind
@@ -47,6 +50,10 @@ type Session struct {
 }
 
 func (s *Session) DialContext(ctx context.Context, target netip.AddrPort) (proxy.HalfCloseConn, error) {
+	ipv4Loopback := netip.AddrFrom4([4]byte{127, 0, 0, 1})
+	if target.Port() == 0 || (target.Addr() != ipv4Loopback && target.Addr() != netip.IPv6Loopback()) {
+		return nil, errInvalidSessionTarget
+	}
 	return s.dialer.DialContext(ctx, target)
 }
 

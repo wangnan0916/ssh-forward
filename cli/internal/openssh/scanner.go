@@ -29,18 +29,19 @@ const (
 var errInvalidScannerFrame = errors.New("invalid scanner frame")
 
 type scannerParser struct {
-	active       bool
-	sequence     uint64
-	lastSequence uint64
-	boot         string
-	network      string
-	capability   core.DiscoveryCapability
-	listeners    []scannerListener
-	listenerKeys map[string]struct{}
-	inodes       map[string]struct{}
-	processes    map[string]map[int]map[int]core.ProcessMetadata
-	processCount int
-	metadataSize int
+	active         bool
+	sequence       uint64
+	lastSequence   uint64
+	boot           string
+	network        string
+	capability     core.DiscoveryCapability
+	listeners      []scannerListener
+	listenerKeys   map[string]struct{}
+	inodeListeners map[string]string
+	inodes         map[string]struct{}
+	processes      map[string]map[int]map[int]core.ProcessMetadata
+	processCount   int
+	metadataSize   int
 }
 
 type scannerListener struct {
@@ -58,32 +59,39 @@ func scanObservationFrames(reader io.Reader, emit func(core.SessionFact)) {
 	failed := false
 	discarding := false
 	lastCapability := unavailableDiscoveryCapability()
+	recordInvalidObservation := func() {
+		invalidCount++
+		state := core.DiscoveryDegraded
+		if invalidCount >= 3 {
+			state = core.DiscoveryFailed
+			failed = true
+		}
+		emit(core.DiscoveryChange{
+			State:      state,
+			Capability: lastCapability,
+			Diagnostic: "invalid_scanner_frame",
+		})
+	}
 	for scanner.Scan() {
 		if failed {
 			continue
 		}
 		line := scanner.Text()
 		if discarding {
-			if !isScannerBeginFrame(line) {
+			if isScannerBeginFrame(line) {
+				discarding = false
+			} else {
+				if isObservationBegin(line) {
+					recordInvalidObservation()
+				}
 				continue
 			}
-			discarding = false
 		}
 		fact, complete, err := parser.accept(line)
 		if err != nil {
 			parser.abort()
 			discarding = true
-			invalidCount++
-			state := core.DiscoveryDegraded
-			if invalidCount >= 3 {
-				state = core.DiscoveryFailed
-				failed = true
-			}
-			emit(core.DiscoveryChange{
-				State:      state,
-				Capability: lastCapability,
-				Diagnostic: "invalid_scanner_frame",
-			})
+			recordInvalidObservation()
 			continue
 		}
 		if !complete {
@@ -106,6 +114,14 @@ func scanObservationFrames(reader io.Reader, emit func(core.SessionFact)) {
 
 func isScannerBeginFrame(line string) bool {
 	return utf8.ValidString(line) && strings.HasPrefix(line, "SF1\tB\t")
+}
+
+func isObservationBegin(line string) bool {
+	if !utf8.ValidString(line) {
+		return false
+	}
+	fields := strings.SplitN(line, "\t", 3)
+	return len(fields) >= 2 && fields[1] == "B"
 }
 
 func (p *scannerParser) accept(line string) (core.SessionFact, bool, error) {
@@ -173,6 +189,7 @@ func (p *scannerParser) begin(fields []string) error {
 	}
 	p.listeners = nil
 	p.listenerKeys = make(map[string]struct{})
+	p.inodeListeners = make(map[string]string)
 	p.inodes = make(map[string]struct{})
 	p.processes = make(map[string]map[int]map[int]core.ProcessMetadata)
 	p.processCount = 0
@@ -200,11 +217,18 @@ func (p *scannerParser) listener(fields []string) error {
 	if err != nil {
 		return err
 	}
-	key := strings.Join([]string{string(family), string(scope), strconv.FormatUint(port, 10), inode}, "\x00")
+	endpointKey := strings.Join([]string{string(family), string(scope), strconv.FormatUint(port, 10)}, "\x00")
+	key := endpointKey + "\x00" + inode
 	if _, duplicate := p.listenerKeys[key]; duplicate {
 		return errInvalidScannerFrame
 	}
+	if previous, found := p.inodeListeners[inode]; inode != "0" && found && previous != endpointKey {
+		return errInvalidScannerFrame
+	}
 	p.listenerKeys[key] = struct{}{}
+	if inode != "0" {
+		p.inodeListeners[inode] = endpointKey
+	}
 	p.listeners = append(p.listeners, scannerListener{
 		family: family,
 		scope:  scope,
@@ -220,8 +244,8 @@ func (p *scannerParser) process(fields []string) error {
 		return errInvalidScannerFrame
 	}
 	inode, err := parseDecimalIdentity(fields[3])
-	if err != nil {
-		return err
+	if err != nil || inode == "0" {
+		return errInvalidScannerFrame
 	}
 	if _, found := p.inodes[inode]; !found {
 		return errInvalidScannerFrame
@@ -324,9 +348,13 @@ func (p *scannerParser) end(fields []string) (core.ObservationSet, error) {
 
 func (p *scannerParser) processChains(inode string) []core.ProcessChain {
 	owners := p.processes[inode]
+	if len(owners) == 0 && p.capability.ProcessMetadata == core.CapabilityFull {
+		p.capability.ProcessMetadata = core.CapabilityPartial
+	}
 	chains := make([]core.ProcessChain, 0, len(owners))
 	for _, records := range owners {
 		if _, found := records[0]; !found {
+			p.capability.ProcessMetadata = core.CapabilityPartial
 			continue
 		}
 		chain := core.ProcessChain{Processes: make([]core.ProcessMetadata, 0, len(records))}
@@ -336,6 +364,9 @@ func (p *scannerParser) processChains(inode string) []core.ProcessChain {
 				break
 			}
 			chain.Processes = append(chain.Processes, process)
+		}
+		if len(chain.Processes) != len(records) {
+			p.capability.ProcessMetadata = core.CapabilityPartial
 		}
 		chains = append(chains, chain)
 	}
@@ -350,6 +381,7 @@ func (p *scannerParser) abort() {
 	p.capability = core.DiscoveryCapability{}
 	p.listeners = nil
 	p.listenerKeys = nil
+	p.inodeListeners = nil
 	p.inodes = nil
 	p.processes = nil
 	p.processCount = 0
@@ -394,8 +426,9 @@ func parsePositiveInt(value string) (int, error) {
 }
 
 func parseDecimalIdentity(value string) (string, error) {
-	if _, err := parseUint(value, 64); err != nil {
-		return "", err
+	parsed, err := parseUint(value, 64)
+	if err != nil || value != strconv.FormatUint(parsed, 10) {
+		return "", errInvalidScannerFrame
 	}
 	return value, nil
 }

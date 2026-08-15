@@ -18,6 +18,16 @@ hex_text() {
     printf '%s' "$1" | hex_stream
 }
 
+read_process_arguments() {
+    command_line=$1
+    arguments_hex=$(dd if="$command_line" bs=4097 count=1 2>/dev/null | hex_stream || true)
+    if [ "${#arguments_hex}" -le 8192 ]; then
+        return 0
+    fi
+    arguments_hex=$(printf '%.8192s' "$arguments_hex")
+    return 1
+}
+
 boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || printf unavailable)
 network_namespace=$(readlink /proc/self/ns/net 2>/dev/null || printf unavailable)
 boot_hex=$(hex_text "$boot_id")
@@ -56,11 +66,24 @@ listener_capability=$base_listener_capability
 socket_capability=$base_socket_capability
 
 choose_fallback_source() {
-    if [ "$scanner_source" != ss ] && command -v ss >/dev/null 2>&1; then
-        scanner_source=ss
-        base_listener_capability=full
-        base_socket_capability=$identity_socket_capability
-    elif [ "$scanner_source" != lsof ] && command -v lsof >/dev/null 2>&1; then
+    case "$scanner_source" in
+        proc)
+            if command -v ss >/dev/null 2>&1; then
+                scanner_source=ss
+                base_listener_capability=full
+                base_socket_capability=$identity_socket_capability
+                return
+            fi
+            ;;
+        ss) ;;
+        *)
+            scanner_source=unavailable
+            base_listener_capability=unavailable
+            base_socket_capability=partial
+            return
+            ;;
+    esac
+    if command -v lsof >/dev/null 2>&1; then
         scanner_source=lsof
         base_listener_capability=partial
         base_socket_capability=partial
@@ -181,6 +204,31 @@ scan_listeners() {
     printf '%s\n' "$raw_listeners" | LC_ALL=C sort -u | head -n 256
 }
 
+scan_current_listeners() {
+    scan_status=0
+    current_listeners=$(scan_listeners) || scan_status=$?
+    fallback_count=0
+    while [ "$scan_status" -ne 0 ] && [ "$fallback_count" -lt 3 ]; do
+        previous_source=$scanner_source
+        choose_fallback_source
+        [ "$scanner_source" != "$previous_source" ] || break
+        scan_status=0
+        current_listeners=$(scan_listeners) || scan_status=$?
+        fallback_count=$((fallback_count + 1))
+    done
+}
+
+apply_listener_record_limit() {
+    if [ "$listener_count" -lt 256 ]; then
+        return
+    fi
+    listener_capability=partial
+    socket_capability=partial
+    if [ "$process_capability" != unavailable ]; then
+        process_capability=partial
+    fi
+}
+
 append_line() {
     current=$1
     added=$2
@@ -234,23 +282,28 @@ attribute_processes() {
         visited=''
         while [ "$depth" -lt 16 ] && [ "$current" -gt 0 ] 2>/dev/null; do
             case " $visited " in
-                *" $current "*) break ;;
+                *" $current "*) process_overflow=1; break ;;
             esac
             visited="$visited $current"
             status=/proc/$current/status
-            [ -r "$status" ] || break
+            [ -r "$status" ] || { process_overflow=1; break; }
             executable_hex=$(readlink -n /proc/$current/exe 2>/dev/null | hex_stream || true)
             working_directory_hex=$(readlink -n /proc/$current/cwd 2>/dev/null | hex_stream || true)
-            arguments_hex=$(dd if=/proc/$current/cmdline bs=4096 count=1 2>/dev/null | hex_stream || true)
+            if ! read_process_arguments /proc/$current/cmdline; then
+                process_overflow=1
+            fi
             chain=$(append_line "$chain" "$depth	$current	$executable_hex	$working_directory_hex	$arguments_hex")
             parent=$(awk '$1 == "PPid:" { print $2; exit }' "$status" 2>/dev/null || printf 0)
             case "$parent" in
-                ''|*[!0-9]*) break ;;
+                ''|*[!0-9]*) process_overflow=1; break ;;
             esac
             [ "$parent" -gt 1 ] || break
             current=$parent
             depth=$((depth + 1))
         done
+        if [ "$depth" -ge 16 ] && [ "$current" -gt 1 ] 2>/dev/null; then
+            process_overflow=1
+        fi
         [ -n "$chain" ] || continue
 
         for inode in $matched; do
@@ -308,13 +361,7 @@ EOF_PROCESSES
 while :; do
     scan_started=$(date +%s 2>/dev/null || printf 0)
     choose_scanner_source
-    scan_status=0
-    current_listeners=$(scan_listeners) || scan_status=$?
-    if [ "$scan_status" -ne 0 ]; then
-        choose_fallback_source
-        scan_status=0
-        current_listeners=$(scan_listeners) || scan_status=$?
-    fi
+    scan_current_listeners
     listener_capability=$base_listener_capability
     socket_capability=$base_socket_capability
     if [ "$scan_status" -ne 0 ]; then
@@ -323,9 +370,6 @@ while :; do
         socket_capability=partial
     fi
     listener_count=$(printf '%s\n' "$current_listeners" | awk 'NF { count++ } END { print count + 0 }')
-    if [ "$listener_count" -ge 256 ]; then
-        listener_capability=partial
-    fi
     if printf '%s\n' "$current_listeners" | awk -F '\t' '$4 == "0" { found = 1 } END { exit !found }'; then
         socket_capability=partial
     fi
@@ -343,6 +387,7 @@ while :; do
     else
         scans_since_attribution=$((scans_since_attribution + 1))
     fi
+    apply_listener_record_limit
     scan_finished=$(date +%s 2>/dev/null || printf 0)
     if [ "$scan_started" -gt 0 ] 2>/dev/null && [ $((scan_finished - scan_started)) -gt "$interval" ]; then
         process_capability=partial

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
 	"reflect"
 	"sync"
@@ -55,6 +56,67 @@ type oneSessionConnector struct {
 
 func (c oneSessionConnector) Connect(context.Context, HostAlias) (hostSession, error) {
 	return c.session, nil
+}
+
+func TestPartialObservationMergeKeepsFixedEvidenceBounds(t *testing.T) {
+	makeListeners := func(firstPort, count int) []ListenerObservation {
+		observations := make([]ListenerObservation, count)
+		for index := range observations {
+			observations[index] = ListenerObservation{
+				Family:     FamilyIPv4,
+				BindScope:  BindLoopback,
+				RemotePort: uint16(firstPort + index),
+			}
+		}
+		return observations
+	}
+	listeners, listenerTruncation := mergeBoundedListenerObservations(
+		makeListeners(1, maxRetainedListenerObservations),
+		makeListeners(1+maxRetainedListenerObservations, maxRetainedListenerObservations),
+	)
+	if len(listeners) > maxRetainedListenerObservations {
+		t.Fatalf("retained Listener Observations = %d, want at most %d", len(listeners), maxRetainedListenerObservations)
+	}
+	if !listenerTruncation.listeners {
+		t.Fatal("Listener truncation was not reported")
+	}
+	retained := makeListeners(1000, maxRetainedListenerObservations)
+	withLowerCurrent, _ := mergeBoundedListenerObservations(retained, makeListeners(1, 1))
+	if !reflect.DeepEqual(withLowerCurrent, retained) {
+		t.Fatal("partial merge evicted retained Listener Observation for a newly observed lower-sorting key")
+	}
+
+	makeEvidence := func(first int) ListenerObservation {
+		observation := ListenerObservation{Family: FamilyIPv4, BindScope: BindLoopback, RemotePort: 8080}
+		for index := range maxRetainedSocketIdentities {
+			identity := first + index
+			observation.SocketIdentities = append(observation.SocketIdentities, SocketIdentity(fmt.Sprintf("socket:%04d", identity)))
+			observation.Processes = append(observation.Processes, ProcessChain{Processes: []ProcessMetadata{{PID: identity + 1}}})
+		}
+		return observation
+	}
+	evidence, truncatedEvidence := mergeBoundedListenerObservations(
+		[]ListenerObservation{makeEvidence(0)},
+		[]ListenerObservation{makeEvidence(maxRetainedSocketIdentities)},
+	)
+	if got := len(evidence[0].SocketIdentities); got > maxRetainedSocketIdentities {
+		t.Fatalf("retained Socket Identities = %d, want at most %d", got, maxRetainedSocketIdentities)
+	}
+	if got := len(evidence[0].Processes); got > maxRetainedProcessRecords {
+		t.Fatalf("retained Process Chains = %d, want at most %d", got, maxRetainedProcessRecords)
+	}
+	if !truncatedEvidence.sockets || !truncatedEvidence.processes {
+		t.Fatalf("Evidence truncation = %#v, want sockets and processes", truncatedEvidence)
+	}
+	unavailable := DiscoveryCapability{
+		RemoteListeners: CapabilityUnavailable,
+		SocketIdentity:  CapabilityUnavailable,
+		ProcessMetadata: CapabilityUnavailable,
+	}
+	degradeTruncatedCapability(&unavailable, evidenceTruncation{listeners: true, sockets: true, processes: true})
+	if want := (DiscoveryCapability{RemoteListeners: CapabilityUnavailable, SocketIdentity: CapabilityUnavailable, ProcessMetadata: CapabilityUnavailable}); unavailable != want {
+		t.Fatalf("truncation upgraded unavailable Capability: %#v", unavailable)
+	}
 }
 
 func TestManagerRetainsObservationsUntilReconnectGetsCompleteReplacement(t *testing.T) {
@@ -260,7 +322,30 @@ func TestManagerPublishesDiscoveryBaselineAtomically(t *testing.T) {
 		t.Fatalf("partial observation did not merge retained and current evidence: %#v", merged)
 	}
 
-	session.facts <- ObservationSet{Sequence: 2, Capability: capability}
+	boundedObservation := ListenerObservation{Family: FamilyIPv4, BindScope: BindLoopback, RemotePort: 38080}
+	for index := range maxRetainedSocketIdentities {
+		boundedObservation.SocketIdentities = append(boundedObservation.SocketIdentities, SocketIdentity(fmt.Sprintf("socket:bounded-%03d", index)))
+		boundedObservation.Processes = append(boundedObservation.Processes, ProcessChain{Processes: []ProcessMetadata{{PID: 1000 + index}}})
+	}
+	claimedCapability := DiscoveryCapability{
+		RemoteListeners: CapabilityPartial,
+		SocketIdentity:  CapabilityFull,
+		ProcessMetadata: CapabilityFull,
+	}
+	session.facts <- ObservationSet{Sequence: 3, Capability: claimedCapability, Observations: []ListenerObservation{boundedObservation}}
+	bounded, err := stream.Next(ctx)
+	if err != nil {
+		t.Fatalf("bounded evidence Next: %v", err)
+	}
+	if got := bounded.Hosts[0].Discovery.Capability; got.SocketIdentity != CapabilityPartial || got.ProcessMetadata != CapabilityPartial {
+		t.Fatalf("bounded evidence Capability = %#v, want truncated dimensions partial", got)
+	}
+	boundedEvidence := bounded.Hosts[0].ListenerObservations[0]
+	if len(boundedEvidence.SocketIdentities) > maxRetainedSocketIdentities || len(boundedEvidence.Processes) > maxRetainedProcessRecords {
+		t.Fatalf("published evidence exceeded bounds: %#v", boundedEvidence)
+	}
+
+	session.facts <- ObservationSet{Sequence: 3, Capability: capability}
 	failed, err := stream.Next(ctx)
 	if err != nil {
 		t.Fatalf("invalid fact Next: %v", err)

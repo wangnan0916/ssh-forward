@@ -2,7 +2,7 @@
 
 ## Capability levels
 
-The first release supports Linux Development Hosts. Discovery prefers `/proc` plus `ss`, falls back to available `/proc`/`lsof` information, and reports capability explicitly. A listener may remain visible without Process Metadata, but process-dependent policies cannot match it. If scanning is unavailable, Manual Forward remains available.
+The first release supports Linux Development Hosts. Discovery tries `/proc`, then `ss`, then `lsof`, and reports the resulting capability explicitly. A listener may remain visible without Process Metadata, but process-dependent policies cannot match it. If scanning is unavailable, Manual Forward remains available.
 
 ## Agentless scanner
 
@@ -16,7 +16,7 @@ Scans never overlap. If scan cost becomes excessive, cadence slows and the host 
 
 ## Protocol safety
 
-Remote observations are untrusted protocol input. Frames, complete observation metadata, queued facts, listener counts, paths, argument data, and process-chain depth are bounded and schema-validated; invalid UTF-8 and unsupported versions are rejected. Process Metadata is data only and is never interpolated into a shell command. Default logs omit full working directories, argument vectors, and environment data. One invalid observation degrades discovery; three consecutive invalid observations stop parsing and mark discovery failed while stdout remains drained and SOCKS Manual Forwards remain usable. A valid complete observation resets the consecutive-error count.
+Remote observations are untrusted protocol input. Frames, complete observation metadata, queued facts, listener counts, paths, argument data, and process-chain depth are bounded and schema-validated; invalid UTF-8 and unsupported versions are rejected. A published host retains at most 256 Listener Observations, 512 Socket Identities, 512 Process Metadata records, and 128 KiB of decoded Process Metadata. The parser rejects one nonzero socket inode attributed to different listener endpoints so bounded scanner input cannot amplify during projection. Process Metadata is data only and is never interpolated into a shell command. Default logs omit full working directories, argument vectors, and environment data. Long command lines, ancestor chains beyond depth 16, missing ancestry, and retained-evidence truncation explicitly downgrade capability to `partial`. During a partial scan, missing evidence does not remove a previously observed Remote Listener, but bounded retention cannot grow into an unbounded history. One invalid observation degrades discovery; three consecutive invalid observations—including unsupported-version observation starts—stop parsing and mark discovery failed while stdout remains drained and SOCKS Manual Forwards remain usable. A valid complete observation resets the consecutive-error count.
 
 ## Address families
 

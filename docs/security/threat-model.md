@@ -20,7 +20,7 @@ System SSH is launched by a platform-determined absolute path with an argument v
 
 The remote command is one fixed, versioned product scanner invoked through `sh -s`. Host aliases, ports, paths, and Process Metadata never modify the script text. Structured inputs use bounded stdin or constrained arguments. Scanner checksum/version is diagnostic metadata. Observation stdout uses bounded versioned frames with hex-encoded metadata and remains separate from diagnostic stderr.
 
-Each frame, complete observation, queued fact set, collection count, string, argument vector, and Process Chain is independently bounded and validated before becoming a domain value. Repeated invalid observations stop parsing but keep stdout drained so discovery failure cannot fill the SSH channel or terminate SOCKS Manual Forwards. Process Metadata is display and Policy Evidence only; it is never executed, interpolated into a command, treated as trusted markup, or emitted unredacted in normal logs.
+Each frame, complete observation, queued fact set, collection count, string, argument vector, Process Chain, and materialized per-host evidence projection is independently bounded and validated before becoming a domain value. Socket-to-endpoint relationships are validated before process evidence is expanded. Repeated invalid observations stop parsing but keep stdout drained so discovery failure cannot fill the SSH channel or terminate SOCKS Manual Forwards. Process Metadata is display and Policy Evidence only; it is never executed, interpolated into a command, treated as trusted markup, or emitted unredacted in normal logs.
 
 ## Out of scope
 

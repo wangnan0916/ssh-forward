@@ -7,6 +7,19 @@ import (
 	"unicode/utf8"
 )
 
+const (
+	maxRetainedListenerObservations = 256
+	maxRetainedSocketIdentities     = 512
+	maxRetainedProcessRecords       = 512
+	maxRetainedProcessMetadataBytes = 128 << 10
+)
+
+type evidenceTruncation struct {
+	listeners bool
+	sockets   bool
+	processes bool
+}
+
 func stoppedDiscovery() DiscoverySnapshot {
 	return DiscoverySnapshot{
 		State: DiscoveryStopped,
@@ -46,14 +59,17 @@ func (m *manager) applyObservationSet(set ObservationSet) {
 		return
 	}
 	m.lastObservationSequence = set.Sequence
-	complete := set.Capability.RemoteListeners == CapabilityFull
-	observations := canonicalListenerObservations(set.Observations)
+	capability := set.Capability
+	observations, truncated := boundListenerObservations(canonicalListenerObservations(set.Observations))
+	degradeTruncatedCapability(&capability, truncated)
+	complete := capability.RemoteListeners == CapabilityFull
 	if !complete {
-		observations = mergeListenerObservations(m.listenerObservations, observations)
+		observations, truncated = mergeBoundedListenerObservations(m.listenerObservations, observations)
+		degradeTruncatedCapability(&capability, truncated)
 	}
 	discovery := DiscoverySnapshot{
-		State:               discoveryStateForCapability(set.Capability),
-		Capability:          set.Capability,
+		State:               discoveryStateForCapability(capability),
+		Capability:          capability,
 		BaselineEstablished: complete || m.discovery.BaselineEstablished,
 		ScannerVersion:      set.ScannerVersion,
 		ScannerChecksum:     set.ScannerChecksum,
@@ -139,24 +155,99 @@ type remoteListenerKey struct {
 	port   uint16
 }
 
-func mergeListenerObservations(retained, current []ListenerObservation) []ListenerObservation {
-	merged := make(map[remoteListenerKey]ListenerObservation, len(retained)+len(current))
+func mergeBoundedListenerObservations(retained, current []ListenerObservation) ([]ListenerObservation, evidenceTruncation) {
+	retained, truncated := boundListenerObservations(canonicalListenerObservations(retained))
+	merged := make(map[remoteListenerKey]ListenerObservation, maxRetainedListenerObservations)
 	for _, observation := range retained {
 		merged[listenerKey(observation)] = observation
 	}
-	for _, observation := range current {
+	for _, observation := range canonicalListenerObservations(current) {
 		key := listenerKey(observation)
-		if previous, retained := merged[key]; retained {
+		if previous, found := merged[key]; found {
 			merged[key] = mergePartialListenerObservation(previous, observation)
-		} else {
+		} else if len(merged) < maxRetainedListenerObservations {
 			merged[key] = observation
+		} else {
+			truncated.listeners = true
 		}
 	}
 	observations := make([]ListenerObservation, 0, len(merged))
 	for _, observation := range merged {
 		observations = append(observations, observation)
 	}
-	return canonicalListenerObservations(observations)
+	bounded, additional := boundListenerObservations(canonicalListenerObservations(observations))
+	truncated.listeners = truncated.listeners || additional.listeners
+	truncated.sockets = truncated.sockets || additional.sockets
+	truncated.processes = truncated.processes || additional.processes
+	return bounded, truncated
+}
+
+func degradeTruncatedCapability(capability *DiscoveryCapability, truncated evidenceTruncation) {
+	if truncated.listeners && capability.RemoteListeners != CapabilityUnavailable {
+		capability.RemoteListeners = CapabilityPartial
+	}
+	if truncated.sockets && capability.SocketIdentity != CapabilityUnavailable {
+		capability.SocketIdentity = CapabilityPartial
+	}
+	if truncated.processes && capability.ProcessMetadata != CapabilityUnavailable {
+		capability.ProcessMetadata = CapabilityPartial
+	}
+}
+
+func boundListenerObservations(observations []ListenerObservation) ([]ListenerObservation, evidenceTruncation) {
+	bounded := make([]ListenerObservation, 0, min(len(observations), maxRetainedListenerObservations))
+	var truncated evidenceTruncation
+	socketCount := 0
+	processCount := 0
+	metadataBytes := 0
+	for _, observation := range observations {
+		if len(bounded) == maxRetainedListenerObservations {
+			truncated.listeners = true
+			break
+		}
+		item := ListenerObservation{
+			Family:     observation.Family,
+			BindScope:  observation.BindScope,
+			RemotePort: observation.RemotePort,
+		}
+		availableSockets := maxRetainedSocketIdentities - socketCount
+		keptSockets := min(len(observation.SocketIdentities), availableSockets)
+		item.SocketIdentities = slices.Clone(observation.SocketIdentities[:keptSockets])
+		socketCount += keptSockets
+		if keptSockets != len(observation.SocketIdentities) {
+			truncated.sockets = true
+		}
+		for _, chain := range observation.Processes {
+			boundedChain := ProcessChain{}
+			for _, process := range chain.Processes {
+				size := processMetadataSize(process)
+				if processCount == maxRetainedProcessRecords || metadataBytes+size > maxRetainedProcessMetadataBytes {
+					truncated.processes = true
+					break
+				}
+				process.Arguments = slices.Clone(process.Arguments)
+				boundedChain.Processes = append(boundedChain.Processes, process)
+				processCount++
+				metadataBytes += size
+			}
+			if len(boundedChain.Processes) != 0 {
+				item.Processes = append(item.Processes, boundedChain)
+			}
+			if len(boundedChain.Processes) != len(chain.Processes) {
+				truncated.processes = true
+			}
+		}
+		bounded = append(bounded, item)
+	}
+	return bounded, truncated
+}
+
+func processMetadataSize(process ProcessMetadata) int {
+	size := len(process.Executable) + len(process.WorkingDirectory)
+	for _, argument := range process.Arguments {
+		size += len(argument) + 1
+	}
+	return size
 }
 
 func mergePartialListenerObservation(retained, current ListenerObservation) ListenerObservation {
