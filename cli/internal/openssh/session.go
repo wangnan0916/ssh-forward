@@ -123,7 +123,13 @@ func (s *Session) ExitKind() ExitKind {
 }
 
 func (s *Session) terminalError() error {
-	switch s.ExitKind() {
+	return sessionErrorForExit(s.ExitKind())
+}
+
+// sessionErrorForExit is the single translation from an OpenSSH exit class to
+// the SessionError core consumes; both session-end and connect-time paths use it.
+func sessionErrorForExit(kind ExitKind) *core.SessionError {
+	switch kind {
 	case ExitCancelled:
 		return &core.SessionError{Disposition: core.SessionClosed, Reason: core.SessionReasonClosed}
 	case ExitAuthentication:

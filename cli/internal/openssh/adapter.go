@@ -81,16 +81,7 @@ func (a *Adapter) Connect(ctx context.Context, host core.HostAlias) (core.HostSe
 	if !errors.As(err, &connectionError) {
 		return nil, &core.SessionError{Disposition: core.SessionRetry, Reason: core.SessionReasonTransport}
 	}
-	switch connectionError.Kind {
-	case ExitAuthentication:
-		return nil, &core.SessionError{Disposition: core.SessionSuspend, Reason: core.SessionReasonAuthentication}
-	case ExitHostKey:
-		return nil, &core.SessionError{Disposition: core.SessionSuspend, Reason: core.SessionReasonHostKey}
-	case ExitCancelled:
-		return nil, &core.SessionError{Disposition: core.SessionClosed, Reason: core.SessionReasonClosed}
-	default:
-		return nil, &core.SessionError{Disposition: core.SessionRetry, Reason: core.SessionReasonTransport}
-	}
+	return nil, sessionErrorForExit(connectionError.Kind)
 }
 
 func (a *Adapter) ValidateAlias(ctx context.Context, alias string) error {
