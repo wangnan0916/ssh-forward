@@ -2,9 +2,7 @@ package core
 
 import (
 	"cmp"
-	"reflect"
 	"slices"
-	"unicode/utf8"
 )
 
 const (
@@ -35,97 +33,6 @@ func startingDiscovery() DiscoverySnapshot {
 	discovery := stoppedDiscovery()
 	discovery.State = DiscoveryStarting
 	return discovery
-}
-
-func (m *manager) applySessionFact(fact SessionFact) {
-	switch fact := fact.(type) {
-	case ObservationSet:
-		m.applyObservationSet(fact)
-	case DiscoveryChange:
-		m.applyDiscoveryChange(fact)
-	default:
-		m.applyInvalidDiscoveryFact()
-	}
-}
-
-func (m *manager) applyObservationSet(set ObservationSet) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.closed {
-		return
-	}
-	if set.Sequence == 0 || set.Sequence <= m.lastObservationSequence || !validDiscoveryCapability(set.Capability) || !validObservationBudget(set.Budget) {
-		m.failDiscoveryLocked("invalid_session_fact")
-		return
-	}
-	gapped := set.Sequence != m.lastObservationSequence+1
-	m.lastObservationSequence = set.Sequence
-	capability := set.Capability
-	observations, truncated := boundListenerObservations(canonicalListenerObservations(set.Observations))
-	degradeTruncatedCapability(&capability, truncated)
-	complete := capability.RemoteListeners == CapabilityFull
-	if !complete {
-		observations, truncated = mergeBoundedListenerObservations(m.listenerObservations, observations)
-		degradeTruncatedCapability(&capability, truncated)
-	}
-	discovery := DiscoverySnapshot{
-		State:               discoveryStateForCapability(capability),
-		Capability:          capability,
-		BaselineEstablished: complete || m.discovery.BaselineEstablished,
-		ScannerVersion:      set.ScannerVersion,
-		ScannerChecksum:     set.ScannerChecksum,
-	}
-	if gapped {
-		discovery.State = DiscoveryDegraded
-		discovery.Diagnostic = "observation_resync"
-	}
-	if reflect.DeepEqual(m.discovery, discovery) && reflect.DeepEqual(m.listenerObservations, observations) {
-		return
-	}
-	m.discovery = discovery
-	m.listenerObservations = observations
-	m.publishLocked()
-}
-
-func (m *manager) applyDiscoveryChange(change DiscoveryChange) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.closed {
-		return
-	}
-	if (change.State != DiscoveryDegraded && change.State != DiscoveryFailed) ||
-		!validDiscoveryCapability(change.Capability) || len(change.Diagnostic) > 128 || !utf8.ValidString(change.Diagnostic) {
-		m.failDiscoveryLocked("invalid_session_fact")
-		return
-	}
-	discovery := m.discovery
-	discovery.State = change.State
-	discovery.Capability = change.Capability
-	discovery.Diagnostic = change.Diagnostic
-	if reflect.DeepEqual(m.discovery, discovery) {
-		return
-	}
-	m.discovery = discovery
-	m.publishLocked()
-}
-
-func (m *manager) applyInvalidDiscoveryFact() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if !m.closed {
-		m.failDiscoveryLocked("invalid_session_fact")
-	}
-}
-
-func (m *manager) failDiscoveryLocked(diagnostic string) {
-	discovery := m.discovery
-	discovery.State = DiscoveryFailed
-	discovery.Diagnostic = diagnostic
-	if reflect.DeepEqual(m.discovery, discovery) {
-		return
-	}
-	m.discovery = discovery
-	m.publishLocked()
 }
 
 func validDiscoveryCapability(capability DiscoveryCapability) bool {

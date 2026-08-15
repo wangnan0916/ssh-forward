@@ -36,9 +36,9 @@ func (m *manager) buildSnapshotLocked() Snapshot {
 		Revision: m.revision,
 		Host: &HostSnapshot{
 			Alias:                m.host,
-			Connection:           m.connection,
-			Discovery:            m.discovery,
-			ListenerObservations: m.listenerObservations,
+			Connection:           m.hostState.connection,
+			Discovery:            m.hostState.discovery,
+			ListenerObservations: m.hostState.listenerObservations,
 			Forwards:             m.forwards.snapshots(),
 		},
 	}

@@ -17,27 +17,19 @@ type managerOptions struct {
 }
 
 type manager struct {
-	mu                      sync.RWMutex
-	closed                  bool
-	host                    HostAlias
-	connector               hostConnector
-	forwardAllocator        forwardAllocator
-	revision                Revision
-	connection              ConnectionState
-	discovery               DiscoverySnapshot
-	listenerObservations    []ListenerObservation
-	lastObservationSequence uint64
-	forwards                forwardTable
-	snapshot                Snapshot
-	watchers                map[uint64]*snapshotStream
-	nextWatchID             uint64
-	commands                map[CommandID]commandRecord
-	pending                 map[CommandID]*pendingCommand
-	dialer                  *currentDialer
-	session                 hostSession
-
-	retryDelay func(int) time.Duration
-	retryWait  func(context.Context, time.Duration) bool
+	mu               sync.RWMutex
+	closed           bool
+	host             HostAlias
+	forwardAllocator forwardAllocator
+	revision         Revision
+	hostState        hostState
+	actor            *hostActor
+	forwards         forwardTable
+	snapshot         Snapshot
+	watchers         map[uint64]*snapshotStream
+	nextWatchID      uint64
+	commands         map[CommandID]commandRecord
+	pending          map[CommandID]*pendingCommand
 
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -68,24 +60,43 @@ func newManager(options managerOptions) *manager {
 		allocator = proxyForwardAllocator{dialer: dialer}
 	}
 	m := &manager{
-		host:                 options.host,
-		connector:            options.connector,
-		forwardAllocator:     allocator,
-		connection:           ConnectionDisconnected,
-		discovery:            stoppedDiscovery(),
-		listenerObservations: make([]ListenerObservation, 0),
-		forwards:             newForwardTable(),
-		watchers:             make(map[uint64]*snapshotStream),
-		commands:             make(map[CommandID]commandRecord),
-		pending:              make(map[CommandID]*pendingCommand),
-		dialer:               dialer,
-		retryDelay:           retryDelay,
-		retryWait:            retryWait,
-		ctx:                  ctx,
-		cancel:               cancel,
+		host:             options.host,
+		forwardAllocator: allocator,
+		forwards:         newForwardTable(),
+		watchers:         make(map[uint64]*snapshotStream),
+		commands:         make(map[CommandID]commandRecord),
+		pending:          make(map[CommandID]*pendingCommand),
+		hostState: hostState{
+			connection:           ConnectionDisconnected,
+			discovery:            stoppedDiscovery(),
+			listenerObservations: make([]ListenerObservation, 0),
+		},
+		ctx:    ctx,
+		cancel: cancel,
 	}
+	m.actor = newHostActor(hostActorOptions{
+		host:       options.host,
+		connector:  options.connector,
+		dialer:     dialer,
+		publish:    m.publishHostState,
+		retryDelay: retryDelay,
+		retryWait:  retryWait,
+		ctx:        ctx,
+	})
 	m.snapshot = m.buildSnapshotLocked()
 	return m
+}
+
+// publishHostState is the only writer of the Manager's hostState copy; the
+// hostActor calls it after every per-host transition it owns.
+func (m *manager) publishHostState(state hostState) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return
+	}
+	m.hostState = state
+	m.publishLocked()
 }
 
 func (m *manager) Execute(ctx context.Context, command Command) (Outcome, error) {
@@ -146,10 +157,9 @@ func (m *manager) addManualForward(ctx context.Context, add AddManualForward) (O
 		closeOwnedForward(owner)
 		return Outcome{}, &DomainError{Kind: ErrorCommandIDConflict}
 	}
-	startConnection := m.connection == ConnectionDisconnected
+	startConnection := m.hostState.connection == ConnectionDisconnected
 	if startConnection {
-		m.connection = ConnectionConnecting
-		m.workers.Add(1)
+		m.hostState.connection = ConnectionConnecting
 	}
 	m.publishLocked()
 	outcome := Outcome{Kind: OutcomeForwardAdded, Revision: m.revision, Forward: cloneForward(forward)}
@@ -157,7 +167,7 @@ func (m *manager) addManualForward(ctx context.Context, add AddManualForward) (O
 	m.mu.Unlock()
 
 	if startConnection {
-		go m.connect()
+		m.actor.start()
 	}
 	return outcome, nil
 }
@@ -293,23 +303,24 @@ func (m *manager) Close(ctx context.Context) error {
 		}
 	}
 	forwards := m.forwards.owners()
-	session := m.session
 	m.mu.Unlock()
 
 	var errs []error
 	for _, forward := range forwards {
 		errs = append(errs, forward.Close(ctx))
 	}
-	if session != nil {
-		errs = append(errs, session.Close(ctx))
+	if !m.actor.isStarted() {
+		return errors.Join(errs...)
 	}
-	workersDone := make(chan struct{})
+	errs = append(errs, m.actor.closeSession(ctx))
+	done := make(chan struct{})
 	go func() {
 		m.workers.Wait()
-		close(workersDone)
+		<-m.actor.done
+		close(done)
 	}()
 	select {
-	case <-workersDone:
+	case <-done:
 		return errors.Join(errs...)
 	case <-ctx.Done():
 		return errors.Join(append(errs, ctx.Err())...)

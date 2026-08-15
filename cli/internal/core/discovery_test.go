@@ -367,11 +367,7 @@ func TestManagerDegradesDiscoveryOnObservationSequenceGap(t *testing.T) {
 		host:      HostAlias("development"),
 		connector: oneSessionConnector{session: session},
 	})
-	manager.workers.Add(1)
-	go func() {
-		defer manager.workers.Done()
-		manager.connect()
-	}()
+	manager.actor.start()
 	waitForDiscoveryState(t, manager, DiscoveryStarting)
 	fullCapability := DiscoveryCapability{
 		RemoteListeners: CapabilityFull,
@@ -406,11 +402,7 @@ func TestManagerRejectsStaleObservationSequence(t *testing.T) {
 		host:      HostAlias("development"),
 		connector: oneSessionConnector{session: session},
 	})
-	manager.workers.Add(1)
-	go func() {
-		defer manager.workers.Done()
-		manager.connect()
-	}()
+	manager.actor.start()
 	waitForDiscoveryState(t, manager, DiscoveryStarting)
 	fullCapability := DiscoveryCapability{
 		RemoteListeners: CapabilityFull,
@@ -438,11 +430,7 @@ func TestManagerRejectsObservationBudgetViolations(t *testing.T) {
 				host:      HostAlias("development"),
 				connector: oneSessionConnector{session: session},
 			})
-			manager.workers.Add(1)
-			go func() {
-				defer manager.workers.Done()
-				manager.connect()
-			}()
+			manager.actor.start()
 			waitForDiscoveryState(t, manager, DiscoveryStarting)
 			session.facts <- ObservationSet{Sequence: 1, Capability: fullTestCapability, Budget: budget}
 			failed := waitForDiscoveryState(t, manager, DiscoveryFailed)
@@ -459,11 +447,7 @@ func TestManagerAcceptsDeclaredObservationBudget(t *testing.T) {
 		host:      HostAlias("development"),
 		connector: oneSessionConnector{session: session},
 	})
-	manager.workers.Add(1)
-	go func() {
-		defer manager.workers.Done()
-		manager.connect()
-	}()
+	manager.actor.start()
 	waitForDiscoveryState(t, manager, DiscoveryStarting)
 	session.facts <- ObservationSet{Sequence: 1, Capability: fullTestCapability, Budget: fullObservationBudget}
 	waitForDiscoveryState(t, manager, DiscoveryHealthy)
