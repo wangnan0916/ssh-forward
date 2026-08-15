@@ -17,7 +17,6 @@ import (
 type ExitKind string
 
 const (
-	ExitClean          ExitKind = "clean"
 	ExitCancelled      ExitKind = "cancelled"
 	ExitTransient      ExitKind = "transient"
 	ExitAuthentication ExitKind = "authentication"
@@ -145,16 +144,15 @@ func classifyExit(err error, stderr string, cancelled bool) ExitKind {
 	if cancelled {
 		return ExitCancelled
 	}
-	if err == nil {
-		return ExitClean
-	}
-	message := strings.ToLower(stderr)
-	if strings.Contains(message, "permission denied") || strings.Contains(message, "too many authentication failures") ||
-		strings.Contains(message, "no supported authentication methods") {
-		return ExitAuthentication
-	}
-	if strings.Contains(message, "host key verification failed") || strings.Contains(message, "remote host identification has changed") {
-		return ExitHostKey
+	if err != nil {
+		message := strings.ToLower(stderr)
+		if strings.Contains(message, "permission denied") || strings.Contains(message, "too many authentication failures") ||
+			strings.Contains(message, "no supported authentication methods") {
+			return ExitAuthentication
+		}
+		if strings.Contains(message, "host key verification failed") || strings.Contains(message, "remote host identification has changed") {
+			return ExitHostKey
+		}
 	}
 	return ExitTransient
 }
