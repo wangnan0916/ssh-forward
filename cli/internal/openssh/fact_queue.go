@@ -8,6 +8,12 @@ import (
 
 const maxQueuedSessionFacts = 8
 
+// sessionFactQueue is a bounded, drop-oldest fact buffer between the scanner
+// and the Forwarding Session consumer. Transport guarantee: the first
+// ObservationSet is never evicted — core's Discovery Baseline is the first
+// complete observation after connecting, and dropping it would silently
+// delay baseline establishment past a queue overflow. Every later set may
+// be replaced by newer evidence.
 type sessionFactQueue struct {
 	mu                sync.Mutex
 	items             []core.SessionFact
@@ -43,6 +49,9 @@ func (q *sessionFactQueue) push(fact core.SessionFact) {
 	last := len(q.items) - 1
 	if !q.baselineDelivered {
 		if _, protected := q.items[last].(core.ObservationSet); protected {
+			// Keep the first ObservationSet (the future Discovery Baseline)
+			// even if it would be evicted: overflow may drop it, but the
+			// next scan's set must still establish the Baseline.
 			q.signalLocked()
 			return
 		}
@@ -66,6 +75,8 @@ func (q *sessionFactQueue) pop() (core.SessionFact, bool, bool) {
 	copy(q.items, q.items[1:])
 	q.items = q.items[:len(q.items)-1]
 	if _, ok := fact.(core.ObservationSet); ok {
+		// From here on, overflow may drop the oldest ObservationSet freely;
+		// the transport guarantee applies to the first one only.
 		q.baselineDelivered = true
 	}
 	if len(q.items) != 0 {
