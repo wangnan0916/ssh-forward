@@ -31,7 +31,7 @@ func Serve(ctx context.Context, conn net.Conn, manager core.Manager) error {
 	}
 
 	pending := newPendingChannel(frames, maxPendingCalls)
-	session := newConnectionSession(ctx, manager, capabilities, pending)
+	session := newConnectionSession(ctx, manager, capabilities)
 	pending.onResponse = session.onResponseSent
 	defer session.close()
 	methods := handler.Map{

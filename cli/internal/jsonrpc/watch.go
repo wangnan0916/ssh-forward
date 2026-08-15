@@ -17,7 +17,6 @@ type connectionSession struct {
 	cancel       context.CancelFunc
 	manager      core.Manager
 	capabilities negotiatedCapabilities
-	channel      *pendingChannel
 	server       *jrpc2.Server
 
 	mu             sync.Mutex
@@ -37,14 +36,13 @@ type connectionWatch struct {
 	stopped bool
 }
 
-func newConnectionSession(ctx context.Context, manager core.Manager, capabilities negotiatedCapabilities, channel *pendingChannel) *connectionSession {
+func newConnectionSession(ctx context.Context, manager core.Manager, capabilities negotiatedCapabilities) *connectionSession {
 	sessionCtx, cancel := context.WithCancel(ctx)
 	return &connectionSession{
 		ctx:          sessionCtx,
 		cancel:       cancel,
 		manager:      manager,
 		capabilities: capabilities,
-		channel:      channel,
 		watches:      make(map[string]*connectionWatch),
 	}
 }
@@ -60,40 +58,23 @@ func (s *connectionSession) handleWatch(ctx context.Context, request *jrpc2.Requ
 	if !s.reserveWatchSlot() {
 		return nil, errWatchLimit
 	}
-	reserved := true
-	defer func() {
-		if reserved {
-			s.releaseWatchSlot()
-		}
-	}()
-
 	stream, err := s.manager.Watch(ctx)
 	if err != nil {
+		s.releaseWatchSlot()
 		return nil, marshalManagerError(err)
 	}
 	initial, err := stream.Next(ctx)
 	if err != nil {
+		s.releaseWatchSlot()
 		_ = stream.Close()
 		return nil, &jrpc2.Error{Code: jrpc2.InternalError, Message: "internal error"}
 	}
-
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
+	watch, ok := s.registerWatch(stream)
+	if !ok {
+		s.releaseWatchSlot()
 		_ = stream.Close()
 		return nil, &jrpc2.Error{Code: jrpc2.InternalError, Message: "internal error"}
 	}
-	s.pendingWatches--
-	reserved = false
-	s.nextWatchID++
-	watchID := "watch-" + strconv.FormatUint(s.nextWatchID, 10)
-	watch := &connectionWatch{
-		id:       watchID,
-		stream:   stream,
-		activate: make(chan struct{}),
-	}
-	s.watches[watchID] = watch
-	s.mu.Unlock()
 
 	s.workers.Add(1)
 	go func() {
@@ -101,7 +82,7 @@ func (s *connectionSession) handleWatch(ctx context.Context, request *jrpc2.Requ
 		s.runWatch(watch)
 	}()
 	return watchResult{
-		WatchID:  watchID,
+		WatchID:  watch.id,
 		Snapshot: marshalSnapshot(initial),
 	}, nil
 }
@@ -175,6 +156,26 @@ func (s *connectionSession) releaseWatchSlot() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.pendingWatches--
+}
+
+// registerWatch converts a reserved slot into a registered Watch and assigns
+// its ID, all under the session lock; it fails only if the session closed
+// while the stream was being set up.
+func (s *connectionSession) registerWatch(stream core.SnapshotStream) (*connectionWatch, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, false
+	}
+	s.pendingWatches--
+	s.nextWatchID++
+	watch := &connectionWatch{
+		id:       "watch-" + strconv.FormatUint(s.nextWatchID, 10),
+		stream:   stream,
+		activate: make(chan struct{}),
+	}
+	s.watches[watch.id] = watch
+	return watch, true
 }
 
 func (s *connectionSession) runWatch(watch *connectionWatch) {
