@@ -6,10 +6,16 @@ import (
 )
 
 const (
-	maxRetainedListenerObservations = 256
-	maxRetainedSocketIdentities     = 512
-	maxRetainedProcessRecords       = 512
-	maxRetainedProcessMetadataBytes = 128 << 10
+	// MaxRetained* are the published-snapshot retention caps for Discovery
+	// evidence. The scanner declares its own per-scan budgets in-band; core
+	// accepts declarations within these caps (see validObservationBudget),
+	// so a scanner may use fewer records than these defaults but never more.
+	// The scanner's parser caps are asserted equal to these in the openssh
+	// package tests, keeping the protocol defaults in one numeric family.
+	MaxRetainedListenerObservations = 256
+	MaxRetainedSocketIdentities     = 512
+	MaxRetainedProcessRecords       = 512
+	MaxRetainedProcessMetadataBytes = 128 << 10
 )
 
 type evidenceTruncation struct {
@@ -54,10 +60,10 @@ func validCapabilityAvailability(capability CapabilityAvailability) bool {
 // present and within core's retention caps, so every full scan the adapter
 // promises fits within what core retains.
 func validObservationBudget(budget ObservationBudget) bool {
-	return budget.Listeners >= 1 && budget.Listeners <= maxRetainedListenerObservations &&
-		budget.Sockets >= 1 && budget.Sockets <= maxRetainedSocketIdentities &&
-		budget.ProcessRecords >= 1 && budget.ProcessRecords <= maxRetainedProcessRecords &&
-		budget.MetadataBytes >= 1 && budget.MetadataBytes <= maxRetainedProcessMetadataBytes
+	return budget.Listeners >= 1 && budget.Listeners <= MaxRetainedListenerObservations &&
+		budget.Sockets >= 1 && budget.Sockets <= MaxRetainedSocketIdentities &&
+		budget.ProcessRecords >= 1 && budget.ProcessRecords <= MaxRetainedProcessRecords &&
+		budget.MetadataBytes >= 1 && budget.MetadataBytes <= MaxRetainedProcessMetadataBytes
 }
 
 func discoveryStateForCapability(capability DiscoveryCapability) DiscoveryState {
@@ -75,7 +81,7 @@ type remoteListenerKey struct {
 
 func mergeBoundedListenerObservations(retained, current []ListenerObservation) ([]ListenerObservation, evidenceTruncation) {
 	retained, truncated := boundListenerObservations(canonicalListenerObservations(retained))
-	merged := make(map[remoteListenerKey]ListenerObservation, maxRetainedListenerObservations)
+	merged := make(map[remoteListenerKey]ListenerObservation, MaxRetainedListenerObservations)
 	for _, observation := range retained {
 		merged[listenerKey(observation)] = observation
 	}
@@ -83,7 +89,7 @@ func mergeBoundedListenerObservations(retained, current []ListenerObservation) (
 		key := listenerKey(observation)
 		if previous, found := merged[key]; found {
 			merged[key] = mergePartialListenerObservation(previous, observation)
-		} else if len(merged) < maxRetainedListenerObservations {
+		} else if len(merged) < MaxRetainedListenerObservations {
 			merged[key] = observation
 		} else {
 			truncated.listeners = true
@@ -113,13 +119,13 @@ func degradeTruncatedCapability(capability *DiscoveryCapability, truncated evide
 }
 
 func boundListenerObservations(observations []ListenerObservation) ([]ListenerObservation, evidenceTruncation) {
-	bounded := make([]ListenerObservation, 0, min(len(observations), maxRetainedListenerObservations))
+	bounded := make([]ListenerObservation, 0, min(len(observations), MaxRetainedListenerObservations))
 	var truncated evidenceTruncation
 	socketCount := 0
 	processCount := 0
 	metadataBytes := 0
 	for _, observation := range observations {
-		if len(bounded) == maxRetainedListenerObservations {
+		if len(bounded) == MaxRetainedListenerObservations {
 			truncated.listeners = true
 			break
 		}
@@ -128,7 +134,7 @@ func boundListenerObservations(observations []ListenerObservation) ([]ListenerOb
 			BindScope:  observation.BindScope,
 			RemotePort: observation.RemotePort,
 		}
-		availableSockets := maxRetainedSocketIdentities - socketCount
+		availableSockets := MaxRetainedSocketIdentities - socketCount
 		keptSockets := min(len(observation.SocketIdentities), availableSockets)
 		item.SocketIdentities = slices.Clone(observation.SocketIdentities[:keptSockets])
 		socketCount += keptSockets
@@ -139,7 +145,7 @@ func boundListenerObservations(observations []ListenerObservation) ([]ListenerOb
 			boundedChain := ProcessChain{}
 			for _, process := range chain.Processes {
 				size := processMetadataSize(process)
-				if processCount == maxRetainedProcessRecords || metadataBytes+size > maxRetainedProcessMetadataBytes {
+				if processCount == MaxRetainedProcessRecords || metadataBytes+size > MaxRetainedProcessMetadataBytes {
 					truncated.processes = true
 					break
 				}

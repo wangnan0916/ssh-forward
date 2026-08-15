@@ -24,15 +24,15 @@ func TestSessionReturnsValidatedListenerObservation(t *testing.T) {
 	hexText := func(value string) string { return hex.EncodeToString([]byte(value)) }
 	var queued strings.Builder
 	for sequence := 2; sequence <= 12; sequence++ {
-		fmt.Fprintf(&queued, "SF1\tB\t%d\t%s\t%s\tfull\tfull\tpartial\t256\t256\t512\t131072\n", sequence, hexText("boot-1"), hexText("net:[42]"))
+		fmt.Fprintf(&queued, "SF1\tB\t%d\t%s\t%s\tfull\tfull\tpartial\t%d\t%d\t%d\t%d\n", sequence, hexText("boot-1"), hexText("net:[42]"), openssh.MaxObservedListeners, openssh.MaxObservedSockets, openssh.MaxProcessRecords, openssh.MaxObservationMetadataBytes)
 		fmt.Fprintf(&queued, "SF1\tE\t%d\n", sequence)
 	}
 	queued.WriteString("invalid-one\n")
-	fmt.Fprintf(&queued, "SF1\tB\t13\t%s\t%s\tfull\tfull\tpartial\t256\t256\t512\t131072\n", hexText("boot-1"), hexText("net:[42]"))
+	fmt.Fprintf(&queued, "SF1\tB\t13\t%s\t%s\tfull\tfull\tpartial\t%d\t%d\t%d\t%d\n", hexText("boot-1"), hexText("net:[42]"), openssh.MaxObservedListeners, openssh.MaxObservedSockets, openssh.MaxProcessRecords, openssh.MaxObservationMetadataBytes)
 	queued.WriteString("invalid-two\n")
-	fmt.Fprintf(&queued, "SF1\tB\t14\t%s\t%s\tfull\tfull\tpartial\t256\t256\t512\t131072\n", hexText("boot-1"), hexText("net:[42]"))
+	fmt.Fprintf(&queued, "SF1\tB\t14\t%s\t%s\tfull\tfull\tpartial\t%d\t%d\t%d\t%d\n", hexText("boot-1"), hexText("net:[42]"), openssh.MaxObservedListeners, openssh.MaxObservedSockets, openssh.MaxProcessRecords, openssh.MaxObservationMetadataBytes)
 	queued.WriteString("invalid-three\n")
-	fmt.Fprintf(&queued, "SF1\tB\t15\t%s\t%s\tfull\tfull\tpartial\t256\t256\t512\t131072\n", hexText("boot-1"), hexText("net:[42]"))
+	fmt.Fprintf(&queued, "SF1\tB\t15\t%s\t%s\tfull\tfull\tpartial\t%d\t%d\t%d\t%d\n", hexText("boot-1"), hexText("net:[42]"), openssh.MaxObservedListeners, openssh.MaxObservedSockets, openssh.MaxProcessRecords, openssh.MaxObservationMetadataBytes)
 	script := fmt.Sprintf(`#!/usr/bin/python3
 import json
 import signal

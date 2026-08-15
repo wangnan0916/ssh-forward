@@ -212,7 +212,12 @@ func (a *hostActor) applyObservationSet(set ObservationSet) {
 		Capability:          capability,
 		BaselineEstablished: complete || a.discovery.BaselineEstablished,
 		ScannerVersion:      set.ScannerVersion,
-		ScannerChecksum:     set.ScannerChecksum,
+		// ScannerChecksum is evidence metadata: the scanner parser stamps
+		// each ObservationSet with the embedded script's digest, so clients
+		// can attribute observations to a script revision. It is not a
+		// verification gate (the stamp cannot drift from the script that
+		// produced it); budget drift is instead rejected in-band.
+		ScannerChecksum: set.ScannerChecksum,
 	}
 	if gapped {
 		discovery.State = DiscoveryDegraded

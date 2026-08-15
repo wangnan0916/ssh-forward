@@ -15,15 +15,19 @@ import (
 )
 
 const (
+	// MaxObserved* are the parser's frame caps: the largest per-scan budgets
+	// a scanner may declare. They are asserted equal to core's retention caps
+	// in scanner_bounds_test.go, keeping the protocol defaults in one numeric
+	// family.
 	maxScannerFrameBytes        = 64 << 10
-	maxObservedListeners        = 256
-	maxObservedSockets          = 512
-	maxProcessRecords           = 512
+	MaxObservedListeners        = 256
+	MaxObservedSockets          = 512
+	MaxProcessRecords           = 512
 	maxProcessDepth             = 16
 	maxProcessArguments         = 64
 	maxProcessTextBytes         = 4096
 	maxIdentityTextBytes        = 256
-	maxObservationMetadataBytes = 128 << 10
+	MaxObservationMetadataBytes = 128 << 10
 )
 
 var errInvalidScannerFrame = errors.New("invalid scanner frame")
@@ -408,16 +412,16 @@ func parseObservationBudget(listeners, sockets, processRecords, metadataBytes st
 	}
 	budget := core.ObservationBudget{}
 	var err error
-	if budget.Listeners, err = parse(listeners, maxObservedListeners); err != nil {
+	if budget.Listeners, err = parse(listeners, MaxObservedListeners); err != nil {
 		return core.ObservationBudget{}, err
 	}
-	if budget.Sockets, err = parse(sockets, maxObservedSockets); err != nil {
+	if budget.Sockets, err = parse(sockets, MaxObservedSockets); err != nil {
 		return core.ObservationBudget{}, err
 	}
-	if budget.ProcessRecords, err = parse(processRecords, maxProcessRecords); err != nil {
+	if budget.ProcessRecords, err = parse(processRecords, MaxProcessRecords); err != nil {
 		return core.ObservationBudget{}, err
 	}
-	if budget.MetadataBytes, err = parse(metadataBytes, maxObservationMetadataBytes); err != nil {
+	if budget.MetadataBytes, err = parse(metadataBytes, MaxObservationMetadataBytes); err != nil {
 		return core.ObservationBudget{}, err
 	}
 	return budget, nil

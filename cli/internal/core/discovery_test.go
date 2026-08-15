@@ -76,16 +76,16 @@ func TestPartialObservationMergeKeepsFixedEvidenceBounds(t *testing.T) {
 		return observations
 	}
 	listeners, listenerTruncation := mergeBoundedListenerObservations(
-		makeListeners(1, maxRetainedListenerObservations),
-		makeListeners(1+maxRetainedListenerObservations, maxRetainedListenerObservations),
+		makeListeners(1, MaxRetainedListenerObservations),
+		makeListeners(1+MaxRetainedListenerObservations, MaxRetainedListenerObservations),
 	)
-	if len(listeners) > maxRetainedListenerObservations {
-		t.Fatalf("retained Listener Observations = %d, want at most %d", len(listeners), maxRetainedListenerObservations)
+	if len(listeners) > MaxRetainedListenerObservations {
+		t.Fatalf("retained Listener Observations = %d, want at most %d", len(listeners), MaxRetainedListenerObservations)
 	}
 	if !listenerTruncation.listeners {
 		t.Fatal("Listener truncation was not reported")
 	}
-	retained := makeListeners(1000, maxRetainedListenerObservations)
+	retained := makeListeners(1000, MaxRetainedListenerObservations)
 	withLowerCurrent, _ := mergeBoundedListenerObservations(retained, makeListeners(1, 1))
 	if !reflect.DeepEqual(withLowerCurrent, retained) {
 		t.Fatal("partial merge evicted retained Listener Observation for a newly observed lower-sorting key")
@@ -93,7 +93,7 @@ func TestPartialObservationMergeKeepsFixedEvidenceBounds(t *testing.T) {
 
 	makeEvidence := func(first int) ListenerObservation {
 		observation := ListenerObservation{Family: FamilyIPv4, BindScope: BindLoopback, RemotePort: 8080}
-		for index := range maxRetainedSocketIdentities {
+		for index := range MaxRetainedSocketIdentities {
 			identity := first + index
 			observation.SocketIdentities = append(observation.SocketIdentities, SocketIdentity(fmt.Sprintf("socket:%04d", identity)))
 			observation.Processes = append(observation.Processes, ProcessChain{Processes: []ProcessMetadata{{PID: identity + 1}}})
@@ -102,13 +102,13 @@ func TestPartialObservationMergeKeepsFixedEvidenceBounds(t *testing.T) {
 	}
 	evidence, truncatedEvidence := mergeBoundedListenerObservations(
 		[]ListenerObservation{makeEvidence(0)},
-		[]ListenerObservation{makeEvidence(maxRetainedSocketIdentities)},
+		[]ListenerObservation{makeEvidence(MaxRetainedSocketIdentities)},
 	)
-	if got := len(evidence[0].SocketIdentities); got > maxRetainedSocketIdentities {
-		t.Fatalf("retained Socket Identities = %d, want at most %d", got, maxRetainedSocketIdentities)
+	if got := len(evidence[0].SocketIdentities); got > MaxRetainedSocketIdentities {
+		t.Fatalf("retained Socket Identities = %d, want at most %d", got, MaxRetainedSocketIdentities)
 	}
-	if got := len(evidence[0].Processes); got > maxRetainedProcessRecords {
-		t.Fatalf("retained Process Chains = %d, want at most %d", got, maxRetainedProcessRecords)
+	if got := len(evidence[0].Processes); got > MaxRetainedProcessRecords {
+		t.Fatalf("retained Process Chains = %d, want at most %d", got, MaxRetainedProcessRecords)
 	}
 	if !truncatedEvidence.sockets || !truncatedEvidence.processes {
 		t.Fatalf("Evidence truncation = %#v, want sockets and processes", truncatedEvidence)
@@ -329,7 +329,7 @@ func TestManagerPublishesDiscoveryBaselineAtomically(t *testing.T) {
 	}
 
 	boundedObservation := ListenerObservation{Family: FamilyIPv4, BindScope: BindLoopback, RemotePort: 38080}
-	for index := range maxRetainedSocketIdentities {
+	for index := range MaxRetainedSocketIdentities {
 		boundedObservation.SocketIdentities = append(boundedObservation.SocketIdentities, SocketIdentity(fmt.Sprintf("socket:bounded-%03d", index)))
 		boundedObservation.Processes = append(boundedObservation.Processes, ProcessChain{Processes: []ProcessMetadata{{PID: 1000 + index}}})
 	}
@@ -347,7 +347,7 @@ func TestManagerPublishesDiscoveryBaselineAtomically(t *testing.T) {
 		t.Fatalf("bounded evidence Capability = %#v, want truncated dimensions partial", got)
 	}
 	boundedEvidence := bounded.Host.ListenerObservations[0]
-	if len(boundedEvidence.SocketIdentities) > maxRetainedSocketIdentities || len(boundedEvidence.Processes) > maxRetainedProcessRecords {
+	if len(boundedEvidence.SocketIdentities) > MaxRetainedSocketIdentities || len(boundedEvidence.Processes) > MaxRetainedProcessRecords {
 		t.Fatalf("published evidence exceeded bounds: %#v", boundedEvidence)
 	}
 
@@ -409,7 +409,7 @@ func TestManagerRejectsStaleObservationSequence(t *testing.T) {
 func TestManagerRejectsObservationBudgetViolations(t *testing.T) {
 	for name, budget := range map[string]ObservationBudget{
 		"missing":    {},
-		"oversized":  {Listeners: maxRetainedListenerObservations + 1, Sockets: 256, ProcessRecords: 512, MetadataBytes: 128 << 10},
+		"oversized":  {Listeners: MaxRetainedListenerObservations + 1, Sockets: 256, ProcessRecords: 512, MetadataBytes: 128 << 10},
 		"zeroSocket": {Listeners: 256, Sockets: 0, ProcessRecords: 512, MetadataBytes: 128 << 10},
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -30,8 +31,8 @@ func TestScannerRequiresCanonicalDecimalIdentities(t *testing.T) {
 func TestScannerRejectsProcessEvidenceExpansionAcrossListenerEndpoints(t *testing.T) {
 	hexText := func(value string) string { return hex.EncodeToString([]byte(value)) }
 	var input strings.Builder
-	fmt.Fprintf(&input, "SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t256\t256\t512\t131072\n", hexText("boot"), hexText("net"))
-	for index := 0; index < maxObservedListeners; index++ {
+	fmt.Fprintf(&input, "SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t%d\t%d\t%d\t%d\n", hexText("boot"), hexText("net"), MaxObservedListeners, MaxObservedSockets, MaxProcessRecords, MaxObservationMetadataBytes)
+	for index := 0; index < MaxObservedListeners; index++ {
 		fmt.Fprintf(&input, "SF1\tL\t1\tipv4\tloopback\t%d\t42\n", 10000+index)
 	}
 	fmt.Fprintf(&input, "SF1\tP\t1\t42\t7\t0\t7\t%s\t%s\t%s\n", hexText("/bin/server"), hexText("/workspace"), hexText("server\x00"))
@@ -43,7 +44,7 @@ func TestScannerRejectsProcessEvidenceExpansionAcrossListenerEndpoints(t *testin
 	})
 	for _, fact := range facts {
 		if _, ok := fact.(core.ObservationSet); ok {
-			t.Fatalf("scanner accepted one inode for %d distinct endpoints", maxObservedListeners)
+			t.Fatalf("scanner accepted one inode for %d distinct endpoints", MaxObservedListeners)
 		}
 	}
 	if len(facts) != 1 {
@@ -58,11 +59,11 @@ func TestScannerRejectsProcessEvidenceExpansionAcrossListenerEndpoints(t *testin
 func TestScannerDowngradesIncompleteProcessChain(t *testing.T) {
 	hexText := func(value string) string { return hex.EncodeToString([]byte(value)) }
 	input := fmt.Sprintf(
-		"SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t256\t256\t512\t131072\n"+
+		"SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t%d\t%d\t%d\t%d\n"+
 			"SF1\tL\t1\tipv4\tloopback\t8080\t42\n"+
 			"SF1\tP\t1\t42\t7\t1\t6\t%s\t%s\t%s\n"+
 			"SF1\tE\t1\n",
-		hexText("boot"), hexText("net"), hexText("/bin/parent"), hexText("/workspace"), hexText("parent\x00"),
+		hexText("boot"), hexText("net"), MaxObservedListeners, MaxObservedSockets, MaxProcessRecords, MaxObservationMetadataBytes, hexText("/bin/parent"), hexText("/workspace"), hexText("parent\x00"),
 	)
 	var set core.ObservationSet
 	scanObservationFrames(strings.NewReader(input), func(fact core.SessionFact) {
@@ -141,12 +142,13 @@ printf '%%s|%%s|%%s\n' "$scanner_source" "$scan_status" "$current_listeners"
 
 func TestScannerRejectsDeclaredBudgetBeyondFrameLimits(t *testing.T) {
 	hexText := func(value string) string { return hex.EncodeToString([]byte(value)) }
+	over := func(parts ...string) string { return strings.Join(parts, "\t") }
 	for name, budget := range map[string]string{
-		"listeners": "257\t256\t512\t131072",
-		"sockets":   "256\t513\t512\t131072",
-		"processes": "256\t256\t513\t131072",
-		"metadata":  "256\t256\t512\t131073",
-		"zero":      "0\t256\t512\t131072",
+		"listeners": over(strconv.Itoa(MaxObservedListeners+1), strconv.Itoa(MaxObservedSockets), strconv.Itoa(MaxProcessRecords), strconv.Itoa(MaxObservationMetadataBytes)),
+		"sockets":   over(strconv.Itoa(MaxObservedListeners), strconv.Itoa(MaxObservedSockets+1), strconv.Itoa(MaxProcessRecords), strconv.Itoa(MaxObservationMetadataBytes)),
+		"processes": over(strconv.Itoa(MaxObservedListeners), strconv.Itoa(MaxObservedSockets), strconv.Itoa(MaxProcessRecords+1), strconv.Itoa(MaxObservationMetadataBytes)),
+		"metadata":  over(strconv.Itoa(MaxObservedListeners), strconv.Itoa(MaxObservedSockets), strconv.Itoa(MaxProcessRecords), strconv.Itoa(MaxObservationMetadataBytes+1)),
+		"zero":      over("0", strconv.Itoa(MaxObservedSockets), strconv.Itoa(MaxProcessRecords), strconv.Itoa(MaxObservationMetadataBytes)),
 	} {
 		t.Run(name, func(t *testing.T) {
 			input := fmt.Sprintf("SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t%s\nSF1\tE\t1\n", hexText("boot"), hexText("net"), budget)
@@ -189,9 +191,9 @@ func TestScannerRejectsRecordsBeyondDeclaredBudget(t *testing.T) {
 func TestScannerParsesDeclaredBudget(t *testing.T) {
 	hexText := func(value string) string { return hex.EncodeToString([]byte(value)) }
 	input := fmt.Sprintf(
-		"SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t256\t256\t512\t131072\n"+
+		"SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t%d\t%d\t%d\t%d\n"+
 			"SF1\tE\t1\n",
-		hexText("boot"), hexText("net"),
+		hexText("boot"), hexText("net"), MaxObservedListeners, MaxObservedSockets, MaxProcessRecords, MaxObservationMetadataBytes,
 	)
 	var set core.ObservationSet
 	scanObservationFrames(strings.NewReader(input), func(fact core.SessionFact) {
@@ -199,7 +201,7 @@ func TestScannerParsesDeclaredBudget(t *testing.T) {
 			set = observation
 		}
 	})
-	want := core.ObservationBudget{Listeners: 256, Sockets: 256, ProcessRecords: 512, MetadataBytes: 131072}
+	want := core.ObservationBudget{Listeners: MaxObservedListeners, Sockets: MaxObservedSockets, ProcessRecords: MaxProcessRecords, MetadataBytes: MaxObservationMetadataBytes}
 	if !reflect.DeepEqual(set.Budget, want) {
 		t.Fatalf("declared Budget = %#v, want %#v", set.Budget, want)
 	}
@@ -258,4 +260,48 @@ printf '%%s|%%s\n' "$status" "${#arguments_hex}"
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+// The scanner script's declared budgets, the parser's frame caps, and core's
+// retention caps are the same protocol default family; a drift between any
+// two of them should fail this test rather than silently diverge at runtime.
+func TestScannerScriptDeclaresParserDefaultBudgets(t *testing.T) {
+	values := make(map[string]string)
+	for _, line := range strings.Split(scannerScript, "\n") {
+		for _, name := range []string{"listener_limit", "socket_record_limit", "process_record_limit", "metadata_bytes_limit", "metadata_hex_limit"} {
+			if prefix := name + "="; strings.HasPrefix(line, prefix) {
+				values[name] = strings.TrimPrefix(line, prefix)
+			}
+		}
+	}
+	if got := values["listener_limit"]; strconv.Itoa(MaxObservedListeners) != got {
+		t.Fatalf("scanner.sh listener_limit = %q, want %d (parser cap)", got, MaxObservedListeners)
+	}
+	if got := values["socket_record_limit"]; got != "$listener_limit" {
+		t.Fatalf("scanner.sh socket_record_limit = %q, want derived $listener_limit", got)
+	}
+	if got := values["process_record_limit"]; strconv.Itoa(MaxProcessRecords) != got {
+		t.Fatalf("scanner.sh process_record_limit = %q, want %d (parser cap)", got, MaxProcessRecords)
+	}
+	if got := values["metadata_bytes_limit"]; strconv.Itoa(MaxObservationMetadataBytes) != got {
+		t.Fatalf("scanner.sh metadata_bytes_limit = %q, want %d (parser cap)", got, MaxObservationMetadataBytes)
+	}
+	if got := values["metadata_hex_limit"]; got != "$((metadata_bytes_limit * 2))" {
+		t.Fatalf("scanner.sh metadata_hex_limit = %q, want derived $((metadata_bytes_limit * 2))", got)
+	}
+
+	// The parser caps and core's retention caps are the same protocol
+	// defaults; keep them in one numeric family.
+	if MaxObservedListeners != core.MaxRetainedListenerObservations {
+		t.Fatalf("parser listener cap %d != core retention cap %d", MaxObservedListeners, core.MaxRetainedListenerObservations)
+	}
+	if MaxObservedSockets != core.MaxRetainedSocketIdentities {
+		t.Fatalf("parser socket cap %d != core retention cap %d", MaxObservedSockets, core.MaxRetainedSocketIdentities)
+	}
+	if MaxProcessRecords != core.MaxRetainedProcessRecords {
+		t.Fatalf("parser process cap %d != core retention cap %d", MaxProcessRecords, core.MaxRetainedProcessRecords)
+	}
+	if MaxObservationMetadataBytes != core.MaxRetainedProcessMetadataBytes {
+		t.Fatalf("parser metadata cap %d != core retention cap %d", MaxObservationMetadataBytes, core.MaxRetainedProcessMetadataBytes)
+	}
 }
