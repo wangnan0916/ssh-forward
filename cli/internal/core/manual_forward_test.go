@@ -36,20 +36,18 @@ func TestConfiguredManagerStartsDisconnectedWithoutConnecting(t *testing.T) {
 			t.Errorf("Close: %v", err)
 		}
 	})
-	snapshot, err := manager.Snapshot(context.Background(), AllHosts())
+	snapshot, err := manager.Snapshot(context.Background())
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
 	want := Snapshot{
 		Revision: 0,
-		Hosts: []HostSnapshot{
-			{
-				Alias:                HostAlias("development"),
-				Connection:           ConnectionDisconnected,
-				Discovery:            stoppedDiscovery(),
-				ListenerObservations: []ListenerObservation{},
-				Forwards:             []ForwardSnapshot{},
-			},
+		Host: &HostSnapshot{
+			Alias:                HostAlias("development"),
+			Connection:           ConnectionDisconnected,
+			Discovery:            stoppedDiscovery(),
+			ListenerObservations: []ListenerObservation{},
+			Forwards:             []ForwardSnapshot{},
 		},
 	}
 	if !reflect.DeepEqual(snapshot, want) {
@@ -105,20 +103,18 @@ func TestAddManualForwardAllocatesEndpointAndConnectsLazily(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("Development Host connection did not start")
 	}
-	snapshot, err := manager.Snapshot(context.Background(), AllHosts())
+	snapshot, err := manager.Snapshot(context.Background())
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
 	wantSnapshot := Snapshot{
 		Revision: 1,
-		Hosts: []HostSnapshot{
-			{
-				Alias:                HostAlias("development"),
-				Connection:           ConnectionConnecting,
-				Discovery:            stoppedDiscovery(),
-				ListenerObservations: []ListenerObservation{},
-				Forwards:             []ForwardSnapshot{wantForward},
-			},
+		Host: &HostSnapshot{
+			Alias:                HostAlias("development"),
+			Connection:           ConnectionConnecting,
+			Discovery:            stoppedDiscovery(),
+			ListenerObservations: []ListenerObservation{},
+			Forwards:             []ForwardSnapshot{wantForward},
 		},
 	}
 	if !reflect.DeepEqual(snapshot, wantSnapshot) {
@@ -143,11 +139,11 @@ func TestAddManualForwardHonorsCancellationBeforeCommit(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Execute error = %v, want context.Canceled", err)
 	}
-	snapshot, err := manager.Snapshot(context.Background(), AllHosts())
+	snapshot, err := manager.Snapshot(context.Background())
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	if snapshot.Revision != 0 || len(snapshot.Hosts[0].Forwards) != 0 {
+	if snapshot.Revision != 0 || len(snapshot.Host.Forwards) != 0 {
 		t.Fatalf("cancelled command changed Snapshot: %#v", snapshot)
 	}
 }
@@ -203,11 +199,11 @@ func TestAddManualForwardIsIdempotentByCommandID(t *testing.T) {
 	if !reflect.DeepEqual(second, first) {
 		t.Fatalf("retried Outcome = %#v, want original %#v", second, first)
 	}
-	snapshot, err := manager.Snapshot(context.Background(), AllHosts())
+	snapshot, err := manager.Snapshot(context.Background())
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	if snapshot.Revision != 1 || len(snapshot.Hosts[0].Forwards) != 1 {
+	if snapshot.Revision != 1 || len(snapshot.Host.Forwards) != 1 {
 		t.Fatalf("retried Snapshot = %#v, want revision 1 with one Forward", snapshot)
 	}
 }
@@ -272,11 +268,11 @@ func TestConcurrentIdenticalCommandsShareOneOutcome(t *testing.T) {
 	if !reflect.DeepEqual(first.outcome, second.outcome) {
 		t.Fatalf("concurrent Outcomes differ: %#v and %#v", first.outcome, second.outcome)
 	}
-	snapshot, err := manager.Snapshot(context.Background(), AllHosts())
+	snapshot, err := manager.Snapshot(context.Background())
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	if snapshot.Revision != 1 || len(snapshot.Hosts[0].Forwards) != 1 {
+	if snapshot.Revision != 1 || len(snapshot.Host.Forwards) != 1 {
 		t.Fatalf("concurrent Snapshot = %#v, want revision 1 with one Forward", snapshot)
 	}
 }
@@ -305,11 +301,11 @@ func TestRemoveForwardHonorsCancellationBeforeCommit(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("remove error = %v, want context.Canceled", err)
 	}
-	snapshot, err := manager.Snapshot(context.Background(), AllHosts())
+	snapshot, err := manager.Snapshot(context.Background())
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	if snapshot.Revision != 1 || len(snapshot.Hosts[0].Forwards) != 1 {
+	if snapshot.Revision != 1 || len(snapshot.Host.Forwards) != 1 {
 		t.Fatalf("cancelled removal changed Snapshot: %#v", snapshot)
 	}
 }
@@ -351,11 +347,11 @@ func TestRemoveManualForwardReleasesLocalEndpoint(t *testing.T) {
 	if !reflect.DeepEqual(removed, wantOutcome) {
 		t.Fatalf("remove Outcome = %#v, want %#v", removed, wantOutcome)
 	}
-	snapshot, err := manager.Snapshot(context.Background(), AllHosts())
+	snapshot, err := manager.Snapshot(context.Background())
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	if snapshot.Revision != 2 || len(snapshot.Hosts[0].Forwards) != 0 {
+	if snapshot.Revision != 2 || len(snapshot.Host.Forwards) != 0 {
 		t.Fatalf("Snapshot after removal = %#v, want revision 2 with no Forwards", snapshot)
 	}
 	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(added.Forward.AllocatedLocalPort)))

@@ -102,11 +102,11 @@ func TestManualForwardCarriesTrafficAfterHostConnects(t *testing.T) {
 	}
 	deadline := time.Now().Add(time.Second)
 	for {
-		snapshot, err := manager.Snapshot(context.Background(), AllHosts())
+		snapshot, err := manager.Snapshot(context.Background())
 		if err != nil {
 			t.Fatalf("Snapshot: %v", err)
 		}
-		if snapshot.Hosts[0].Connection == ConnectionConnected {
+		if snapshot.Host.Connection == ConnectionConnected {
 			if snapshot.Revision != 2 {
 				t.Fatalf("connected Snapshot revision = %d, want 2", snapshot.Revision)
 			}

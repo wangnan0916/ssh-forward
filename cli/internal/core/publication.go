@@ -34,13 +34,13 @@ func (m *manager) buildSnapshotLocked() Snapshot {
 	}
 	return Snapshot{
 		Revision: m.revision,
-		Hosts: []HostSnapshot{{
+		Host: &HostSnapshot{
 			Alias:                m.host,
 			Connection:           m.connection,
 			Discovery:            m.discovery,
 			ListenerObservations: m.listenerObservations,
 			Forwards:             m.forwards.snapshots(),
-		}},
+		},
 	}
 }
 
@@ -54,31 +54,24 @@ func (m *manager) publishLocked() {
 
 func cloneSnapshot(snapshot Snapshot) Snapshot {
 	cloned := Snapshot{Revision: snapshot.Revision}
-	if snapshot.Hosts == nil {
+	if snapshot.Host == nil {
 		return cloned
 	}
-	cloned.Hosts = make([]HostSnapshot, len(snapshot.Hosts))
-	for hostIndex, host := range snapshot.Hosts {
-		cloned.Hosts[hostIndex] = HostSnapshot{
-			Alias:      host.Alias,
-			Connection: host.Connection,
-			Discovery:  host.Discovery,
-		}
-		if host.ListenerObservations != nil {
-			cloned.Hosts[hostIndex].ListenerObservations = cloneListenerObservations(host.ListenerObservations)
-		}
-		if host.Forwards == nil {
-			continue
-		}
-		cloned.Hosts[hostIndex].Forwards = make([]ForwardSnapshot, len(host.Forwards))
-		for forwardIndex, forward := range host.Forwards {
-			cloned.Hosts[hostIndex].Forwards[forwardIndex] = cloneForward(forward)
+	host := *snapshot.Host
+	if snapshot.Host.ListenerObservations != nil {
+		host.ListenerObservations = cloneListenerObservations(snapshot.Host.ListenerObservations)
+	}
+	if snapshot.Host.Forwards != nil {
+		host.Forwards = make([]ForwardSnapshot, len(snapshot.Host.Forwards))
+		for forwardIndex, forward := range snapshot.Host.Forwards {
+			host.Forwards[forwardIndex] = cloneForward(forward)
 		}
 	}
+	cloned.Host = &host
 	return cloned
 }
 
-func (m *manager) Watch(ctx context.Context, _ WatchOptions) (SnapshotStream, error) {
+func (m *manager) Watch(ctx context.Context) (SnapshotStream, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

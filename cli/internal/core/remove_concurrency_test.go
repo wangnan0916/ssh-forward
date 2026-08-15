@@ -47,22 +47,22 @@ func TestCancelledRemoveFinishesCommittedShutdownInBackground(t *testing.T) {
 	if !errors.Is(result.err, context.Canceled) {
 		t.Fatalf("cancelled remove error = %v, want context.Canceled", result.err)
 	}
-	snapshot, err := manager.Snapshot(context.Background(), AllHosts())
+	snapshot, err := manager.Snapshot(context.Background())
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	if len(snapshot.Hosts[0].Forwards) != 1 {
+	if len(snapshot.Host.Forwards) != 1 {
 		t.Fatalf("removal published before Local Endpoint workers stopped: %#v", snapshot)
 	}
 
 	releaseForwardClosure(owner)
 	deadline := time.Now().Add(time.Second)
 	for {
-		snapshot, err = manager.Snapshot(context.Background(), AllHosts())
+		snapshot, err = manager.Snapshot(context.Background())
 		if err != nil {
 			t.Fatalf("Snapshot: %v", err)
 		}
-		if len(snapshot.Hosts[0].Forwards) == 0 {
+		if len(snapshot.Host.Forwards) == 0 {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -97,11 +97,11 @@ func TestConcurrentDifferentRemoveWaitsForConsistentSnapshot(t *testing.T) {
 	if !errors.As(second.err, &domainError) || domainError.Kind != ErrorForwardNotFound {
 		t.Fatalf("second remove error = %v, want forward_not_found", second.err)
 	}
-	snapshot, err := manager.Snapshot(context.Background(), AllHosts())
+	snapshot, err := manager.Snapshot(context.Background())
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	if len(snapshot.Hosts[0].Forwards) != 0 {
+	if len(snapshot.Host.Forwards) != 0 {
 		t.Fatalf("Snapshot after forward_not_found still contains Forward: %#v", snapshot)
 	}
 }

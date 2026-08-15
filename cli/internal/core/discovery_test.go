@@ -182,7 +182,7 @@ func TestManagerRetainsObservationsUntilReconnectGetsCompleteReplacement(t *test
 	waitForDiscoveryBaseline(t, manager, true)
 	first.terminal <- &SessionError{Disposition: SessionRetry, Reason: SessionReasonTransport}
 	starting := waitForDiscoveryState(t, manager, DiscoveryStarting)
-	if got := starting.Hosts[0].ListenerObservations; !reflect.DeepEqual(got, []ListenerObservation{observation}) {
+	if got := starting.Host.ListenerObservations; !reflect.DeepEqual(got, []ListenerObservation{observation}) {
 		t.Fatalf("reconnect discarded retained observations: %#v", got)
 	}
 	partial := DiscoveryCapability{
@@ -192,10 +192,10 @@ func TestManagerRetainsObservationsUntilReconnectGetsCompleteReplacement(t *test
 	}
 	second.facts <- ObservationSet{Sequence: 1, Capability: partial}
 	degraded := waitForDiscoveryCapability(t, manager, partial)
-	if degraded.Hosts[0].Discovery.BaselineEstablished {
-		t.Fatalf("partial reconnect established baseline: %#v", degraded.Hosts[0].Discovery)
+	if degraded.Host.Discovery.BaselineEstablished {
+		t.Fatalf("partial reconnect established baseline: %#v", degraded.Host.Discovery)
 	}
-	if got := degraded.Hosts[0].ListenerObservations; !reflect.DeepEqual(got, []ListenerObservation{observation}) {
+	if got := degraded.Host.ListenerObservations; !reflect.DeepEqual(got, []ListenerObservation{observation}) {
 		t.Fatalf("partial reconnect replaced retained observations: %#v", got)
 	}
 }
@@ -235,7 +235,7 @@ func TestManagerPublishesDiscoveryBaselineAtomically(t *testing.T) {
 		t.Fatalf("add Manual Forward: %v", err)
 	}
 	starting := waitForDiscoveryState(t, manager, DiscoveryStarting)
-	stream, err := manager.Watch(context.Background(), WatchOptions{})
+	stream, err := manager.Watch(context.Background())
 	if err != nil {
 		t.Fatalf("Watch: %v", err)
 	}
@@ -279,18 +279,18 @@ func TestManagerPublishesDiscoveryBaselineAtomically(t *testing.T) {
 	if baseline.Revision != starting.Revision+1 {
 		t.Fatalf("baseline revision = %d, want %d", baseline.Revision, starting.Revision+1)
 	}
-	if got := baseline.Hosts[0].Discovery; got.State != DiscoveryDegraded || !got.BaselineEstablished || !reflect.DeepEqual(got.Capability, capability) {
+	if got := baseline.Host.Discovery; got.State != DiscoveryDegraded || !got.BaselineEstablished || !reflect.DeepEqual(got.Capability, capability) {
 		t.Fatalf("Discovery = %#v, want atomic degraded baseline with %#v", got, capability)
 	}
-	if got := baseline.Hosts[0].ListenerObservations; !reflect.DeepEqual(got, []ListenerObservation{observation}) {
+	if got := baseline.Host.ListenerObservations; !reflect.DeepEqual(got, []ListenerObservation{observation}) {
 		t.Fatalf("Listener Observations = %#v, want %#v", got, []ListenerObservation{observation})
 	}
-	baseline.Hosts[0].ListenerObservations[0].Processes[0].Processes[0].Arguments[0] = "mutated"
-	immutable, err := manager.Snapshot(context.Background(), AllHosts())
+	baseline.Host.ListenerObservations[0].Processes[0].Processes[0].Arguments[0] = "mutated"
+	immutable, err := manager.Snapshot(context.Background())
 	if err != nil {
 		t.Fatalf("Snapshot after caller mutation: %v", err)
 	}
-	if got := immutable.Hosts[0].ListenerObservations[0].Processes[0].Processes[0].Arguments[0]; got != "python3" {
+	if got := immutable.Host.ListenerObservations[0].Processes[0].Processes[0].Arguments[0]; got != "python3" {
 		t.Fatalf("caller mutation changed canonical Process Metadata: %q", got)
 	}
 
@@ -314,10 +314,10 @@ func TestManagerPublishesDiscoveryBaselineAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("partial Next: %v", err)
 	}
-	if got := partial.Hosts[0].Discovery; got.State != DiscoveryDegraded || !got.BaselineEstablished || !reflect.DeepEqual(got.Capability, partialCapability) {
+	if got := partial.Host.Discovery; got.State != DiscoveryDegraded || !got.BaselineEstablished || !reflect.DeepEqual(got.Capability, partialCapability) {
 		t.Fatalf("partial Discovery = %#v, want degraded retained baseline with %#v", got, partialCapability)
 	}
-	merged := partial.Hosts[0].ListenerObservations
+	merged := partial.Host.ListenerObservations
 	if len(merged) != 1 || !reflect.DeepEqual(merged[0].SocketIdentities, []SocketIdentity{SocketIdentity("socket:new"), SocketIdentity("socket:test")}) || len(merged[0].Processes) != 2 {
 		t.Fatalf("partial observation did not merge retained and current evidence: %#v", merged)
 	}
@@ -337,10 +337,10 @@ func TestManagerPublishesDiscoveryBaselineAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bounded evidence Next: %v", err)
 	}
-	if got := bounded.Hosts[0].Discovery.Capability; got.SocketIdentity != CapabilityPartial || got.ProcessMetadata != CapabilityPartial {
+	if got := bounded.Host.Discovery.Capability; got.SocketIdentity != CapabilityPartial || got.ProcessMetadata != CapabilityPartial {
 		t.Fatalf("bounded evidence Capability = %#v, want truncated dimensions partial", got)
 	}
-	boundedEvidence := bounded.Hosts[0].ListenerObservations[0]
+	boundedEvidence := bounded.Host.ListenerObservations[0]
 	if len(boundedEvidence.SocketIdentities) > maxRetainedSocketIdentities || len(boundedEvidence.Processes) > maxRetainedProcessRecords {
 		t.Fatalf("published evidence exceeded bounds: %#v", boundedEvidence)
 	}
@@ -350,7 +350,7 @@ func TestManagerPublishesDiscoveryBaselineAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("invalid fact Next: %v", err)
 	}
-	if got := failed.Hosts[0]; got.Connection != ConnectionConnected || got.Discovery.State != DiscoveryFailed || got.Discovery.Diagnostic != "invalid_session_fact" {
+	if got := failed.Host; got.Connection != ConnectionConnected || got.Discovery.State != DiscoveryFailed || got.Discovery.Diagnostic != "invalid_session_fact" {
 		t.Fatalf("invalid discovery fact disrupted Forwarding Session: %#v", got)
 	}
 }
@@ -374,22 +374,22 @@ func TestManagerDegradesDiscoveryOnObservationSequenceGap(t *testing.T) {
 	}
 	session.facts <- ObservationSet{Sequence: 1, Capability: fullCapability, Observations: []ListenerObservation{}}
 	baseline := waitForDiscoveryBaseline(t, manager, true)
-	if got := baseline.Hosts[0].Discovery.Diagnostic; got != "" {
+	if got := baseline.Host.Discovery.Diagnostic; got != "" {
 		t.Fatalf("baseline Diagnostic = %q, want empty", got)
 	}
 
 	session.facts <- ObservationSet{Sequence: 3, Capability: fullCapability, Observations: []ListenerObservation{}}
 	gapped := waitForDiscoveryState(t, manager, DiscoveryDegraded)
-	if got := gapped.Hosts[0].Discovery.Diagnostic; got != "observation_resync" {
+	if got := gapped.Host.Discovery.Diagnostic; got != "observation_resync" {
 		t.Fatalf("gap Diagnostic = %q, want observation_resync", got)
 	}
-	if !gapped.Hosts[0].Discovery.BaselineEstablished {
+	if !gapped.Host.Discovery.BaselineEstablished {
 		t.Fatal("sequence gap discarded the established Baseline")
 	}
 
 	session.facts <- ObservationSet{Sequence: 4, Capability: fullCapability, Observations: []ListenerObservation{}}
 	recovered := waitForDiscoveryState(t, manager, DiscoveryHealthy)
-	if got := recovered.Hosts[0].Discovery.Diagnostic; got != "" {
+	if got := recovered.Host.Discovery.Diagnostic; got != "" {
 		t.Fatalf("recovered Diagnostic = %q, want empty", got)
 	}
 }
@@ -415,7 +415,7 @@ func TestManagerRejectsStaleObservationSequence(t *testing.T) {
 	waitForDiscoveryBaseline(t, manager, true)
 	session.facts <- ObservationSet{Sequence: 2, Capability: fullCapability, Observations: []ListenerObservation{}}
 	failed := waitForDiscoveryState(t, manager, DiscoveryFailed)
-	if got := failed.Hosts[0].Discovery.Diagnostic; got != "invalid_session_fact" {
+	if got := failed.Host.Discovery.Diagnostic; got != "invalid_session_fact" {
 		t.Fatalf("stale sequence Diagnostic = %q, want invalid_session_fact", got)
 	}
 }
@@ -424,11 +424,11 @@ func waitForDiscoveryBaseline(t *testing.T, manager Manager, established bool) S
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
 	for {
-		snapshot, err := manager.Snapshot(context.Background(), AllHosts())
+		snapshot, err := manager.Snapshot(context.Background())
 		if err != nil {
 			t.Fatalf("Snapshot: %v", err)
 		}
-		if len(snapshot.Hosts) == 1 && snapshot.Hosts[0].Discovery.BaselineEstablished == established {
+		if snapshot.Host != nil && snapshot.Host.Discovery.BaselineEstablished == established {
 			return snapshot
 		}
 		if time.Now().After(deadline) {
@@ -442,11 +442,11 @@ func waitForDiscoveryCapability(t *testing.T, manager Manager, capability Discov
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
 	for {
-		snapshot, err := manager.Snapshot(context.Background(), AllHosts())
+		snapshot, err := manager.Snapshot(context.Background())
 		if err != nil {
 			t.Fatalf("Snapshot: %v", err)
 		}
-		if len(snapshot.Hosts) == 1 && reflect.DeepEqual(snapshot.Hosts[0].Discovery.Capability, capability) {
+		if snapshot.Host != nil && reflect.DeepEqual(snapshot.Host.Discovery.Capability, capability) {
 			return snapshot
 		}
 		if time.Now().After(deadline) {
@@ -460,11 +460,11 @@ func waitForDiscoveryState(t *testing.T, manager Manager, state DiscoveryState) 
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
 	for {
-		snapshot, err := manager.Snapshot(context.Background(), AllHosts())
+		snapshot, err := manager.Snapshot(context.Background())
 		if err != nil {
 			t.Fatalf("Snapshot: %v", err)
 		}
-		if len(snapshot.Hosts) == 1 && snapshot.Hosts[0].Discovery.State == state {
+		if snapshot.Host != nil && snapshot.Host.Discovery.State == state {
 			return snapshot
 		}
 		if time.Now().After(deadline) {

@@ -263,7 +263,7 @@ func familyForAddress(address netip.Addr) AddressFamily {
 	return FamilyIPv6
 }
 
-func (m *manager) Snapshot(ctx context.Context, _ Scope) (Snapshot, error) {
+func (m *manager) Snapshot(ctx context.Context) (Snapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return Snapshot{}, err
 	}

@@ -11,7 +11,7 @@ import (
 func TestSnapshotStreamHonorsCancellationBeforeReadingAvailableSnapshot(t *testing.T) {
 	manager := NewManager()
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
-	stream, err := manager.Watch(context.Background(), WatchOptions{})
+	stream, err := manager.Watch(context.Background())
 	if err != nil {
 		t.Fatalf("Watch: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestWatchCoalescesUnreadSnapshotsToLatestRevision(t *testing.T) {
 		},
 	})
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
-	stream, err := manager.Watch(context.Background(), WatchOptions{})
+	stream, err := manager.Watch(context.Background())
 	if err != nil {
 		t.Fatalf("Watch: %v", err)
 	}
@@ -78,14 +78,14 @@ func TestWatchCoalescesUnreadSnapshotsToLatestRevision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("coalesced Next: %v", err)
 	}
-	if latest.Revision != 2 || len(latest.Hosts[0].Forwards) != 0 {
+	if latest.Revision != 2 || len(latest.Host.Forwards) != 0 {
 		t.Fatalf("coalesced Snapshot = %#v, want revision 2 without Forwards", latest)
 	}
 }
 
 func TestManagerCloseWakesSnapshotStream(t *testing.T) {
 	manager := NewManager()
-	stream, err := manager.Watch(context.Background(), WatchOptions{})
+	stream, err := manager.Watch(context.Background())
 	if err != nil {
 		t.Fatalf("Watch: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestManagerCloseWakesSnapshotStream(t *testing.T) {
 func TestWatchRejectsConcurrentNextWithoutClosingStream(t *testing.T) {
 	manager := NewManager()
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
-	stream, err := manager.Watch(context.Background(), WatchOptions{})
+	stream, err := manager.Watch(context.Background())
 	if err != nil {
 		t.Fatalf("Watch: %v", err)
 	}
@@ -153,13 +153,13 @@ func TestWatchEnforcesManagerLimitAndReleasesCapacity(t *testing.T) {
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 	streams := make([]SnapshotStream, 128)
 	for index := range streams {
-		stream, err := manager.Watch(context.Background(), WatchOptions{})
+		stream, err := manager.Watch(context.Background())
 		if err != nil {
 			t.Fatalf("Watch %d: %v", index, err)
 		}
 		streams[index] = stream
 	}
-	_, err := manager.Watch(context.Background(), WatchOptions{})
+	_, err := manager.Watch(context.Background())
 	var domainError *DomainError
 	if !errors.As(err, &domainError) || domainError.Kind != ErrorWatchLimit || !domainError.Retryable {
 		t.Fatalf("Watch over limit error = %#v, want retryable watch_limit", err)
@@ -167,7 +167,7 @@ func TestWatchEnforcesManagerLimitAndReleasesCapacity(t *testing.T) {
 	if err := streams[0].Close(); err != nil {
 		t.Fatalf("close Watch: %v", err)
 	}
-	replacement, err := manager.Watch(context.Background(), WatchOptions{})
+	replacement, err := manager.Watch(context.Background())
 	if err != nil {
 		t.Fatalf("Watch after releasing capacity: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestWatchReturnsSubscriptionSnapshotBeforeCoalescedLatest(t *testing.T) {
 		_ = manager.Close(context.Background())
 	})
 
-	stream, err := manager.Watch(context.Background(), WatchOptions{})
+	stream, err := manager.Watch(context.Background())
 	if err != nil {
 		t.Fatalf("Watch: %v", err)
 	}
@@ -225,13 +225,13 @@ func TestWatchReturnsSubscriptionSnapshotBeforeCoalescedLatest(t *testing.T) {
 	}
 	wantInitial := Snapshot{
 		Revision: 0,
-		Hosts: []HostSnapshot{{
+		Host: &HostSnapshot{
 			Alias:                HostAlias("development"),
 			Connection:           ConnectionDisconnected,
 			Discovery:            stoppedDiscovery(),
 			ListenerObservations: []ListenerObservation{},
 			Forwards:             []ForwardSnapshot{},
-		}},
+		},
 	}
 	if !reflect.DeepEqual(initial, wantInitial) {
 		t.Fatalf("initial Snapshot = %#v, want %#v", initial, wantInitial)
@@ -243,20 +243,20 @@ func TestWatchReturnsSubscriptionSnapshotBeforeCoalescedLatest(t *testing.T) {
 	}
 	wantLatest := Snapshot{
 		Revision: 1,
-		Hosts: []HostSnapshot{{
+		Host: &HostSnapshot{
 			Alias:                HostAlias("development"),
 			Connection:           ConnectionConnecting,
 			Discovery:            stoppedDiscovery(),
 			ListenerObservations: []ListenerObservation{},
 			Forwards:             []ForwardSnapshot{owner.projection},
-		}},
+		},
 	}
 	if !reflect.DeepEqual(latest, wantLatest) {
 		t.Fatalf("latest Snapshot = %#v, want %#v", latest, wantLatest)
 	}
 
-	latest.Hosts[0].Forwards[0].LocalFamilies[0] = FamilyIPv6
-	current, err := manager.Snapshot(context.Background(), AllHosts())
+	latest.Host.Forwards[0].LocalFamilies[0] = FamilyIPv6
+	current, err := manager.Snapshot(context.Background())
 	if err != nil {
 		t.Fatalf("Snapshot after caller mutation: %v", err)
 	}

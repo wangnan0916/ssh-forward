@@ -20,7 +20,7 @@ type watchErrorManager struct {
 	err error
 }
 
-func (m *watchErrorManager) Watch(context.Context, core.WatchOptions) (core.SnapshotStream, error) {
+func (m *watchErrorManager) Watch(context.Context) (core.SnapshotStream, error) {
 	return nil, m.err
 }
 
@@ -29,7 +29,7 @@ type watchManager struct {
 	stream core.SnapshotStream
 }
 
-func (m *watchManager) Watch(context.Context, core.WatchOptions) (core.SnapshotStream, error) {
+func (m *watchManager) Watch(context.Context) (core.SnapshotStream, error) {
 	return m.stream, nil
 }
 
@@ -38,7 +38,7 @@ type watchBlockingManager struct {
 	stream core.SnapshotStream
 }
 
-func (m *watchBlockingManager) Watch(context.Context, core.WatchOptions) (core.SnapshotStream, error) {
+func (m *watchBlockingManager) Watch(context.Context) (core.SnapshotStream, error) {
 	return m.stream, nil
 }
 
@@ -48,7 +48,7 @@ type multiWatchManager struct {
 	streams []*scriptedSnapshotStream
 }
 
-func (m *multiWatchManager) Watch(context.Context, core.WatchOptions) (core.SnapshotStream, error) {
+func (m *multiWatchManager) Watch(context.Context) (core.SnapshotStream, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	stream := newScriptedSnapshotStream(core.Snapshot{Revision: core.Revision(len(m.streams) + 1)})
@@ -189,7 +189,7 @@ func assertNoFrameWithin(t *testing.T, session *testSession, what string) {
 func TestServeDoesNotNotifyAfterUnwatchResponse(t *testing.T) {
 	stream := newStaleResultSnapshotStream()
 	manager := &watchManager{
-		snapshotManager: &snapshotManager{scopes: make(chan core.Scope, 1)},
+		snapshotManager: &snapshotManager{},
 		stream:          stream,
 	}
 	session := startWatchSession(t, manager)
@@ -208,7 +208,7 @@ func TestServeDoesNotNotifyAfterUnwatchResponse(t *testing.T) {
 
 func TestServeForwardsManagerResyncRequirement(t *testing.T) {
 	manager := &watchManager{
-		snapshotManager: &snapshotManager{scopes: make(chan core.Scope, 1)},
+		snapshotManager: &snapshotManager{},
 		stream:          newErrorSnapshotStream(core.ErrResyncRequired),
 	}
 	session := startWatchSession(t, manager)
@@ -222,7 +222,7 @@ func TestServeForwardsManagerResyncRequirement(t *testing.T) {
 
 func TestServeEndsWatchSilentlyOnStreamCloseError(t *testing.T) {
 	manager := &watchManager{
-		snapshotManager: &snapshotManager{scopes: make(chan core.Scope, 1)},
+		snapshotManager: &snapshotManager{},
 		stream:          newErrorSnapshotStream(core.ErrSnapshotStreamClosed),
 	}
 	session := startWatchSession(t, manager)
@@ -286,13 +286,13 @@ func TestSnapshotNotificationDoesNotReleaseRequestAdmission(t *testing.T) {
 func TestServeRequestsResyncInsteadOfSendingOversizedSnapshot(t *testing.T) {
 	oversized := core.Snapshot{
 		Revision: 2,
-		Hosts: []core.HostSnapshot{{
+		Host: &core.HostSnapshot{
 			Alias: core.HostAlias(strings.Repeat("x", 1<<20)),
-		}},
+		},
 	}
 	stream := newScriptedSnapshotStream(core.Snapshot{Revision: 1}, oversized)
 	manager := &watchManager{
-		snapshotManager: &snapshotManager{scopes: make(chan core.Scope, 1)},
+		snapshotManager: &snapshotManager{},
 		stream:          stream,
 	}
 	session := startWatchSession(t, manager)
@@ -304,7 +304,7 @@ func TestServeRequestsResyncInsteadOfSendingOversizedSnapshot(t *testing.T) {
 }
 
 func TestServeClosesWatchesWhenConnectionEnds(t *testing.T) {
-	manager := &multiWatchManager{snapshotManager: &snapshotManager{scopes: make(chan core.Scope, 1)}}
+	manager := &multiWatchManager{snapshotManager: &snapshotManager{}}
 	session := startWatchSession(t, manager)
 	session.cancel()
 	_ = session.client.Close()
@@ -322,7 +322,7 @@ func TestServeClosesWatchesWhenConnectionEnds(t *testing.T) {
 }
 
 func TestServeBoundsActiveWatchesPerConnection(t *testing.T) {
-	manager := &multiWatchManager{snapshotManager: &snapshotManager{scopes: make(chan core.Scope, 1)}}
+	manager := &multiWatchManager{snapshotManager: &snapshotManager{}}
 	session := startWatchSession(t, manager)
 	for index := 2; index <= 8; index++ {
 		request := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"manager.watch","params":{"scope":{"kind":"all"}}}`, index+1)
@@ -356,7 +356,7 @@ func TestServeRequiresNegotiatedCapabilityForWatchMethods(t *testing.T) {
 func TestServeUnwatchIsIdempotentAndStopsStream(t *testing.T) {
 	stream := newScriptedSnapshotStream(core.Snapshot{Revision: 1})
 	manager := &watchManager{
-		snapshotManager: &snapshotManager{scopes: make(chan core.Scope, 1)},
+		snapshotManager: &snapshotManager{},
 		stream:          stream,
 	}
 	session := startWatchSession(t, manager)
@@ -379,7 +379,7 @@ func TestServeWatchResponsePrecedesSnapshotNotification(t *testing.T) {
 		core.Snapshot{Revision: 4},
 	)
 	manager := &watchManager{
-		snapshotManager: &snapshotManager{scopes: make(chan core.Scope, 1)},
+		snapshotManager: &snapshotManager{},
 		stream:          stream,
 	}
 	session := newTestSessionWithManager(t, manager)

@@ -22,7 +22,6 @@ import (
 
 type snapshotManager struct {
 	snapshot core.Snapshot
-	scopes   chan core.Scope
 	execute  func(context.Context, core.Command) (core.Outcome, error)
 }
 
@@ -33,12 +32,11 @@ func (m *snapshotManager) Execute(ctx context.Context, command core.Command) (co
 	return m.execute(ctx, command)
 }
 
-func (m *snapshotManager) Snapshot(_ context.Context, scope core.Scope) (core.Snapshot, error) {
-	m.scopes <- scope
+func (m *snapshotManager) Snapshot(context.Context) (core.Snapshot, error) {
 	return m.snapshot, nil
 }
 
-func (m *snapshotManager) Watch(context.Context, core.WatchOptions) (core.SnapshotStream, error) {
+func (m *snapshotManager) Watch(context.Context) (core.SnapshotStream, error) {
 	return nil, errors.New("unexpected Watch call")
 }
 
@@ -54,7 +52,7 @@ func (*blockingManager) Execute(context.Context, core.Command) (core.Outcome, er
 	return core.Outcome{}, errors.New("unexpected Execute call")
 }
 
-func (m *blockingManager) Snapshot(ctx context.Context, _ core.Scope) (core.Snapshot, error) {
+func (m *blockingManager) Snapshot(ctx context.Context) (core.Snapshot, error) {
 	select {
 	case m.started <- struct{}{}:
 	default:
@@ -63,7 +61,7 @@ func (m *blockingManager) Snapshot(ctx context.Context, _ core.Scope) (core.Snap
 	return core.Snapshot{}, ctx.Err()
 }
 
-func (*blockingManager) Watch(context.Context, core.WatchOptions) (core.SnapshotStream, error) {
+func (*blockingManager) Watch(context.Context) (core.SnapshotStream, error) {
 	return nil, errors.New("unexpected Watch call")
 }
 
@@ -181,28 +179,27 @@ func TestSharedGoldenTranscripts(t *testing.T) {
 			name: "snapshot-discovery.jsonl",
 			manager: &snapshotManager{
 				snapshot: discoveryFixtureSnapshot(),
-				scopes:   make(chan core.Scope, 1),
 			},
 		},
 		{name: "watch-capability-required.jsonl", manager: core.NewManager()},
 		{
 			name: "watch-limit.jsonl",
 			manager: &watchErrorManager{
-				snapshotManager: &snapshotManager{scopes: make(chan core.Scope, 1)},
+				snapshotManager: &snapshotManager{},
 				err:             &core.DomainError{Kind: core.ErrorWatchLimit, Retryable: true},
 			},
 		},
 		{
 			name: "watch-start.jsonl",
 			manager: &watchManager{
-				snapshotManager: &snapshotManager{scopes: make(chan core.Scope, 1)},
+				snapshotManager: &snapshotManager{},
 				stream:          newScriptedSnapshotStream(core.Snapshot{Revision: 3}),
 			},
 		},
 		{
 			name: "watch-unwatch.jsonl",
 			manager: &watchManager{
-				snapshotManager: &snapshotManager{scopes: make(chan core.Scope, 1)},
+				snapshotManager: &snapshotManager{},
 				stream:          newScriptedSnapshotStream(core.Snapshot{Revision: 3}),
 			},
 		},
@@ -211,7 +208,7 @@ func TestSharedGoldenTranscripts(t *testing.T) {
 			manager: &snapshotManager{
 				snapshot: core.Snapshot{
 					Revision: 9,
-					Hosts: []core.HostSnapshot{{
+					Host: &core.HostSnapshot{
 						Alias:      core.HostAlias("development"),
 						Connection: core.ConnectionConnected,
 						Discovery: core.DiscoverySnapshot{
@@ -224,9 +221,8 @@ func TestSharedGoldenTranscripts(t *testing.T) {
 						},
 						ListenerObservations: []core.ListenerObservation{},
 						Forwards:             []core.ForwardSnapshot{forward},
-					}},
+					},
 				},
-				scopes: make(chan core.Scope, 1),
 			},
 		},
 	}
@@ -410,27 +406,18 @@ func TestServeMapsTypedManagerError(t *testing.T) {
 func TestServeReturnsManagerSnapshotAfterHello(t *testing.T) {
 	manager := &snapshotManager{
 		snapshot: core.Snapshot{Revision: 42},
-		scopes:   make(chan core.Scope, 1),
 	}
 	session := newTestSessionWithManager(t, manager)
 	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
 	response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.snapshot","params":{"scope":{"kind":"all"}}}`)
 	want := `{"jsonrpc":"2.0","id":"2","result":{"snapshot":{"revision":42,"hosts":[]}}}`
 	assertJSONEqual(t, response, []byte(want))
-	select {
-	case scope := <-manager.scopes:
-		if !reflect.DeepEqual(scope, core.AllHosts()) {
-			t.Fatalf("snapshot scope = %#v, want all hosts", scope)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("Manager.Snapshot was not called")
-	}
 }
 
 func discoveryFixtureSnapshot() core.Snapshot {
 	return core.Snapshot{
 		Revision: 9,
-		Hosts: []core.HostSnapshot{{
+		Host: &core.HostSnapshot{
 			Alias:      core.HostAlias("development"),
 			Connection: core.ConnectionConnected,
 			Discovery: core.DiscoverySnapshot{
@@ -458,13 +445,13 @@ func discoveryFixtureSnapshot() core.Snapshot {
 				}}}},
 			}},
 			Forwards: []core.ForwardSnapshot{},
-		}},
+		},
 	}
 }
 
 func TestServeReturnsCompleteManagerSnapshot(t *testing.T) {
 	snapshot := discoveryFixtureSnapshot()
-	snapshot.Hosts[0].Forwards = []core.ForwardSnapshot{{
+	snapshot.Host.Forwards = []core.ForwardSnapshot{{
 		ID:                 core.ForwardID("manual:operation-1"),
 		Kind:               core.ForwardManual,
 		RemotePort:         8080,
@@ -472,7 +459,7 @@ func TestServeReturnsCompleteManagerSnapshot(t *testing.T) {
 		AllocatedLocalPort: 8081,
 		LocalFamilies:      []core.AddressFamily{core.FamilyIPv4, core.FamilyIPv6},
 	}}
-	manager := &snapshotManager{snapshot: snapshot, scopes: make(chan core.Scope, 1)}
+	manager := &snapshotManager{snapshot: snapshot}
 	session := newTestSessionWithManager(t, manager)
 	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
 	response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.snapshot","params":{"scope":{"kind":"all"}}}`)

@@ -16,7 +16,7 @@ func TestNewManagerSnapshotReturnsInitialState(t *testing.T) {
 		}
 	})
 
-	got, err := manager.Snapshot(context.Background(), core.AllHosts())
+	got, err := manager.Snapshot(context.Background())
 	if err != nil {
 		t.Fatalf("snapshot initial manager state: %v", err)
 	}

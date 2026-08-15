@@ -145,14 +145,6 @@ type Outcome struct {
 	Forward  ForwardSnapshot
 }
 
-type Scope struct {
-	all bool
-}
-
-func AllHosts() Scope {
-	return Scope{all: true}
-}
-
 type ForwardSnapshot struct {
 	ID                 ForwardID
 	Kind               ForwardKind
@@ -170,13 +162,12 @@ type HostSnapshot struct {
 	Forwards             []ForwardSnapshot
 }
 
+// Snapshot is the complete Manager state for its one Development Host.
+// Host is nil while no Development Host is configured.
 type Snapshot struct {
 	Revision Revision
-	Hosts    []HostSnapshot
+	Host     *HostSnapshot
 }
-
-type WatchOptions struct{}
-
 type SnapshotStream interface {
 	Next(context.Context) (Snapshot, error)
 	Close() error
@@ -184,7 +175,7 @@ type SnapshotStream interface {
 
 type Manager interface {
 	Execute(context.Context, Command) (Outcome, error)
-	Snapshot(context.Context, Scope) (Snapshot, error)
-	Watch(context.Context, WatchOptions) (SnapshotStream, error)
+	Snapshot(context.Context) (Snapshot, error)
+	Watch(context.Context) (SnapshotStream, error)
 	Close(context.Context) error
 }

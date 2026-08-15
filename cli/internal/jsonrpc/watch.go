@@ -67,7 +67,7 @@ func (s *connectionSession) handleWatch(ctx context.Context, request *jrpc2.Requ
 		}
 	}()
 
-	stream, err := s.manager.Watch(ctx, core.WatchOptions{})
+	stream, err := s.manager.Watch(ctx)
 	if err != nil {
 		return nil, marshalManagerError(err)
 	}

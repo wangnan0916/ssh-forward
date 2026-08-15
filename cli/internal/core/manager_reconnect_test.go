@@ -146,7 +146,7 @@ func TestManualForwardRetainsEndpointAcrossSessionReplacement(t *testing.T) {
 		t.Fatal("replacement connection attempt did not start")
 	}
 	snapshot := waitForConnectionState(t, manager, ConnectionConnecting, 3)
-	if got := snapshot.Hosts[0].Forwards[0].AllocatedLocalPort; got != added.Forward.AllocatedLocalPort {
+	if got := snapshot.Host.Forwards[0].AllocatedLocalPort; got != added.Forward.AllocatedLocalPort {
 		t.Fatalf("retained Local Port = %d, want %d", got, added.Forward.AllocatedLocalPort)
 	}
 	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(added.Forward.AllocatedLocalPort)))
@@ -201,11 +201,11 @@ func waitForConnectionState(t *testing.T, manager Manager, state ConnectionState
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
 	for {
-		snapshot, err := manager.Snapshot(context.Background(), AllHosts())
+		snapshot, err := manager.Snapshot(context.Background())
 		if err != nil {
 			t.Fatalf("Snapshot: %v", err)
 		}
-		if snapshot.Hosts[0].Connection == state && snapshot.Revision == revision {
+		if snapshot.Host.Connection == state && snapshot.Revision == revision {
 			return snapshot
 		}
 		if time.Now().After(deadline) {

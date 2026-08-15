@@ -170,7 +170,7 @@ func handleSnapshot(ctx context.Context, request *jrpc2.Request, manager core.Ma
 	if params.Scope.Kind != "all" {
 		return nil, errInvalidScope
 	}
-	snapshot, err := manager.Snapshot(ctx, core.AllHosts())
+	snapshot, err := manager.Snapshot(ctx)
 	if err != nil {
 		return nil, &jrpc2.Error{Code: jrpc2.InternalError, Message: "internal error"}
 	}
@@ -178,27 +178,27 @@ func handleSnapshot(ctx context.Context, request *jrpc2.Request, manager core.Ma
 }
 
 func marshalSnapshot(snapshot core.Snapshot) wireSnapshot {
-	hosts := make([]wireHost, len(snapshot.Hosts))
-	for hostIndex, host := range snapshot.Hosts {
-		forwards := make([]wireForward, len(host.Forwards))
-		for forwardIndex, forward := range host.Forwards {
-			forwards[forwardIndex] = marshalForward(forward)
-		}
-		observations := make([]wireListenerObservation, len(host.ListenerObservations))
-		for observationIndex, observation := range host.ListenerObservations {
-			observations[observationIndex] = marshalListenerObservation(observation)
-		}
-		hosts[hostIndex] = wireHost{
+	if snapshot.Host == nil {
+		return wireSnapshot{Revision: uint64(snapshot.Revision), Hosts: []wireHost{}}
+	}
+	host := snapshot.Host
+	forwards := make([]wireForward, len(host.Forwards))
+	for forwardIndex, forward := range host.Forwards {
+		forwards[forwardIndex] = marshalForward(forward)
+	}
+	observations := make([]wireListenerObservation, len(host.ListenerObservations))
+	for observationIndex, observation := range host.ListenerObservations {
+		observations[observationIndex] = marshalListenerObservation(observation)
+	}
+	return wireSnapshot{
+		Revision: uint64(snapshot.Revision),
+		Hosts: []wireHost{{
 			Alias:                string(host.Alias),
 			Connection:           string(host.Connection),
 			Discovery:            marshalDiscovery(host.Discovery),
 			ListenerObservations: observations,
 			Forwards:             forwards,
-		}
-	}
-	return wireSnapshot{
-		Revision: uint64(snapshot.Revision),
-		Hosts:    hosts,
+		}},
 	}
 }
 

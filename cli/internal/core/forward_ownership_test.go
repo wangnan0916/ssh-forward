@@ -108,11 +108,11 @@ func TestManagerOwnsForwardAndLocalEndpointAsOneLifetime(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("removal did not begin Local Endpoint closure")
 	}
-	snapshot, err := manager.Snapshot(context.Background(), AllHosts())
+	snapshot, err := manager.Snapshot(context.Background())
 	if err != nil {
 		t.Fatalf("Snapshot during removal: %v", err)
 	}
-	if len(snapshot.Hosts[0].Forwards) != 1 {
+	if len(snapshot.Host.Forwards) != 1 {
 		t.Fatalf("Forward disappeared before Local Endpoint stopped: %#v", snapshot)
 	}
 	owner.release()
@@ -123,11 +123,11 @@ func TestManagerOwnsForwardAndLocalEndpointAsOneLifetime(t *testing.T) {
 	if !reflect.DeepEqual(result.outcome.Forward, owner.projection) {
 		t.Fatalf("removed Forward = %#v, want owner projection %#v", result.outcome.Forward, owner.projection)
 	}
-	snapshot, err = manager.Snapshot(context.Background(), AllHosts())
+	snapshot, err = manager.Snapshot(context.Background())
 	if err != nil {
 		t.Fatalf("Snapshot after removal: %v", err)
 	}
-	if len(snapshot.Hosts[0].Forwards) != 0 {
+	if len(snapshot.Host.Forwards) != 0 {
 		t.Fatalf("removed Forward remains visible: %#v", snapshot)
 	}
 }
