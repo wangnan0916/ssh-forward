@@ -6,7 +6,7 @@ A private, greenfield remote-development localhost bridge.
 
 ## Status
 
-The repository contains the accepted product and architecture baseline. The isolated transport risk spike is complete and accepted. Production now has its first forwarding tracer: the `core.Manager` and versioned JSON-RPC Adapter can add, inspect, and remove one-host Manual Forwards through a system-OpenSSH dynamic session. Go-owned dual-stack Local Endpoints, SOCKS cancellation, TCP half-close, bounded drain, reconnect retention, and disposable IPv4/IPv6 integration are covered. The pre-existing shell utility is an unrelated legacy tool and is intentionally not reused, migrated, controlled, or uninstalled by this project.
+The repository contains the accepted product and architecture baseline. The transport spike and the first four vertical slices are complete. The Go Manager runs a fixed agentless scanner through one system-OpenSSH Forwarding Session, publishes complete Discovery and Manual Forward Snapshots, and exposes bounded capability-negotiated JSON-RPC Watch streams. Go-owned dual-stack Local Endpoints, SOCKS cancellation, TCP half-close, reconnect retention, scanner fallback/evidence handling, and disposable IPv4/IPv6 integration are covered. Listener Lifetime and Policy reconciliation are next. The pre-existing shell utility is unrelated and is intentionally not reused, migrated, controlled, or uninstalled.
 
 The private MVP targets one Apple Silicon Mac running macOS Tahoe and one Linux Development Host.
 

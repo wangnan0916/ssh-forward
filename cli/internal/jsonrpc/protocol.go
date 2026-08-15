@@ -20,6 +20,10 @@ const (
 	maxOperationID    = 128
 	maxHostAlias      = 255
 	maxForwardID      = 256
+	maxWatchID        = 64
+	maxSessionWatches = 8
+
+	capabilityWatchSnapshot = "watch-snapshot-v1"
 )
 
 var (
@@ -37,6 +41,16 @@ var (
 		Code:    jrpc2.InvalidParams,
 		Message: "invalid parameters",
 	}).WithData(errorData{Kind: "invalid_scope"})
+
+	errWatchCapabilityRequired = (&jrpc2.Error{
+		Code:    -32003,
+		Message: "watch-snapshot-v1 capability is required",
+	}).WithData(errorData{Kind: "capability_required"})
+
+	errWatchLimit = (&jrpc2.Error{
+		Code:    -32015,
+		Message: "too many active Watches",
+	}).WithData(errorData{Kind: "watch_limit", Retryable: true})
 )
 
 type protocolVersion struct {
@@ -58,6 +72,28 @@ type helloResult struct {
 	Protocol      protocolVersion `json:"protocol"`
 	Capabilities  []string        `json:"capabilities"`
 	MaxFrameBytes int             `json:"max_frame_bytes"`
+}
+
+type negotiatedCapabilities struct {
+	watchSnapshot bool
+}
+
+func negotiateCapabilities(requested []string) negotiatedCapabilities {
+	var negotiated negotiatedCapabilities
+	for _, capability := range requested {
+		if capability == capabilityWatchSnapshot {
+			negotiated.watchSnapshot = true
+		}
+	}
+	return negotiated
+}
+
+func (c negotiatedCapabilities) wireValues() []string {
+	capabilities := make([]string, 0, 1)
+	if c.watchSnapshot {
+		capabilities = append(capabilities, capabilityWatchSnapshot)
+	}
+	return capabilities
 }
 
 type executeParams struct {
@@ -111,15 +147,75 @@ type snapshotResult struct {
 	Snapshot wireSnapshot `json:"snapshot"`
 }
 
+type watchResult struct {
+	WatchID  string       `json:"watch_id"`
+	Snapshot wireSnapshot `json:"snapshot"`
+}
+
+type unwatchParams struct {
+	WatchID string `json:"watch_id"`
+}
+
+type unwatchResult struct {
+	WatchID string `json:"watch_id"`
+	Stopped bool   `json:"stopped"`
+}
+
+type snapshotNotification struct {
+	WatchID  string       `json:"watch_id"`
+	Snapshot wireSnapshot `json:"snapshot"`
+}
+
+type resyncNotification struct {
+	WatchID string `json:"watch_id"`
+	Reason  string `json:"reason"`
+}
+
 type wireSnapshot struct {
 	Revision uint64     `json:"revision"`
 	Hosts    []wireHost `json:"hosts"`
 }
 
 type wireHost struct {
-	Alias      string        `json:"alias"`
-	Connection string        `json:"connection"`
-	Forwards   []wireForward `json:"forwards"`
+	Alias                string                    `json:"alias"`
+	Connection           string                    `json:"connection"`
+	Discovery            wireDiscovery             `json:"discovery"`
+	ListenerObservations []wireListenerObservation `json:"listener_observations"`
+	Forwards             []wireForward             `json:"forwards"`
+}
+
+type wireDiscovery struct {
+	State               string                  `json:"state"`
+	Capability          wireDiscoveryCapability `json:"capability"`
+	BaselineEstablished bool                    `json:"baseline_established"`
+	ScannerVersion      int                     `json:"scanner_version"`
+	ScannerChecksum     string                  `json:"scanner_checksum"`
+	Diagnostic          string                  `json:"diagnostic"`
+}
+
+type wireDiscoveryCapability struct {
+	RemoteListeners string `json:"remote_listeners"`
+	SocketIdentity  string `json:"socket_identity"`
+	ProcessMetadata string `json:"process_metadata"`
+}
+
+type wireListenerObservation struct {
+	Family           string             `json:"family"`
+	BindScope        string             `json:"bind_scope"`
+	RemotePort       uint16             `json:"remote_port"`
+	SocketIdentities []string           `json:"socket_identities"`
+	ProcessChains    []wireProcessChain `json:"process_chains"`
+}
+
+type wireProcessChain struct {
+	Processes []wireProcessMetadata `json:"processes"`
+}
+
+type wireProcessMetadata struct {
+	PID              int      `json:"pid"`
+	Executable       string   `json:"executable"`
+	WorkingDirectory string   `json:"working_directory"`
+	Arguments        []string `json:"arguments"`
 }
 
 type requestEnvelope struct {
@@ -153,41 +249,42 @@ type incompatibleProtocolData struct {
 	Supported protocolVersion `json:"supported"`
 }
 
-func negotiateHello(frames channel.Channel) error {
+func negotiateHello(frames channel.Channel) (negotiatedCapabilities, error) {
 	message, err := frames.Recv()
 	if err != nil {
-		return err
+		return negotiatedCapabilities{}, err
 	}
 	if !json.Valid(message) {
-		return rejectHandshake(frames, nil, jrpc2.ParseError, "parse error", nil)
+		return negotiatedCapabilities{}, rejectHandshake(frames, nil, jrpc2.ParseError, "parse error", nil)
 	}
 	request, ok := decodeRequestEnvelope(message)
 	if !ok {
-		return rejectHandshake(frames, nil, jrpc2.InvalidRequest, "invalid request", nil)
+		return negotiatedCapabilities{}, rejectHandshake(frames, nil, jrpc2.InvalidRequest, "invalid request", nil)
 	}
 	if request.Method != "system.hello" {
-		return rejectHandshake(frames, request.ID, jrpc2.Code(-32001), "system.hello is required before manager methods", errorData{Kind: "hello_required"})
+		return negotiatedCapabilities{}, rejectHandshake(frames, request.ID, jrpc2.Code(-32001), "system.hello is required before manager methods", errorData{Kind: "hello_required"})
 	}
 
 	var params helloParams
 	if len(request.Params) == 0 || json.Unmarshal(request.Params, &params) != nil || !validHelloParams(params) {
-		return rejectHandshake(frames, request.ID, jrpc2.InvalidParams, "invalid parameters", errorData{Kind: "invalid_parameters"})
+		return negotiatedCapabilities{}, rejectHandshake(frames, request.ID, jrpc2.InvalidParams, "invalid parameters", errorData{Kind: "invalid_parameters"})
 	}
 	if *params.Protocol.Major != protocolMajor {
-		return rejectHandshake(frames, request.ID, jrpc2.Code(-32002), "incompatible protocol major", incompatibleProtocolData{
+		return negotiatedCapabilities{}, rejectHandshake(frames, request.ID, jrpc2.Code(-32002), "incompatible protocol major", incompatibleProtocolData{
 			Kind:      "incompatible_protocol",
 			Supported: protocolVersion{Major: protocolMajor, Minor: protocolMinor},
 		})
 	}
+	negotiated := negotiateCapabilities(params.Capabilities)
 	if err := sendResult(frames, request.ID, helloResult{
 		Protocol:      protocolVersion{Major: protocolMajor, Minor: protocolMinor},
-		Capabilities:  make([]string, 0),
+		Capabilities:  negotiated.wireValues(),
 		MaxFrameBytes: maxFrameBytes,
 	}); err != nil {
 		_ = frames.Close()
-		return err
+		return negotiatedCapabilities{}, err
 	}
-	return nil
+	return negotiated, nil
 }
 
 func decodeRequestEnvelope(message []byte) (requestEnvelope, bool) {

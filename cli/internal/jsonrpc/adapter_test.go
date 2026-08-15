@@ -146,7 +146,7 @@ func (s *testSession) exchange(t *testing.T, request string) []byte {
 func TestServeNegotiatesHello(t *testing.T) {
 	session := newTestSession(t)
 	response := session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":["cancel-v1","watch-snapshot-v1"]}}`)
-	want := `{"jsonrpc":"2.0","id":"1","result":{"protocol":{"major":1,"minor":0},"capabilities":[],"max_frame_bytes":1048576}}`
+	want := `{"jsonrpc":"2.0","id":"1","result":{"protocol":{"major":1,"minor":0},"capabilities":["watch-snapshot-v1"],"max_frame_bytes":1048576}}`
 	assertJSONEqual(t, response, []byte(want))
 }
 
@@ -178,13 +178,53 @@ func TestSharedGoldenTranscripts(t *testing.T) {
 			}},
 		},
 		{
+			name: "snapshot-discovery.jsonl",
+			manager: &snapshotManager{
+				snapshot: discoveryFixtureSnapshot(),
+				scopes:   make(chan core.Scope, 1),
+			},
+		},
+		{name: "watch-capability-required.jsonl", manager: core.NewManager()},
+		{
+			name: "watch-limit.jsonl",
+			manager: &watchErrorManager{
+				snapshotManager: &snapshotManager{scopes: make(chan core.Scope, 1)},
+				err:             &core.DomainError{Kind: core.ErrorWatchLimit, Retryable: true},
+			},
+		},
+		{
+			name: "watch-start.jsonl",
+			manager: &watchManager{
+				snapshotManager: &snapshotManager{scopes: make(chan core.Scope, 1)},
+				stream:          newScriptedSnapshotStream(core.Snapshot{Revision: 3}),
+			},
+		},
+		{
+			name: "watch-unwatch.jsonl",
+			manager: &watchManager{
+				snapshotManager: &snapshotManager{scopes: make(chan core.Scope, 1)},
+				stream:          newScriptedSnapshotStream(core.Snapshot{Revision: 3}),
+			},
+		},
+		{
 			name: "snapshot-manual-forward.jsonl",
 			manager: &snapshotManager{
 				snapshot: core.Snapshot{
 					Revision: 9,
-					Hosts: []core.HostSnapshot{
-						{Alias: core.HostAlias("development"), Connection: core.ConnectionConnected, Forwards: []core.ForwardSnapshot{forward}},
-					},
+					Hosts: []core.HostSnapshot{{
+						Alias:      core.HostAlias("development"),
+						Connection: core.ConnectionConnected,
+						Discovery: core.DiscoverySnapshot{
+							State: core.DiscoveryStarting,
+							Capability: core.DiscoveryCapability{
+								RemoteListeners: core.CapabilityUnavailable,
+								SocketIdentity:  core.CapabilityUnavailable,
+								ProcessMetadata: core.CapabilityUnavailable,
+							},
+						},
+						ListenerObservations: []core.ListenerObservation{},
+						Forwards:             []core.ForwardSnapshot{forward},
+					}},
 				},
 				scopes: make(chan core.Scope, 1),
 			},
@@ -387,33 +427,56 @@ func TestServeReturnsManagerSnapshotAfterHello(t *testing.T) {
 	}
 }
 
-func TestServeReturnsCompleteManagerSnapshot(t *testing.T) {
-	manager := &snapshotManager{
-		snapshot: core.Snapshot{
-			Revision: 9,
-			Hosts: []core.HostSnapshot{
-				{
-					Alias:      core.HostAlias("development"),
-					Connection: core.ConnectionConnected,
-					Forwards: []core.ForwardSnapshot{
-						{
-							ID:                 core.ForwardID("manual:operation-1"),
-							Kind:               core.ForwardManual,
-							RemotePort:         8080,
-							RemoteFamily:       core.FamilyIPv4,
-							AllocatedLocalPort: 8081,
-							LocalFamilies:      []core.AddressFamily{core.FamilyIPv4, core.FamilyIPv6},
-						},
-					},
+func discoveryFixtureSnapshot() core.Snapshot {
+	return core.Snapshot{
+		Revision: 9,
+		Hosts: []core.HostSnapshot{{
+			Alias:      core.HostAlias("development"),
+			Connection: core.ConnectionConnected,
+			Discovery: core.DiscoverySnapshot{
+				State: core.DiscoveryDegraded,
+				Capability: core.DiscoveryCapability{
+					RemoteListeners: core.CapabilityFull,
+					SocketIdentity:  core.CapabilityFull,
+					ProcessMetadata: core.CapabilityPartial,
 				},
+				BaselineEstablished: true,
+				ScannerVersion:      1,
+				ScannerChecksum:     "abc123",
+				Diagnostic:          "process_metadata_partial",
 			},
-		},
-		scopes: make(chan core.Scope, 1),
+			ListenerObservations: []core.ListenerObservation{{
+				Family:           core.FamilyIPv4,
+				BindScope:        core.BindLoopback,
+				RemotePort:       8080,
+				SocketIdentities: []core.SocketIdentity{core.SocketIdentity("socket:one")},
+				Processes: []core.ProcessChain{{Processes: []core.ProcessMetadata{{
+					PID:              42,
+					Executable:       "/usr/bin/python3",
+					WorkingDirectory: "/workspace",
+					Arguments:        []string{"python3", "app.py"},
+				}}}},
+			}},
+			Forwards: []core.ForwardSnapshot{},
+		}},
 	}
+}
+
+func TestServeReturnsCompleteManagerSnapshot(t *testing.T) {
+	snapshot := discoveryFixtureSnapshot()
+	snapshot.Hosts[0].Forwards = []core.ForwardSnapshot{{
+		ID:                 core.ForwardID("manual:operation-1"),
+		Kind:               core.ForwardManual,
+		RemotePort:         8080,
+		RemoteFamily:       core.FamilyIPv4,
+		AllocatedLocalPort: 8081,
+		LocalFamilies:      []core.AddressFamily{core.FamilyIPv4, core.FamilyIPv6},
+	}}
+	manager := &snapshotManager{snapshot: snapshot, scopes: make(chan core.Scope, 1)}
 	session := newTestSessionWithManager(t, manager)
 	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
 	response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.snapshot","params":{"scope":{"kind":"all"}}}`)
-	want := `{"jsonrpc":"2.0","id":"2","result":{"snapshot":{"revision":9,"hosts":[{"alias":"development","connection":"connected","forwards":[{"id":"manual:operation-1","kind":"manual","remote_port":8080,"remote_family":"ipv4","allocated_local_port":8081,"local_families":["ipv4","ipv6"]}]}]}}}`
+	want := `{"jsonrpc":"2.0","id":"2","result":{"snapshot":{"revision":9,"hosts":[{"alias":"development","connection":"connected","discovery":{"state":"degraded","capability":{"remote_listeners":"full","socket_identity":"full","process_metadata":"partial"},"baseline_established":true,"scanner_version":1,"scanner_checksum":"abc123","diagnostic":"process_metadata_partial"},"listener_observations":[{"family":"ipv4","bind_scope":"loopback","remote_port":8080,"socket_identities":["socket:one"],"process_chains":[{"processes":[{"pid":42,"executable":"/usr/bin/python3","working_directory":"/workspace","arguments":["python3","app.py"]}]}]}],"forwards":[{"id":"manual:operation-1","kind":"manual","remote_port":8080,"remote_family":"ipv4","allocated_local_port":8081,"local_families":["ipv4","ipv6"]}]}]}}}`
 	assertJSONEqual(t, response, []byte(want))
 }
 

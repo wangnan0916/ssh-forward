@@ -1,0 +1,4 @@
+{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":["watch-snapshot-v1"]}}
+{"jsonrpc":"2.0","id":"1","result":{"protocol":{"major":1,"minor":0},"capabilities":["watch-snapshot-v1"],"max_frame_bytes":1048576}}
+{"jsonrpc":"2.0","id":"2","method":"manager.watch","params":{"scope":{"kind":"all"}}}
+{"jsonrpc":"2.0","id":"2","error":{"code":-32015,"message":"too many active Watches","data":{"kind":"watch_limit","retryable":true}}}

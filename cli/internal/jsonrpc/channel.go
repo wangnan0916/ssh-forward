@@ -7,11 +7,14 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/creachadair/jrpc2"
 	"github.com/creachadair/jrpc2/channel"
 )
+
+const outboundWriteTimeout = 5 * time.Second
 
 var errFrameTooLarge = errors.New("JSON-RPC frame exceeds maximum size")
 
@@ -44,6 +47,13 @@ func (c *boundedLineChannel) Send(message []byte) error {
 	frame := make([]byte, len(message)+1)
 	copy(frame, message)
 	frame[len(message)] = '\n'
+	if connection, ok := c.stream.(interface{ SetWriteDeadline(time.Time) error }); ok {
+		if err := connection.SetWriteDeadline(time.Now().Add(outboundWriteTimeout)); err != nil {
+			_ = c.Close()
+			return err
+		}
+		defer connection.SetWriteDeadline(time.Time{})
+	}
 	written, err := c.stream.Write(frame)
 	if err != nil {
 		_ = c.Close()
@@ -91,6 +101,17 @@ func (c *boundedLineChannel) Close() error {
 	return c.closeErr
 }
 
+type serializedChannel struct {
+	channel.Channel
+	sendMu sync.Mutex
+}
+
+func (c *serializedChannel) Send(message []byte) error {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	return c.Channel.Send(message)
+}
+
 type validatingChannel struct {
 	channel.Channel
 }
@@ -118,12 +139,15 @@ func (c *validatingChannel) reject(code jrpc2.Code, message string, result error
 	return result
 }
 
-// pendingChannel stops the jrpc2 reader before its internal queue can grow
-// beyond the per-session admission bound.
+// pendingChannel bounds jrpc2's inbound queue and activates each Watch only
+// after the response that introduces its server-assigned ID is written.
 type pendingChannel struct {
 	channel.Channel
 	slots chan struct{}
 	done  chan struct{}
+
+	hooksMu    sync.Mutex
+	watchHooks map[string]func()
 
 	closeOnce sync.Once
 	closeErr  error
@@ -131,9 +155,10 @@ type pendingChannel struct {
 
 func newPendingChannel(base channel.Channel, maxPending int) *pendingChannel {
 	return &pendingChannel{
-		Channel: base,
-		slots:   make(chan struct{}, maxPending),
-		done:    make(chan struct{}),
+		Channel:    base,
+		slots:      make(chan struct{}, maxPending),
+		done:       make(chan struct{}),
+		watchHooks: make(map[string]func()),
 	}
 }
 
@@ -161,8 +186,64 @@ func (c *pendingChannel) Recv() ([]byte, error) {
 }
 
 func (c *pendingChannel) Send(message []byte) error {
-	defer c.release()
-	return c.Channel.Send(message)
+	response := isResponse(message)
+	err := c.Channel.Send(message)
+	if !response {
+		return err
+	}
+	c.release()
+	if err != nil {
+		return err
+	}
+	if watchID, ok := watchResponseID(message); ok {
+		c.fireWatchResponseHook(watchID)
+	}
+	return nil
+}
+
+func (c *pendingChannel) afterWatchResponse(watchID string, hook func()) {
+	c.hooksMu.Lock()
+	defer c.hooksMu.Unlock()
+	c.watchHooks[watchID] = hook
+}
+
+func (c *pendingChannel) fireWatchResponseHook(watchID string) {
+	c.hooksMu.Lock()
+	hook := c.watchHooks[watchID]
+	delete(c.watchHooks, watchID)
+	c.hooksMu.Unlock()
+	if hook != nil {
+		hook()
+	}
+}
+
+func isResponse(message []byte) bool {
+	var object map[string]json.RawMessage
+	if json.Unmarshal(message, &object) != nil {
+		return false
+	}
+	if _, request := object["method"]; request {
+		return false
+	}
+	_, found := object["id"]
+	return found
+}
+
+func watchResponseID(message []byte) (string, bool) {
+	var envelope struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if json.Unmarshal(message, &envelope) != nil || len(envelope.Result) == 0 {
+		return "", false
+	}
+	var result struct {
+		WatchID  string          `json:"watch_id"`
+		Snapshot json.RawMessage `json:"snapshot"`
+	}
+	if json.Unmarshal(envelope.Result, &result) != nil || result.WatchID == "" || len(result.Snapshot) == 0 {
+		return "", false
+	}
+	return result.WatchID, true
 }
 
 func (c *pendingChannel) Close() error {

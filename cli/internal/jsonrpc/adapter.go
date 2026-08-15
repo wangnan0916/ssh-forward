@@ -16,11 +16,13 @@ import (
 
 func Serve(ctx context.Context, conn net.Conn, manager core.Manager) error {
 	line := newBoundedLineChannel(conn, maxFrameBytes)
-	frames := &validatingChannel{Channel: line}
+	serialized := &serializedChannel{Channel: line}
+	frames := &validatingChannel{Channel: serialized}
 	// Negotiate before starting jrpc2 so pipelined or built-in methods cannot
 	// overtake the session handshake.
 	stopHandshake := context.AfterFunc(ctx, func() { _ = frames.Close() })
-	if err := negotiateHello(frames); err != nil {
+	capabilities, err := negotiateHello(frames)
+	if err != nil {
 		stopHandshake()
 		return normalizeServeError(err)
 	}
@@ -28,6 +30,9 @@ func Serve(ctx context.Context, conn net.Conn, manager core.Manager) error {
 		return nil
 	}
 
+	pending := newPendingChannel(frames, maxPendingCalls)
+	session := newConnectionSession(ctx, manager, capabilities, pending)
+	defer session.close()
 	methods := handler.Map{
 		"manager.execute": func(ctx context.Context, request *jrpc2.Request) (any, error) {
 			return handleExecute(ctx, request, manager)
@@ -35,14 +40,19 @@ func Serve(ctx context.Context, conn net.Conn, manager core.Manager) error {
 		"manager.snapshot": func(ctx context.Context, request *jrpc2.Request) (any, error) {
 			return handleSnapshot(ctx, request, manager)
 		},
+		"manager.watch":   session.handleWatch,
+		"manager.unwatch": session.handleUnwatch,
 	}
-	pending := newPendingChannel(frames, maxPendingCalls)
 	stopSession := context.AfterFunc(ctx, func() { _ = pending.Close() })
 	defer stopSession()
 	server := jrpc2.NewServer(methods, &jrpc2.ServerOptions{
+		AllowPush:      capabilities.watchSnapshot,
 		Concurrency:    maxHandlers,
 		DisableBuiltin: true,
-	}).Start(pending)
+		NewContext:     func() context.Context { return session.ctx },
+	})
+	session.server = server
+	server.Start(pending)
 	return normalizeServeError(server.Wait())
 }
 
@@ -116,6 +126,9 @@ func marshalManagerError(err error) error {
 	case core.ErrorManagerClosed:
 		code = -32014
 		message = "Manager is closed"
+	case core.ErrorWatchLimit:
+		code = -32015
+		message = "too many active Watches"
 	default:
 		return &jrpc2.Error{Code: jrpc2.InternalError, Message: "internal error"}
 	}
@@ -160,22 +173,76 @@ func handleSnapshot(ctx context.Context, request *jrpc2.Request, manager core.Ma
 	if err != nil {
 		return nil, &jrpc2.Error{Code: jrpc2.InternalError, Message: "internal error"}
 	}
+	return snapshotResult{Snapshot: marshalSnapshot(snapshot)}, nil
+}
+
+func marshalSnapshot(snapshot core.Snapshot) wireSnapshot {
 	hosts := make([]wireHost, len(snapshot.Hosts))
 	for hostIndex, host := range snapshot.Hosts {
 		forwards := make([]wireForward, len(host.Forwards))
 		for forwardIndex, forward := range host.Forwards {
 			forwards[forwardIndex] = marshalForward(forward)
 		}
+		observations := make([]wireListenerObservation, len(host.ListenerObservations))
+		for observationIndex, observation := range host.ListenerObservations {
+			observations[observationIndex] = marshalListenerObservation(observation)
+		}
 		hosts[hostIndex] = wireHost{
-			Alias:      string(host.Alias),
-			Connection: string(host.Connection),
-			Forwards:   forwards,
+			Alias:                string(host.Alias),
+			Connection:           string(host.Connection),
+			Discovery:            marshalDiscovery(host.Discovery),
+			ListenerObservations: observations,
+			Forwards:             forwards,
 		}
 	}
-	return snapshotResult{Snapshot: wireSnapshot{
+	return wireSnapshot{
 		Revision: uint64(snapshot.Revision),
 		Hosts:    hosts,
-	}}, nil
+	}
+}
+
+func marshalDiscovery(discovery core.DiscoverySnapshot) wireDiscovery {
+	return wireDiscovery{
+		State: string(discovery.State),
+		Capability: wireDiscoveryCapability{
+			RemoteListeners: string(discovery.Capability.RemoteListeners),
+			SocketIdentity:  string(discovery.Capability.SocketIdentity),
+			ProcessMetadata: string(discovery.Capability.ProcessMetadata),
+		},
+		BaselineEstablished: discovery.BaselineEstablished,
+		ScannerVersion:      discovery.ScannerVersion,
+		ScannerChecksum:     discovery.ScannerChecksum,
+		Diagnostic:          discovery.Diagnostic,
+	}
+}
+
+func marshalListenerObservation(observation core.ListenerObservation) wireListenerObservation {
+	identities := make([]string, len(observation.SocketIdentities))
+	for index, identity := range observation.SocketIdentities {
+		identities[index] = string(identity)
+	}
+	chains := make([]wireProcessChain, len(observation.Processes))
+	for chainIndex, chain := range observation.Processes {
+		processes := make([]wireProcessMetadata, len(chain.Processes))
+		for processIndex, process := range chain.Processes {
+			arguments := make([]string, len(process.Arguments))
+			copy(arguments, process.Arguments)
+			processes[processIndex] = wireProcessMetadata{
+				PID:              process.PID,
+				Executable:       process.Executable,
+				WorkingDirectory: process.WorkingDirectory,
+				Arguments:        arguments,
+			}
+		}
+		chains[chainIndex] = wireProcessChain{Processes: processes}
+	}
+	return wireListenerObservation{
+		Family:           string(observation.Family),
+		BindScope:        string(observation.BindScope),
+		RemotePort:       observation.RemotePort,
+		SocketIdentities: identities,
+		ProcessChains:    chains,
+	}
 }
 
 func normalizeServeError(err error) error {
