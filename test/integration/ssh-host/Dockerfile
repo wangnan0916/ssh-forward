@@ -18,6 +18,7 @@ RUN apt-get update \
     && install -d -o testdev -g testdev -m 0700 /home/testdev/.ssh
 
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/ssh-forward-test-host
+COPY --chmod=0755 fixture.py /usr/local/lib/ssh-forward-test/fixture.py
 
 EXPOSE 22
 

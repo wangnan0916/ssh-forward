@@ -6,6 +6,8 @@ The completed throwaway spike validated one system `ssh -T -D … sh -s` connect
 
 ## Vertical slices
 
+Slices 1–3 are now complete: the baseline, control-plane tracer, and one-host Manual Forward path are implemented. The transport currently sends a fixed inert `sh -s` program solely to keep the dedicated SSH/SOCKS session alive; slice 4 replaces it with the fixed, versioned observation scanner and wires framed stdout. Discovery remains the next slice.
+
 1. Initialize the new local repository and preserve the accepted design baseline.
 2. Establish the Go module, disposable Linux integration harness, Manager Interface, and JSON-RPC hello/status path.
 3. Deliver one-host Manual Forward end to end.

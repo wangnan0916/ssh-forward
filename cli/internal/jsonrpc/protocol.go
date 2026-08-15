@@ -17,6 +17,9 @@ const (
 	maxCapabilitySize = 128
 	maxPendingCalls   = 64
 	maxHandlers       = 8
+	maxOperationID    = 128
+	maxHostAlias      = 255
+	maxForwardID      = 256
 )
 
 var (
@@ -57,6 +60,47 @@ type helloResult struct {
 	MaxFrameBytes int             `json:"max_frame_bytes"`
 }
 
+type executeParams struct {
+	Command json.RawMessage `json:"command"`
+}
+
+type commandHeader struct {
+	Kind string `json:"kind"`
+}
+
+type addManualForwardParams struct {
+	Kind        string `json:"kind"`
+	OperationID string `json:"operation_id"`
+	Host        string `json:"host"`
+	RemotePort  uint16 `json:"remote_port"`
+	Family      string `json:"family"`
+}
+
+type removeForwardParams struct {
+	Kind        string `json:"kind"`
+	OperationID string `json:"operation_id"`
+	ForwardID   string `json:"forward_id"`
+}
+
+type outcomeResult struct {
+	Outcome wireOutcome `json:"outcome"`
+}
+
+type wireOutcome struct {
+	Kind     string      `json:"kind"`
+	Revision uint64      `json:"revision"`
+	Forward  wireForward `json:"forward"`
+}
+
+type wireForward struct {
+	ID                 string   `json:"id"`
+	Kind               string   `json:"kind"`
+	RemotePort         uint16   `json:"remote_port"`
+	RemoteFamily       string   `json:"remote_family"`
+	AllocatedLocalPort uint16   `json:"allocated_local_port"`
+	LocalFamilies      []string `json:"local_families"`
+}
+
 type snapshotParams struct {
 	Scope struct {
 		Kind string `json:"kind"`
@@ -64,9 +108,18 @@ type snapshotParams struct {
 }
 
 type snapshotResult struct {
-	Snapshot struct {
-		Revision uint64 `json:"revision"`
-	} `json:"snapshot"`
+	Snapshot wireSnapshot `json:"snapshot"`
+}
+
+type wireSnapshot struct {
+	Revision uint64     `json:"revision"`
+	Hosts    []wireHost `json:"hosts"`
+}
+
+type wireHost struct {
+	Alias      string        `json:"alias"`
+	Connection string        `json:"connection"`
+	Forwards   []wireForward `json:"forwards"`
 }
 
 type requestEnvelope struct {

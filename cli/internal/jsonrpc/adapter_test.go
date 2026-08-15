@@ -23,10 +23,14 @@ import (
 type snapshotManager struct {
 	snapshot core.Snapshot
 	scopes   chan core.Scope
+	execute  func(context.Context, core.Command) (core.Outcome, error)
 }
 
-func (m *snapshotManager) Execute(context.Context, core.Command) (core.Outcome, error) {
-	return core.Outcome{}, errors.New("unexpected Execute call")
+func (m *snapshotManager) Execute(ctx context.Context, command core.Command) (core.Outcome, error) {
+	if m.execute == nil {
+		return core.Outcome{}, errors.New("unexpected Execute call")
+	}
+	return m.execute(ctx, command)
 }
 
 func (m *snapshotManager) Snapshot(_ context.Context, scope core.Scope) (core.Snapshot, error) {
@@ -147,9 +151,48 @@ func TestServeNegotiatesHello(t *testing.T) {
 }
 
 func TestSharedGoldenTranscripts(t *testing.T) {
-	for _, name := range []string{"hello-success.jsonl", "snapshot-empty.jsonl"} {
-		t.Run(name, func(t *testing.T) {
-			path := filepath.Join("..", "..", "..", "test", "protocol", "v1", name)
+	forward := core.ForwardSnapshot{
+		ID:                 core.ForwardID("manual:operation-1"),
+		Kind:               core.ForwardManual,
+		RemotePort:         8080,
+		RemoteFamily:       core.FamilyIPv4,
+		AllocatedLocalPort: 8081,
+		LocalFamilies:      []core.AddressFamily{core.FamilyIPv4, core.FamilyIPv6},
+	}
+	tests := []struct {
+		name    string
+		manager core.Manager
+	}{
+		{name: "hello-success.jsonl", manager: core.NewManager()},
+		{name: "snapshot-empty.jsonl", manager: core.NewManager()},
+		{
+			name: "manual-forward-add.jsonl",
+			manager: &snapshotManager{execute: func(context.Context, core.Command) (core.Outcome, error) {
+				return core.Outcome{Kind: core.OutcomeForwardAdded, Revision: 7, Forward: forward}, nil
+			}},
+		},
+		{
+			name: "manual-forward-remove.jsonl",
+			manager: &snapshotManager{execute: func(context.Context, core.Command) (core.Outcome, error) {
+				return core.Outcome{Kind: core.OutcomeForwardRemoved, Revision: 8, Forward: forward}, nil
+			}},
+		},
+		{
+			name: "snapshot-manual-forward.jsonl",
+			manager: &snapshotManager{
+				snapshot: core.Snapshot{
+					Revision: 9,
+					Hosts: []core.HostSnapshot{
+						{Alias: core.HostAlias("development"), Connection: core.ConnectionConnected, Forwards: []core.ForwardSnapshot{forward}},
+					},
+				},
+				scopes: make(chan core.Scope, 1),
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join("..", "..", "..", "test", "protocol", "v1", test.name)
 			contents, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
@@ -158,7 +201,7 @@ func TestSharedGoldenTranscripts(t *testing.T) {
 			if len(lines)%2 != 0 {
 				t.Fatalf("golden transcript has %d lines, want request/response pairs", len(lines))
 			}
-			session := newTestSession(t)
+			session := newTestSessionWithManager(t, test.manager)
 			for index := 0; index < len(lines); index += 2 {
 				response := session.exchange(t, string(lines[index]))
 				assertJSONEqual(t, response, lines[index+1])
@@ -229,6 +272,101 @@ func TestServeRejectsBuiltinMethodBeforeHello(t *testing.T) {
 	assertConnectionClosed(t, session)
 }
 
+func TestServeExecutesAddManualForward(t *testing.T) {
+	wantCommand := core.AddManualForward{
+		CommandID:  core.CommandID("operation-1"),
+		Host:       core.HostAlias("development"),
+		RemotePort: 8080,
+		Family:     core.FamilyAuto,
+	}
+	manager := &snapshotManager{
+		execute: func(_ context.Context, command core.Command) (core.Outcome, error) {
+			if !reflect.DeepEqual(command, wantCommand) {
+				return core.Outcome{}, fmt.Errorf("command = %#v, want %#v", command, wantCommand)
+			}
+			return core.Outcome{
+				Kind:     core.OutcomeForwardAdded,
+				Revision: 7,
+				Forward: core.ForwardSnapshot{
+					ID:                 core.ForwardID("manual:operation-1"),
+					Kind:               core.ForwardManual,
+					RemotePort:         8080,
+					RemoteFamily:       core.FamilyIPv4,
+					AllocatedLocalPort: 8081,
+					LocalFamilies:      []core.AddressFamily{core.FamilyIPv4, core.FamilyIPv6},
+				},
+			}, nil
+		},
+	}
+	session := newTestSessionWithManager(t, manager)
+	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
+	response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.execute","params":{"command":{"kind":"manual_forward.add","operation_id":"operation-1","host":"development","remote_port":8080,"family":"auto"}}}`)
+	want := `{"jsonrpc":"2.0","id":"2","result":{"outcome":{"kind":"forward_added","revision":7,"forward":{"id":"manual:operation-1","kind":"manual","remote_port":8080,"remote_family":"ipv4","allocated_local_port":8081,"local_families":["ipv4","ipv6"]}}}}`
+	assertJSONEqual(t, response, []byte(want))
+}
+
+func TestServeExecutesRemoveForward(t *testing.T) {
+	wantCommand := core.RemoveForward{
+		CommandID: core.CommandID("operation-2"),
+		ForwardID: core.ForwardID("manual:operation-1"),
+	}
+	manager := &snapshotManager{
+		execute: func(_ context.Context, command core.Command) (core.Outcome, error) {
+			if !reflect.DeepEqual(command, wantCommand) {
+				return core.Outcome{}, fmt.Errorf("command = %#v, want %#v", command, wantCommand)
+			}
+			return core.Outcome{
+				Kind:     core.OutcomeForwardRemoved,
+				Revision: 8,
+				Forward: core.ForwardSnapshot{
+					ID:                 core.ForwardID("manual:operation-1"),
+					Kind:               core.ForwardManual,
+					RemotePort:         8080,
+					RemoteFamily:       core.FamilyIPv4,
+					AllocatedLocalPort: 8081,
+					LocalFamilies:      []core.AddressFamily{core.FamilyIPv4, core.FamilyIPv6},
+				},
+			}, nil
+		},
+	}
+	session := newTestSessionWithManager(t, manager)
+	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
+	response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.execute","params":{"command":{"kind":"manual_forward.remove","operation_id":"operation-2","forward_id":"manual:operation-1"}}}`)
+	want := `{"jsonrpc":"2.0","id":"2","result":{"outcome":{"kind":"forward_removed","revision":8,"forward":{"id":"manual:operation-1","kind":"manual","remote_port":8080,"remote_family":"ipv4","allocated_local_port":8081,"local_families":["ipv4","ipv6"]}}}}`
+	assertJSONEqual(t, response, []byte(want))
+}
+
+func TestServeRejectsInvalidManualForwardParameters(t *testing.T) {
+	requests := []string{
+		`{"kind":"manual_forward.add","operation_id":"operation-1","host":"development","remote_port":0,"family":"auto"}`,
+		`{"kind":"manual_forward.add","operation_id":"operation-1","host":"development","remote_port":8080,"family":"unknown"}`,
+		`{"kind":"manual_forward.add","operation_id":"operation-1","host":"","remote_port":8080,"family":"auto"}`,
+		fmt.Sprintf(`{"kind":"manual_forward.add","operation_id":"%s","host":"development","remote_port":8080,"family":"auto"}`, strings.Repeat("x", 129)),
+		fmt.Sprintf(`{"kind":"manual_forward.add","operation_id":"operation-1","host":"%s","remote_port":8080,"family":"auto"}`, strings.Repeat("h", 256)),
+		fmt.Sprintf(`{"kind":"manual_forward.remove","operation_id":"operation-2","forward_id":"%s"}`, strings.Repeat("f", 257)),
+	}
+	for _, command := range requests {
+		session := newTestSession(t)
+		session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
+		response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.execute","params":{"command":`+command+`}}`)
+		want := `{"jsonrpc":"2.0","id":"2","error":{"code":-32602,"message":"invalid parameters","data":{"kind":"invalid_parameters","retryable":false}}}`
+		assertJSONEqual(t, response, []byte(want))
+	}
+}
+
+func TestServeMapsTypedManagerError(t *testing.T) {
+	manager := &snapshotManager{
+		execute: func(context.Context, core.Command) (core.Outcome, error) {
+			return core.Outcome{}, &core.DomainError{Kind: core.ErrorUnknownHost}
+		},
+	}
+	session := newTestSessionWithManager(t, manager)
+	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
+	response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.execute","params":{"command":{"kind":"manual_forward.add","operation_id":"operation-1","host":"unknown","remote_port":8080,"family":"auto"}}}`)
+	want := `{"jsonrpc":"2.0","id":"2","error":{"code":-32010,"message":"unknown Development Host","data":{"kind":"unknown_host","retryable":false}}}`
+	assertJSONEqual(t, response, []byte(want))
+}
+
 func TestServeReturnsManagerSnapshotAfterHello(t *testing.T) {
 	manager := &snapshotManager{
 		snapshot: core.Snapshot{Revision: 42},
@@ -237,7 +375,7 @@ func TestServeReturnsManagerSnapshotAfterHello(t *testing.T) {
 	session := newTestSessionWithManager(t, manager)
 	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
 	response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.snapshot","params":{"scope":{"kind":"all"}}}`)
-	want := `{"jsonrpc":"2.0","id":"2","result":{"snapshot":{"revision":42}}}`
+	want := `{"jsonrpc":"2.0","id":"2","result":{"snapshot":{"revision":42,"hosts":[]}}}`
 	assertJSONEqual(t, response, []byte(want))
 	select {
 	case scope := <-manager.scopes:
@@ -247,6 +385,36 @@ func TestServeReturnsManagerSnapshotAfterHello(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("Manager.Snapshot was not called")
 	}
+}
+
+func TestServeReturnsCompleteManagerSnapshot(t *testing.T) {
+	manager := &snapshotManager{
+		snapshot: core.Snapshot{
+			Revision: 9,
+			Hosts: []core.HostSnapshot{
+				{
+					Alias:      core.HostAlias("development"),
+					Connection: core.ConnectionConnected,
+					Forwards: []core.ForwardSnapshot{
+						{
+							ID:                 core.ForwardID("manual:operation-1"),
+							Kind:               core.ForwardManual,
+							RemotePort:         8080,
+							RemoteFamily:       core.FamilyIPv4,
+							AllocatedLocalPort: 8081,
+							LocalFamilies:      []core.AddressFamily{core.FamilyIPv4, core.FamilyIPv6},
+						},
+					},
+				},
+			},
+		},
+		scopes: make(chan core.Scope, 1),
+	}
+	session := newTestSessionWithManager(t, manager)
+	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
+	response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.snapshot","params":{"scope":{"kind":"all"}}}`)
+	want := `{"jsonrpc":"2.0","id":"2","result":{"snapshot":{"revision":9,"hosts":[{"alias":"development","connection":"connected","forwards":[{"id":"manual:operation-1","kind":"manual","remote_port":8080,"remote_family":"ipv4","allocated_local_port":8081,"local_families":["ipv4","ipv6"]}]}]}}}`
+	assertJSONEqual(t, response, []byte(want))
 }
 
 func TestServeCompletesPipelinedHelloBeforeManagerRequest(t *testing.T) {
@@ -272,7 +440,7 @@ func TestServeCompletesPipelinedHelloBeforeManagerRequest(t *testing.T) {
 	if err := <-writeDone; err != nil {
 		t.Fatalf("write pipelined requests: %v", err)
 	}
-	wantSnapshot := `{"jsonrpc":"2.0","id":"2","result":{"snapshot":{"revision":0}}}`
+	wantSnapshot := `{"jsonrpc":"2.0","id":"2","result":{"snapshot":{"revision":0,"hosts":[]}}}`
 	assertJSONEqual(t, snapshotResponse, []byte(wantSnapshot))
 }
 

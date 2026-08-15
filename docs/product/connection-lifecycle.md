@@ -12,7 +12,7 @@ Each Development Host has a **Monitor at Login** setting, enabled initially for 
 
 ## Reconnection
 
-When an SSH transport disconnects, existing Local Endpoints remain allocated so other processes cannot claim their ports, but new client connections fail promptly rather than queueing indefinitely. In-flight proxy connections receive EOF or reset promptly; a bounded post-half-close drain prevents a client that ignores upstream EOF from retaining a proxy goroutine indefinitely. Reconnection uses exponential backoff with jitter. Authentication and host-key failures suspend automatic retries until the user acts. Listener cleanup remains suspended until a successful reconnect produces a complete observation.
+When an SSH transport disconnects, existing Local Endpoints remain allocated so other processes cannot claim their ports, but new client connections fail promptly rather than queueing indefinitely. In-flight proxy connections receive EOF or reset promptly; a bounded post-half-close drain prevents a client that ignores upstream EOF from retaining a proxy goroutine indefinitely. Reconnection uses exponential backoff with jitter through injectable clock/random behavior. Authentication and host-key failures are classified from bounded OpenSSH diagnostics and suspend automatic retries until the user acts. Listener cleanup remains suspended until a successful reconnect produces a complete observation.
 
 ## Browser actions
 
