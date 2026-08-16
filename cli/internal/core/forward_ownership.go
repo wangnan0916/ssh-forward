@@ -27,8 +27,6 @@ type forwardAllocator interface {
 	Allocate(context.Context, forwardSpec) (ownedForward, error)
 }
 
-var errLocalEndpointConflict = errors.New("Local Endpoint allocation conflict")
-
 type proxyForwardAllocator struct {
 	dialer proxy.Dialer
 }
@@ -43,8 +41,11 @@ func (a proxyForwardAllocator) Allocate(ctx context.Context, spec forwardSpec) (
 		Dialer:        a.dialer,
 	})
 	if err != nil {
+		// The allocator is the seam boundary: the proxy's bare conflict error
+		// is translated to the domain error here, exactly once — the wire
+		// mapping in the adapter is the only other mention of this failure.
 		if errors.Is(err, proxy.ErrLocalPortConflict) {
-			return nil, errLocalEndpointConflict
+			return nil, &DomainError{Kind: ErrorLocalPortConflict, Retryable: true}
 		}
 		return nil, err
 	}

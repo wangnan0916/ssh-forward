@@ -161,9 +161,8 @@ func (m *manager) addManualForward(ctx context.Context, add AddManualForward) (O
 	})
 	if err != nil {
 		m.failCommandAndRelease(add.CommandID)
-		if errors.Is(err, errLocalEndpointConflict) {
-			return Outcome{}, &DomainError{Kind: ErrorLocalPortConflict, Retryable: true}
-		}
+		// Local Port Conflict is already the domain error from the allocator
+		// seam; pass it through unchanged.
 		return Outcome{}, err
 	}
 	forward := owner.Projection()
