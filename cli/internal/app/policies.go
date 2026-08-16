@@ -1,6 +1,8 @@
 package app
 
 import (
+	"sync"
+
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -175,19 +177,54 @@ func reverseCondition(condition core.PolicyCondition) fileCondition {
 
 // FilePolicySource returns a policy source for the Manager's reconciliation
 // seam: each call rereads policies.jsonc (the Manager refreshes on every
-// observation generation, roughly the scanner's cadence), so external edits
-// take effect without a watcher. Invalid input keeps the last valid set;
-// before any valid read the source is empty (default Ask).
-func FilePolicySource(path string) func() []core.ForwardingPolicy {
-	lastValid := []core.ForwardingPolicy(nil)
+// FilePolicyReader is the single read path for the policies file: the
+// Manager's reconciliation source and the CLI's diagnostic read share one
+// last-valid set and one last error, so both surfaces see the same truth.
+type FilePolicyReader struct {
+	path string
+
+	mu        sync.Mutex
+	lastValid []core.ForwardingPolicy
+	lastErr   error
+}
+
+func NewFilePolicyReader(path string) *FilePolicyReader {
+	return &FilePolicyReader{path: path}
+}
+
+// Read parses the file afresh and records the result: the parsed set when
+// the file is valid, otherwise the last valid set plus the error. Every
+// read path (Source and the CLI) goes through this one place.
+func (r *FilePolicyReader) Read() ([]core.ForwardingPolicy, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	policies, err := LoadPolicies(r.path)
+	if err != nil {
+		r.lastErr = err
+		return r.lastValid, err
+	}
+	r.lastValid = policies
+	r.lastErr = nil
+	return policies, nil
+}
+
+// Source returns the Manager's reconciliation seam: each call reads the
+// file and returns the last valid set — empty before any valid read
+// (default Ask). The reconciliation cadence (~2s per observation
+// generation) hot-reloads external edits without a watcher.
+func (r *FilePolicyReader) Source() func() []core.ForwardingPolicy {
 	return func() []core.ForwardingPolicy {
-		policies, err := LoadPolicies(path)
-		if err != nil {
-			return lastValid
-		}
-		lastValid = policies
+		policies, _ := r.Read()
 		return policies
 	}
+}
+
+// FilePolicySource builds the Manager's policy source from a file, keeping
+// the last valid set on invalid input. Production wiring composes a
+// FilePolicyReader instead so the CLI can share the same reader; this
+// remains for tests and callers that want only the source seam.
+func FilePolicySource(path string) func() []core.ForwardingPolicy {
+	return NewFilePolicyReader(path).Source()
 }
 
 // stripJSONC removes line comments, block comments, and trailing commas

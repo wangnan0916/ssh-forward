@@ -53,13 +53,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
 		return 1
 	}
-	manager := app.NewManager(core.HostAlias(*host), adapter, app.FilePolicySource(*policies))
+	policyReader := app.NewFilePolicyReader(*policies)
+	manager := app.NewManager(core.HostAlias(*host), adapter, policyReader.Source())
 	defer func() { _ = manager.Close(context.Background()) }()
 
 	app := &cli.App{
 		Manager:      manager,
 		Host:         core.HostAlias(*host),
 		PoliciesPath: *policies,
+		PolicyReader: policyReader,
 		Stdout:       stdout,
 		Stderr:       stderr,
 	}

@@ -7,6 +7,7 @@ import (
 	"io"
 
 	"ssh-forward/cli/internal/app"
+	"ssh-forward/cli/internal/core"
 )
 
 // runPolicy executes the policy command family. The policy file is the
@@ -34,9 +35,18 @@ func (a *App) runPolicyList(args []string) error {
 	if a.PoliciesPath == "" {
 		return fmt.Errorf("no policies file is configured (--policies)")
 	}
-	policies, err := app.LoadPolicies(a.PoliciesPath)
-	if err != nil {
-		return err
+	var policies []core.ForwardingPolicy
+	var err error
+	if a.PolicyReader != nil {
+		policies, err = a.PolicyReader.Read()
+		if err != nil {
+			fmt.Fprintf(a.Stderr, "warning: %v; showing the last valid policies\n", err)
+		}
+	} else {
+		policies, err = app.LoadPolicies(a.PoliciesPath)
+		if err != nil {
+			return err
+		}
 	}
 	if *jsonOutput {
 		encoded, err := app.MarshalPolicies(policies)

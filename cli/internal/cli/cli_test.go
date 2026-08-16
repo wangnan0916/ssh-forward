@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"ssh-forward/cli/internal/app"
 	"ssh-forward/cli/internal/core"
 )
 
@@ -317,6 +318,36 @@ func TestPolicyListJSON(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Fatalf("policy list --json missing %q: %s", want, output)
 		}
+	}
+}
+
+func TestPolicyListWithReaderShowsLastValidOnCorruptFile(t *testing.T) {
+	path := writePolicies(t, `{"schema_version": 1, "policies": [{"id": "web", "priority": 10, "action": "auto_forward"}]}`)
+	reader := app.NewFilePolicyReader(path)
+	// Prime the shared reader with a valid read.
+	if _, err := reader.Read(); err != nil {
+		t.Fatalf("prime read: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"schema_version": 1, "policies": [{"id": "broken", "action": "bogus"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	a := &App{
+		Manager:      &fakeManager{},
+		PoliciesPath: path,
+		PolicyReader: reader,
+		Stdout:       &stdout,
+		Stderr:       &stderr,
+	}
+	if err := a.Run(context.Background(), []string{"policy", "list"}); err != nil {
+		t.Fatalf("policy list with reader: %v", err)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "web priority=10 action=auto_forward") {
+		t.Fatalf("policy list output = %q, want the last valid policies", output)
+	}
+	if !strings.Contains(stderr.String(), "warning:") {
+		t.Fatalf("policy list stderr = %q, want a corrupt-file warning", stderr.String())
 	}
 }
 

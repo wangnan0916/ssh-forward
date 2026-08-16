@@ -234,3 +234,89 @@ func TestMarshalPoliciesRoundTripsThroughLoad(t *testing.T) {
 		t.Fatalf("round trip = %#v, want %#v", reloaded, loaded)
 	}
 }
+
+func TestFilePolicyReaderKeepsLastValidOnInvalidInput(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policies.jsonc")
+	valid := `{"schema_version": 1, "policies": [{"id": "web", "action": "auto_forward"}]}`
+	if err := os.WriteFile(path, []byte(valid), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reader := NewFilePolicyReader(path)
+	source := reader.Source()
+
+	policies := source()
+	if len(policies) != 1 || policies[0].ID != "web" {
+		t.Fatalf("source after valid read = %#v", policies)
+	}
+
+	corrupt := `{"schema_version": 1, "policies": [{"id": "broken", "action": "bogus"}]}`
+	if err := os.WriteFile(path, []byte(corrupt), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := reader.Read()
+	if err == nil {
+		t.Fatal("Read on a corrupt file succeeded")
+	}
+	if len(got) != 1 || got[0].ID != "web" {
+		t.Fatalf("Read on corrupt file = %#v, want last valid set", got)
+	}
+	if still := source(); len(still) != 1 || still[0].ID != "web" {
+		t.Fatalf("source after corrupt read = %#v, want last valid set", still)
+	}
+
+	// The Manager and the CLI share one reader: a fresh parse by the CLI
+	// (Read) refreshes the state the Manager's next generation sees.
+	fixed := `{"schema_version": 1, "policies": [{"id": "db", "action": "ignore"}]}`
+	if err := os.WriteFile(path, []byte(fixed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	refreshed, err := reader.Read()
+	if err != nil || len(refreshed) != 1 || refreshed[0].ID != "db" {
+		t.Fatalf("Read after fix = %#v, %v", refreshed, err)
+	}
+	if fromSource := source(); len(fromSource) != 1 || fromSource[0].ID != "db" {
+		t.Fatalf("source after fix = %#v", fromSource)
+	}
+}
+
+// TestMarshalPoliciesPinsEveryConditionField extends the file-shape
+// round trip to the full condition surface: remote ports, bind scope,
+// executable, ancestor executable, and working-directory tree must all
+// survive core → file → core without drift.
+func TestMarshalPoliciesPinsEveryConditionField(t *testing.T) {
+	executable := "/usr/local/bin/node"
+	ancestor := "/usr/bin/npm"
+	tree := "/srv/app"
+	scope := "loopback"
+	path := filepath.Join(t.TempDir(), "policies.jsonc")
+	content := `{"schema_version": 1, "policies": [{"id": "web", "priority": 10, "action": "auto_forward", "conditions": [
+	  {"remote_ports": {"from": 8080, "to": 8081}, "bind_scope": "loopback", "executable": "/usr/local/bin/node", "ancestor_executable": "/usr/bin/npm", "working_directory_tree": "/srv/app"}
+	]}]}`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadPolicies(path)
+	if err != nil {
+		t.Fatalf("LoadPolicies: %v", err)
+	}
+	encoded, err := MarshalPolicies(loaded)
+	if err != nil {
+		t.Fatalf("MarshalPolicies: %v", err)
+	}
+	roundPath := filepath.Join(t.TempDir(), "roundtrip.jsonc")
+	if err := os.WriteFile(roundPath, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := LoadPolicies(roundPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if !reflect.DeepEqual(loaded, reloaded) {
+		t.Fatalf("round trip = %#v, want %#v", reloaded, loaded)
+	}
+	for _, want := range []string{executable, ancestor, tree, scope, `"from":8080`, `"to":8081`} {
+		if !strings.Contains(string(encoded), want) {
+			t.Fatalf("Marshaled file missing %q: %s", want, string(encoded))
+		}
+	}
+}

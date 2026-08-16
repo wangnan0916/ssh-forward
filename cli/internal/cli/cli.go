@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 
+	"ssh-forward/cli/internal/app"
 	"ssh-forward/cli/internal/core"
 )
 
@@ -16,6 +17,11 @@ type App struct {
 	Manager      core.Manager
 	Host         core.HostAlias
 	PoliciesPath string
+	// PolicyReader is the shared policies-file reader (the same instance
+	// the Manager was composed with): policy list reads through it so the
+	// CLI and the Manager agree on the last valid set. When nil, policy
+	// list parses the file directly for tests and bare usage.
+	PolicyReader *app.FilePolicyReader
 	Stdout       io.Writer
 	Stderr       io.Writer
 }
