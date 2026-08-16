@@ -39,21 +39,7 @@ func TestAgentlessDiscoveryThroughDisposableDevelopmentHost(t *testing.T) {
 		t.Fatalf("start Forwarding Session: %v", err)
 	}
 
-	deadline := time.Now().Add(8 * time.Second)
-	var snapshot core.Snapshot
-	for {
-		snapshot, err = manager.Snapshot(context.Background())
-		if err != nil {
-			t.Fatalf("Snapshot: %v", err)
-		}
-		if snapshot.Host != nil && snapshot.Host.Discovery.BaselineEstablished {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("Discovery Baseline did not arrive; last Snapshot: %#v", snapshot)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	snapshot := waitForBaseline(t, manager)
 	host := snapshot.Host
 	if host.Discovery.State != core.DiscoveryHealthy && host.Discovery.State != core.DiscoveryDegraded {
 		t.Fatalf("Discovery State = %q, want healthy or degraded", host.Discovery.State)

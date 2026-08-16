@@ -545,72 +545,28 @@ func newDiscoveryManager(t *testing.T) (*manager, *scriptedDiscoverySession) {
 
 func waitForDiscoveryDiagnostic(t *testing.T, manager Manager, diagnostic string) Snapshot {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for {
-		snapshot, err := manager.Snapshot(context.Background())
-		if err != nil {
-			t.Fatalf("Snapshot: %v", err)
-		}
-		if snapshot.Host != nil && snapshot.Host.Discovery.Diagnostic == diagnostic {
-			return snapshot
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("Discovery Diagnostic did not become %q; last Snapshot: %#v", diagnostic, snapshot)
-		}
-		time.Sleep(time.Millisecond)
-	}
+	return waitForSnapshot(t, manager, fmt.Sprintf("Discovery Diagnostic did not become %q", diagnostic), func(snapshot Snapshot) bool {
+		return snapshot.Host != nil && snapshot.Host.Discovery.Diagnostic == diagnostic
+	})
 }
 
 func waitForDiscoveryBaseline(t *testing.T, manager Manager, established bool) Snapshot {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for {
-		snapshot, err := manager.Snapshot(context.Background())
-		if err != nil {
-			t.Fatalf("Snapshot: %v", err)
-		}
-		if snapshot.Host != nil && snapshot.Host.Discovery.BaselineEstablished == established {
-			return snapshot
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("Discovery baseline did not become %t; last Snapshot: %#v", established, snapshot)
-		}
-		time.Sleep(time.Millisecond)
-	}
+	return waitForSnapshot(t, manager, fmt.Sprintf("Discovery baseline did not become %t", established), func(snapshot Snapshot) bool {
+		return snapshot.Host != nil && snapshot.Host.Discovery.BaselineEstablished == established
+	})
 }
 
 func waitForDiscoveryCapability(t *testing.T, manager Manager, capability DiscoveryCapability) Snapshot {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for {
-		snapshot, err := manager.Snapshot(context.Background())
-		if err != nil {
-			t.Fatalf("Snapshot: %v", err)
-		}
-		if snapshot.Host != nil && reflect.DeepEqual(snapshot.Host.Discovery.Capability, capability) {
-			return snapshot
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("Discovery Capability did not become %#v; last Snapshot: %#v", capability, snapshot)
-		}
-		time.Sleep(time.Millisecond)
-	}
+	return waitForSnapshot(t, manager, fmt.Sprintf("Discovery Capability did not become %#v", capability), func(snapshot Snapshot) bool {
+		return snapshot.Host != nil && reflect.DeepEqual(snapshot.Host.Discovery.Capability, capability)
+	})
 }
 
 func waitForDiscoveryState(t *testing.T, manager Manager, state DiscoveryState) Snapshot {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for {
-		snapshot, err := manager.Snapshot(context.Background())
-		if err != nil {
-			t.Fatalf("Snapshot: %v", err)
-		}
-		if snapshot.Host != nil && snapshot.Host.Discovery.State == state {
-			return snapshot
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("Discovery did not reach %q; last Snapshot: %#v", state, snapshot)
-		}
-		time.Sleep(time.Millisecond)
-	}
+	return waitForSnapshot(t, manager, fmt.Sprintf("Discovery did not reach %q", state), func(snapshot Snapshot) bool {
+		return snapshot.Host != nil && snapshot.Host.Discovery.State == state
+	})
 }

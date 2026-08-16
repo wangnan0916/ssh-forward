@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
-	"time"
 )
 
 func TestManagerPublishesListenerLifetimes(t *testing.T) {
@@ -69,20 +68,9 @@ func TestManagerPublishesListenerLifetimeReplacement(t *testing.T) {
 
 func waitForDiscoveryRevision(t *testing.T, manager Manager, revision Revision) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for {
-		snapshot, err := manager.Snapshot(context.Background())
-		if err != nil {
-			t.Fatalf("Snapshot: %v", err)
-		}
-		if snapshot.Revision == revision {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("Snapshot revision = %d, want %d; last Snapshot: %#v", snapshot.Revision, revision, snapshot)
-		}
-		time.Sleep(time.Millisecond)
-	}
+	waitForSnapshot(t, manager, fmt.Sprintf("Snapshot revision did not reach %d", revision), func(snapshot Snapshot) bool {
+		return snapshot.Revision == revision
+	})
 }
 
 func TestManagerPublishesListenerLifetimeGraceAndEnd(t *testing.T) {
@@ -136,44 +124,30 @@ func TestManagerEndsListenerLifetimeWhenObservationSetFrozen(t *testing.T) {
 
 func waitForLifetimeStatus(t *testing.T, manager Manager, port uint16, want LifetimeStatus) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for {
-		snapshot, err := manager.Snapshot(context.Background())
-		if err != nil {
-			t.Fatalf("Snapshot: %v", err)
+	waitForSnapshot(t, manager, fmt.Sprintf("listener %d never reached %q", port, want), func(snapshot Snapshot) bool {
+		if snapshot.Host == nil {
+			return false
 		}
 		for _, verdict := range snapshot.Host.ListenerLifetimes {
 			if verdict.RemotePort == port && verdict.Status == want {
-				return
+				return true
 			}
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("listener %d never reached %q; last Lifetimes: %#v", port, want, snapshot.Host.ListenerLifetimes)
-		}
-		time.Sleep(time.Millisecond)
-	}
+		return false
+	})
 }
 
 func waitForLifetimeAbsent(t *testing.T, manager Manager, port uint16) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for {
-		snapshot, err := manager.Snapshot(context.Background())
-		if err != nil {
-			t.Fatalf("Snapshot: %v", err)
+	waitForSnapshot(t, manager, fmt.Sprintf("listener %d still tracked", port), func(snapshot Snapshot) bool {
+		if snapshot.Host == nil {
+			return false
 		}
-		found := false
 		for _, verdict := range snapshot.Host.ListenerLifetimes {
 			if verdict.RemotePort == port {
-				found = true
+				return false
 			}
 		}
-		if !found {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("listener %d still tracked; last Lifetimes: %#v", port, snapshot.Host.ListenerLifetimes)
-		}
-		time.Sleep(time.Millisecond)
-	}
+		return true
+	})
 }

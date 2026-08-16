@@ -140,21 +140,3 @@ func TestIPv6ManualForwardThroughDisposableDevelopmentHost(t *testing.T) {
 		t.Fatalf("IPv6 response = %q, want %q", got, want)
 	}
 }
-
-func waitForConnected(t *testing.T, manager core.Manager) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		snapshot, err := manager.Snapshot(context.Background())
-		if err != nil {
-			t.Fatalf("Manager Snapshot: %v", err)
-		}
-		if snapshot.Host != nil && snapshot.Host.Connection == core.ConnectionConnected {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("Development Host did not connect; last Snapshot: %#v", snapshot)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
