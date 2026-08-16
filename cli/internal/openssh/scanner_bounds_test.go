@@ -302,6 +302,9 @@ printf '%%s|%%s\n' "$status" "${#arguments_hex}"
 	}
 }
 
+// Mirrors the copy in adapter_test.go; Go's test-package isolation
+// (package openssh vs openssh_test) forces two definitions of this shell
+// quoting helper, so keep them identical.
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }

@@ -56,8 +56,12 @@ type Endpoint struct {
 	closeErr  error
 }
 
+// fallbackPortRoom is the ADR-0008 bounded fallback width: allocation tries
+// the Preferred Local Port, then each successor up to +fallbackPortRoom.
+const fallbackPortRoom = 100
+
 func OpenEndpoint(options EndpointOptions) (*Endpoint, error) {
-	lastCandidate := min(int(options.PreferredPort)+100, 65535)
+	lastCandidate := min(int(options.PreferredPort)+fallbackPortRoom, 65535)
 	for candidate := int(options.PreferredPort); candidate <= lastCandidate; candidate++ {
 		listeners, err := listenOnLoopback(uint16(candidate))
 		if err == nil {

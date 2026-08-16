@@ -108,6 +108,9 @@ func TestOpenEndpointReturnsConflictAfterLastValidPort(t *testing.T) {
 	}
 }
 
+// Mirrors endpoint.go's fallbackPortRoom (ADR-0008); see the skip below.
+const fallbackRoom = 100
+
 func availablePort(t *testing.T) uint16 {
 	t.Helper()
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -118,7 +121,9 @@ func availablePort(t *testing.T) uint16 {
 	if err := listener.Close(); err != nil {
 		t.Fatalf("release preferred port: %v", err)
 	}
-	if port > 65435 {
+	// 65535-fallbackRoom mirrors endpoint.go's fallbackPortRoom; keep the
+	// two in step so a wider fallback in the implementation fails loudly.
+	if port > 65535-fallbackRoom {
 		t.Skipf("ephemeral port %d leaves no full fallback range", port)
 	}
 	return uint16(port)

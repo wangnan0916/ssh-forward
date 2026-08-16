@@ -285,6 +285,9 @@ func TestValidateAliasRejectsUnsafeAliasBeforeOpenSSH(t *testing.T) {
 	}
 }
 
+// Mirrors the copy in scanner_bounds_test.go; Go's test-package isolation
+// (package openssh_test vs openssh) forces two definitions of this shell
+// quoting helper, so keep them identical.
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
