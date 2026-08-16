@@ -6,8 +6,9 @@ import (
 	"ssh-forward/cli/internal/proxy"
 )
 
-// HostSession and HostConnector form the true-external transport seam used by
-// the internal process-assembly package; they are not part of Manager's interface.
+// HostSession and HostConnector form the true-external transport seam composed
+// by the app package's assembly point (app.NewManager); they are not part of
+// Manager's interface.
 type HostSession interface {
 	proxy.Dialer
 	Next(context.Context) (SessionFact, error)
