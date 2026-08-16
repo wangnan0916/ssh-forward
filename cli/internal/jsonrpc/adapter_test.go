@@ -176,6 +176,29 @@ func TestSharedGoldenTranscripts(t *testing.T) {
 			}},
 		},
 		{
+			name: "policy-approve.jsonl",
+			manager: &snapshotManager{execute: func(context.Context, core.Command) (core.Outcome, error) {
+				return core.Outcome{
+					Kind:     core.OutcomeApprovalRecorded,
+					Revision: 9,
+					Forward: core.ForwardSnapshot{
+						ID:                 core.ForwardID("managed:ipv4:loopback:8080"),
+						Kind:               core.ForwardManaged,
+						RemotePort:         8080,
+						RemoteFamily:       core.FamilyIPv4,
+						AllocatedLocalPort: 8080,
+						LocalFamilies:      []core.AddressFamily{core.FamilyIPv4},
+					},
+				}, nil
+			}},
+		},
+		{
+			name: "policy-suppress.jsonl",
+			manager: &snapshotManager{execute: func(context.Context, core.Command) (core.Outcome, error) {
+				return core.Outcome{Kind: core.OutcomeSuppressionRecorded, Revision: 10}, nil
+			}},
+		},
+		{
 			name: "snapshot-discovery.jsonl",
 			manager: &snapshotManager{
 				snapshot: discoveryFixtureSnapshot(),
