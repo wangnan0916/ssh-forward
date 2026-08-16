@@ -148,6 +148,14 @@ func probeSOCKS(address netip.AddrPort) error {
 	return proxy.NegotiateMethod(connection)
 }
 
+// retryTransportError is the single construction of the retry/transport
+// SessionError. The exit translation's default branch and the connect-time
+// start-failure fallback share it, so a Reason or Disposition change lands
+// in one place.
+func retryTransportError() *core.SessionError {
+	return &core.SessionError{Disposition: core.SessionRetry, Reason: core.SessionReasonTransport}
+}
+
 // sessionErrorForExit is the single translation from an OpenSSH exit class
 // to the SessionError core consumes; both session-end and connect-time paths
 // use it, so the exit taxonomy never leaks out of this package.
@@ -160,7 +168,7 @@ func sessionErrorForExit(kind exitKind) *core.SessionError {
 	case exitHostKey:
 		return &core.SessionError{Disposition: core.SessionSuspend, Reason: core.SessionReasonHostKey}
 	default:
-		return &core.SessionError{Disposition: core.SessionRetry, Reason: core.SessionReasonTransport}
+		return retryTransportError()
 	}
 }
 

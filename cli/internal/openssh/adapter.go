@@ -81,7 +81,7 @@ func (a *Adapter) Connect(ctx context.Context, host core.HostAlias) (core.HostSe
 	if errors.As(err, &sessionError) {
 		return nil, sessionError
 	}
-	return nil, &core.SessionError{Disposition: core.SessionRetry, Reason: core.SessionReasonTransport}
+	return nil, retryTransportError()
 }
 
 func (a *Adapter) ValidateAlias(ctx context.Context, alias string) error {
