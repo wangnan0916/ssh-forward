@@ -50,6 +50,19 @@ var (
 	}).WithData(errorData{Kind: "capability_required"})
 
 	errWatchLimit = watchLimitError()
+
+	errHelloRequired = (&jrpc2.Error{
+		Code:    -32001,
+		Message: "system.hello is required before manager methods",
+	}).WithData(errorData{Kind: "hello_required"})
+
+	errIncompatibleProtocol = (&jrpc2.Error{
+		Code:    -32002,
+		Message: "incompatible protocol major",
+	}).WithData(incompatibleProtocolData{
+		Kind:      "incompatible_protocol",
+		Supported: protocolVersion{Major: protocolMajor, Minor: protocolMinor},
+	})
 )
 
 // internalError is the single construction of the wire internal-error shape.
@@ -288,7 +301,7 @@ func negotiateHello(frames channel.Channel) (negotiatedCapabilities, error) {
 		return negotiatedCapabilities{}, rejectHandshake(frames, nil, jrpc2.InvalidRequest, "invalid request", nil)
 	}
 	if request.Method != "system.hello" {
-		return negotiatedCapabilities{}, rejectHandshake(frames, request.ID, jrpc2.Code(-32001), "system.hello is required before manager methods", errorData{Kind: "hello_required"})
+		return negotiatedCapabilities{}, rejectHandshakeError(frames, request.ID, errHelloRequired)
 	}
 
 	var params helloParams
@@ -296,10 +309,7 @@ func negotiateHello(frames channel.Channel) (negotiatedCapabilities, error) {
 		return negotiatedCapabilities{}, rejectHandshakeError(frames, request.ID, errInvalidParameters)
 	}
 	if *params.Protocol.Major != protocolMajor {
-		return negotiatedCapabilities{}, rejectHandshake(frames, request.ID, jrpc2.Code(-32002), "incompatible protocol major", incompatibleProtocolData{
-			Kind:      "incompatible_protocol",
-			Supported: protocolVersion{Major: protocolMajor, Minor: protocolMinor},
-		})
+		return negotiatedCapabilities{}, rejectHandshakeError(frames, request.ID, errIncompatibleProtocol)
 	}
 	negotiated := negotiateCapabilities(params.Capabilities)
 	if err := sendResult(frames, request.ID, helloResult{
