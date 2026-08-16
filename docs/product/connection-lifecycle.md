@@ -2,7 +2,7 @@
 
 ## Host resolution
 
-A Development Host is stored by SSH alias only. The core validates and inspects effective configuration through system `ssh -G`; resolved hostname, username, identity paths, proxy settings, and addresses are not copied into a product-owned host profile.
+A Development Host is stored by SSH alias only. The OpenSSH adapter validates and inspects effective configuration through system `ssh -G` (openssh/adapter.go); resolved hostname, username, identity paths, proxy settings, and addresses are not copied into a product-owned host profile.
 
 ## Launch at login and local manager
 
@@ -12,8 +12,27 @@ Each Development Host has a **Monitor at Login** setting, enabled initially for 
 
 ## Reconnection
 
-When an SSH transport disconnects, existing Local Endpoints remain allocated so other processes cannot claim their ports, but new client connections fail promptly rather than queueing indefinitely. In-flight proxy connections receive EOF or reset promptly; a bounded post-half-close drain prevents a client that ignores upstream EOF from retaining a proxy goroutine indefinitely. Reconnection uses exponential backoff with jitter through injectable clock/random behavior. Authentication and host-key failures are classified from bounded OpenSSH diagnostics and suspend automatic retries until the user acts. Listener cleanup remains suspended until a successful reconnect produces a complete observation.
+When an SSH transport disconnects, existing Local Endpoints remain allocated so other processes cannot claim their ports, but new client connections fail promptly rather than queueing indefinitely. In-flight proxy connections receive EOF or reset promptly; a bounded post-half-close drain prevents a client that ignores upstream EOF from retaining a proxy goroutine indefinitely. Reconnection uses exponential backoff with jitter through injectable clock/random behavior. Authentication and host-key failures are classified from bounded OpenSSH diagnostics and suspend automatic retries until the user acts. Listener Lifetime verdicts freeze while no observations arrive (the tracker advances only on ObservationSets, core/actor.go) and resume with the first valid observation after reconnect, partial or degraded included; whether a session outage counts toward a Listener's disappearance grace is an open slice-5 decision (design/implementation-sequence.md).
 
 ## Browser actions
 
 The product does not probe an unknown service with HTTP requests. Browser actions are available only when the user or a Forwarding Policy declares the service protocol as HTTP or HTTPS; automatic browser opening must be an explicit policy action.
+
+## Implementation status
+
+The sections above state the full-product behavior. This map records which behaviors are enforced today and which land with later slices; it is the checklist that flips as surfaces land.
+
+Enforced today:
+
+- Effective SSH configuration is inspected through `ssh -G` and never copied into a product-owned profile (openssh/adapter.go).
+- Local Endpoints remain allocated across a transport disconnect; new client connections fail promptly; in-flight proxies end on EOF/reset with a bounded post-half-close drain (proxy/).
+- Reconnection uses exponential backoff with jitter through injectable clock/random behavior (core/manager.go, core/actor.go).
+- Authentication and host-key failures are classified from bounded OpenSSH diagnostics (core/actor.go sessionDisposition).
+- The tracker advances on every valid ObservationSet, partial and degraded included (core/actor.go).
+
+Lands with later slices:
+
+- Launch at Login, Monitor at Login, on-demand manager start, and the five-idle-minute exit: desktop and CLI phases (no desktop app and no idle-exit logic exist yet).
+- `SMAppService.mainApp` registration and manager-as-login-item placement: desktop phase.
+- Whether a session outage counts toward a Listener's disappearance grace: slice 5, recorded at design/implementation-sequence.md.
+- Browser actions and their Forwarding Policy declaration: slice 5 (policy surfaces, docs/product/discovery-and-policy.md).

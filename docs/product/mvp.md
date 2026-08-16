@@ -22,3 +22,23 @@ The first useful release replaces the developer's daily VS Code Ports workflow f
 - Accounts, cloud sync, analytics, automatic updater, and public distribution
 - Linux or Windows Local Machine releases
 - Backward compatibility or migration from the legacy utility
+
+## Implementation status
+
+The Included list is the first release's scope, not the current state. This map records which items exist today and which land with their slices (design/implementation-sequence.md):
+
+Enforced today:
+
+- Agentless Remote Listener discovery with process and working-directory context (slices 1–4).
+- Preferred local port with bounded fallback (ADR-0008, core/forward_ownership.go).
+- Manual Forward lifecycle (core/, jsonrpc/, proxy/).
+- Reconnection with classified failures and Listener Lifetime verdicts on the wire.
+
+Lands with later slices:
+
+- One SSH alias and automatic monitoring at login: desktop phase.
+- Discovery Baseline, Ask, Forward once, Ignore once, and persistent Auto-forward/Ignore policies: slice 5.
+- Directory, direct-process, and ancestor-process matchers: slice 5.
+- Managed Forward lifecycle: slice 5.
+- Menu-bar quick panel and full Dashboard with Needs Attention, Active, Available, and Ignored states: slices 6–7 (CLI then desktop).
+- Explicit HTTP/HTTPS browser actions: slice 5 (policy surfaces).
