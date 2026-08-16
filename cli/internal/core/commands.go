@@ -90,8 +90,23 @@ func (m *manager) failCommandAndRelease(id CommandID) {
 	m.workers.Done()
 }
 
+// maxCommandRecords bounds the command journal: each completed command is
+// retained so a replayed operation ID answers from memory, but the journal
+// is FIFO-bounded so a client cycling fresh operation IDs cannot grow the
+// Manager's memory without limit. Persistence replay (slice 5) will replace
+// this in-memory window with the durable journal.
+const maxCommandRecords = 1024
+
 func (m *manager) completeCommandLocked(id CommandID, command Command, outcome Outcome) {
+	if _, found := m.commands[id]; !found {
+		m.commandOrder = append(m.commandOrder, id)
+	}
 	m.commands[id] = commandRecord{command: command, outcome: cloneOutcome(outcome)}
+	if len(m.commandOrder) > maxCommandRecords {
+		oldest := m.commandOrder[0]
+		m.commandOrder = m.commandOrder[1:]
+		delete(m.commands, oldest)
+	}
 	m.failCommandLocked(id)
 }
 

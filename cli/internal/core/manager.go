@@ -30,6 +30,7 @@ type manager struct {
 	watchers         map[uint64]*snapshotStream
 	nextWatchID      uint64
 	commands         map[CommandID]commandRecord
+	commandOrder     []CommandID
 	pending          map[CommandID]*pendingCommand
 
 	ctx     context.Context
@@ -66,6 +67,7 @@ func newManager(options managerOptions) *manager {
 		forwards:         newForwardTable(),
 		watchers:         make(map[uint64]*snapshotStream),
 		commands:         make(map[CommandID]commandRecord),
+		commandOrder:     make([]CommandID, 0, maxCommandRecords),
 		pending:          make(map[CommandID]*pendingCommand),
 		hostSnapshot:     emptyHostSnapshot(options.host),
 		ctx:              ctx,
