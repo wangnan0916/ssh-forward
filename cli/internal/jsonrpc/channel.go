@@ -131,12 +131,7 @@ func (c *validatingChannel) Recv() ([]byte, error) {
 }
 
 func (c *validatingChannel) reject(code jrpc2.Code, message string, result error) error {
-	err := sendError(c.Channel, nil, code, message, nil)
-	_ = c.Channel.Close()
-	if err != nil {
-		return err
-	}
-	return result
+	return rejectAndClose(c.Channel, c.Channel.Close, nil, code, message, nil, result)
 }
 
 // envelopeShape is the JSON-RPC envelope decoded once: which members are
@@ -222,12 +217,7 @@ func (c *pendingChannel) Recv() ([]byte, error) {
 	}
 	if isNotification(message) {
 		c.release()
-		err := sendError(c.Channel, nil, jrpc2.InvalidRequest, "notifications are not negotiated", nil)
-		_ = c.Close()
-		if err != nil {
-			return nil, err
-		}
-		return nil, errNotificationRejected
+		return nil, rejectAndClose(c.Channel, c.Close, nil, jrpc2.InvalidRequest, "notifications are not negotiated", nil, errNotificationRejected)
 	}
 	return message, nil
 }

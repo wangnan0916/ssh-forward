@@ -374,12 +374,22 @@ func validHelloParams(params helloParams) bool {
 }
 
 func rejectHandshake(frames channel.Channel, id json.RawMessage, code jrpc2.Code, message string, data any) error {
+	return rejectAndClose(frames, frames.Close, id, code, message, data, errHandshakeRejected)
+}
+
+// rejectAndClose sends a wire error, closes the channel through the given
+// closer (each channel layer closes itself: pendingChannel must run its
+// closeOnce), and returns the caller's error. Every rejection path — the
+// validating channel, the pending channel's notification rejection, and the
+// handshake — shares this one close-after-error protocol, so a protocol
+// tweak cannot drift between them.
+func rejectAndClose(frames channel.Channel, closeChannel func() error, id json.RawMessage, code jrpc2.Code, message string, data any, result error) error {
 	err := sendError(frames, id, code, message, data)
-	_ = frames.Close()
+	_ = closeChannel()
 	if err != nil {
 		return err
 	}
-	return errHandshakeRejected
+	return result
 }
 
 // rejectHandshakeError rejects the handshake with a prebuilt wire error, so
@@ -387,7 +397,7 @@ func rejectHandshake(frames channel.Channel, id json.RawMessage, code jrpc2.Code
 // invalid-parameters sentinel) instead of re-typing its code, message, and
 // kind literal.
 func rejectHandshakeError(frames channel.Channel, id json.RawMessage, err *jrpc2.Error) error {
-	return rejectHandshake(frames, id, err.Code, err.Message, err.Data)
+	return rejectAndClose(frames, frames.Close, id, err.Code, err.Message, err.Data, errHandshakeRejected)
 }
 
 func sendResult(frames channel.Channel, id json.RawMessage, result any) error {
