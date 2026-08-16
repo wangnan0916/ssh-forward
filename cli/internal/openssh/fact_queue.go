@@ -8,18 +8,20 @@ import (
 
 const maxQueuedSessionFacts = 8
 
-// sessionFactQueue is a bounded, drop-oldest fact buffer between the scanner
-// and the Forwarding Session consumer. Transport guarantee: the first
-// ObservationSet is never evicted — core's Discovery Baseline is the first
-// complete observation after connecting, and dropping it would silently
-// delay baseline establishment past a queue overflow. Every later set may
-// be replaced by newer evidence.
+// sessionFactQueue is a bounded fact buffer between the scanner and the
+// Forwarding Session consumer. On overflow it replaces the newest pending
+// fact rather than dropping the oldest, so the head — where the first
+// ObservationSet sits — survives. Transport guarantee: that first
+// ObservationSet is never evicted, because core's Discovery Baseline is the
+// first complete observation after connecting and dropping it would silently
+// delay baseline establishment past a queue overflow. Every later set may be
+// replaced by newer evidence.
 type sessionFactQueue struct {
 	mu                sync.Mutex
 	items             []core.SessionFact
 	notify            chan struct{}
 	closed            bool
-	baselineDelivered bool
+	firstSetDelivered bool
 	terminalDiscovery *core.DiscoveryChange
 }
 
@@ -47,7 +49,7 @@ func (q *sessionFactQueue) push(fact core.SessionFact) {
 		return
 	}
 	last := len(q.items) - 1
-	if !q.baselineDelivered {
+	if !q.firstSetDelivered {
 		if _, protected := q.items[last].(core.ObservationSet); protected {
 			// Keep the first ObservationSet (the future Discovery Baseline)
 			// even if it would be evicted: overflow may drop it, but the
@@ -75,9 +77,9 @@ func (q *sessionFactQueue) pop() (core.SessionFact, bool, bool) {
 	copy(q.items, q.items[1:])
 	q.items = q.items[:len(q.items)-1]
 	if _, ok := fact.(core.ObservationSet); ok {
-		// From here on, overflow may drop the oldest ObservationSet freely;
-		// the transport guarantee applies to the first one only.
-		q.baselineDelivered = true
+		// From here on, overflow may replace the newest ObservationSet
+		// freely; the transport guarantee applies to the first one only.
+		q.firstSetDelivered = true
 	}
 	if len(q.items) != 0 {
 		q.signalLocked()
