@@ -36,8 +36,16 @@ previous_fingerprint=''
 listener_records=''
 process_records=''
 process_capability=unavailable
-scans_since_attribution=30
+# Cadence family: interval is the scan cadence in seconds (core counts
+# Listener Lifetime grace in scan cycles, 3 cycles ~= 6s at this value);
+# attribution runs on fingerprint change, on bounded backoff while process
+# capability is partial (5 scans ~= 10s), and on slow periodic refresh
+# (30 scans ~= 60s); the fallback chain tries at most 3 source degradations.
+# scans_since_attribution starts at the refresh interval so the first
+# attribution happens after the same delay as every refresh, and stays in
+# step with attribution_interval by construction.
 attribution_interval=30
+scans_since_attribution=$attribution_interval
 listener_limit=256
 # One listener line per observed socket, so the per-scan socket budget is
 # the same cap applied to listener records.
