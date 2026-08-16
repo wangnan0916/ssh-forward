@@ -34,7 +34,10 @@ type ListenerLifetimeSnapshot struct {
 }
 
 // defaultListenerGraceCycles is the disappearance grace period in observation
-// cycles for a Listener with no Socket Identity evidence.
+// cycles for a Listener with no Socket Identity evidence. The cycle cadence
+// is the scanner's scan interval (2s in scanner.sh), so the grace lasts
+// roughly 3 × 2s ≈ 6s; core deliberately counts cycles rather than wall time
+// to keep verdicts deterministic and clock-free.
 const defaultListenerGraceCycles = 3
 
 type listenerLifetime struct {

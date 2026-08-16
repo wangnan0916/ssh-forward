@@ -2,6 +2,8 @@
 # Every expansion below has a default and fallible probes degrade their output.
 SSH_FORWARD_SCANNER_VERSION=1
 interval=2
+# scan cadence in seconds; core counts Listener Lifetime grace in scan
+# cycles (default 3 cycles), so the effective grace is about 6s at this value
 sequence=0
 previous_fingerprint=''
 listener_records=''
