@@ -510,12 +510,27 @@ func parseDecimalIdentity(value string) (string, error) {
 	return value, nil
 }
 
-func decodeText(value string, maximum int, allowEmpty bool) (string, error) {
+// decodeBoundedHex decodes one hex-encoded frame field, enforcing the
+// envelope invariant shared by every field decoder: the hex text is even and
+// decodes to at most maximum bytes. Field-specific policy (absent vs empty,
+// UTF-8, NUL separation) stays in the callers.
+func decodeBoundedHex(value string, maximum int) ([]byte, error) {
 	if len(value) > maximum*2 || len(value)%2 != 0 {
-		return "", errInvalidScannerFrame
+		return nil, errInvalidScannerFrame
 	}
 	decoded, err := hex.DecodeString(value)
-	if err != nil || len(decoded) > maximum || (!allowEmpty && len(decoded) == 0) || !utf8.Valid(decoded) || strings.IndexByte(string(decoded), 0) >= 0 {
+	if err != nil || len(decoded) > maximum {
+		return nil, errInvalidScannerFrame
+	}
+	return decoded, nil
+}
+
+func decodeText(value string, maximum int, allowEmpty bool) (string, error) {
+	decoded, err := decodeBoundedHex(value, maximum)
+	if err != nil {
+		return "", err
+	}
+	if (!allowEmpty && len(decoded) == 0) || !utf8.Valid(decoded) || strings.IndexByte(string(decoded), 0) >= 0 {
 		return "", errInvalidScannerFrame
 	}
 	return string(decoded), nil
@@ -524,21 +539,19 @@ func decodeText(value string, maximum int, allowEmpty bool) (string, error) {
 func encodedMetadataSize(values ...string) (int, error) {
 	total := 0
 	for _, value := range values {
-		if len(value) > maxProcessTextBytes*2 || len(value)%2 != 0 {
-			return 0, errInvalidScannerFrame
+		decoded, err := decodeBoundedHex(value, maxProcessTextBytes)
+		if err != nil {
+			return 0, err
 		}
-		total += len(value) / 2
+		total += len(decoded)
 	}
 	return total, nil
 }
 
 func decodeMetadataText(value string) (string, bool, error) {
-	if len(value) > maxProcessTextBytes*2 || len(value)%2 != 0 {
-		return "", false, errInvalidScannerFrame
-	}
-	decoded, err := hex.DecodeString(value)
-	if err != nil || len(decoded) > maxProcessTextBytes {
-		return "", false, errInvalidScannerFrame
+	decoded, err := decodeBoundedHex(value, maxProcessTextBytes)
+	if err != nil {
+		return "", false, err
 	}
 	if len(decoded) == 0 || !utf8.Valid(decoded) || strings.IndexByte(string(decoded), 0) >= 0 {
 		return "", false, nil
@@ -547,12 +560,9 @@ func decodeMetadataText(value string) (string, bool, error) {
 }
 
 func decodeArguments(value string) ([]string, bool, error) {
-	if len(value) > maxProcessTextBytes*2 || len(value)%2 != 0 {
-		return nil, false, errInvalidScannerFrame
-	}
-	decoded, err := hex.DecodeString(value)
-	if err != nil || len(decoded) > maxProcessTextBytes {
-		return nil, false, errInvalidScannerFrame
+	decoded, err := decodeBoundedHex(value, maxProcessTextBytes)
+	if err != nil {
+		return nil, false, err
 	}
 	if len(decoded) == 0 || !utf8.Valid(decoded) {
 		return nil, false, nil
