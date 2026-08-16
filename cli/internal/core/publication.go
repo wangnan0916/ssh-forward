@@ -179,13 +179,21 @@ func (s *snapshotStream) Close() error {
 	return nil
 }
 
-func (m *manager) closeSnapshotStream(id uint64, stream *snapshotStream, terminal error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// closeSnapshotStreamLocked tears down one stream while the caller holds
+// the Manager lock: remove it from the watcher registry and finish it with
+// the terminal error. finish's guard keeps the per-stream single-terminal
+// guarantee regardless of caller.
+func (m *manager) closeSnapshotStreamLocked(id uint64, stream *snapshotStream, terminal error) {
 	if current, found := m.watchers[id]; found && current == stream {
 		delete(m.watchers, id)
 	}
 	stream.finish(terminal)
+}
+
+func (m *manager) closeSnapshotStream(id uint64, stream *snapshotStream, terminal error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.closeSnapshotStreamLocked(id, stream, terminal)
 }
 
 func (s *snapshotStream) finish(terminal error) {

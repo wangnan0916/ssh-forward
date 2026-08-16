@@ -354,8 +354,7 @@ func (m *manager) Close(ctx context.Context) error {
 		m.closed = true
 		m.cancel()
 		for id, stream := range m.watchers {
-			delete(m.watchers, id)
-			stream.finish(&DomainError{Kind: ErrorManagerClosed, Retryable: true})
+			m.closeSnapshotStreamLocked(id, stream, &DomainError{Kind: ErrorManagerClosed, Retryable: true})
 		}
 	}
 	forwards := m.forwards.owners()
