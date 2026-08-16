@@ -174,8 +174,17 @@ func TestForwardAddJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("forward add --json: %v", err)
 	}
-	if !strings.Contains(output, `"kind":"forward_added"`) || !strings.Contains(output, `"revision":6`) {
-		t.Fatalf("forward add --json output = %q", output)
+	// The --json shape is the wire shape (jsonrpc.MarshalOutcome): the
+	// forward object carries local_families exactly like the IPC outcome.
+	for _, want := range []string{
+		`"kind":"forward_added"`,
+		`"revision":6`,
+		`"forward":{`,
+		`"local_families"`,
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("forward add --json missing %q: %s", want, output)
+		}
 	}
 }
 
@@ -288,8 +297,17 @@ func TestPolicyListJSON(t *testing.T) {
 	if err := app.Run(context.Background(), []string{"policy", "list", "--json"}); err != nil {
 		t.Fatalf("policy list --json: %v", err)
 	}
-	if output := stdout.String(); !strings.Contains(output, `"ID":"web"`) || !strings.Contains(output, `"Action":"auto_forward"`) {
-		t.Fatalf("policy list --json output = %q", output)
+	// --json emits the policies.jsonc file shape (app.MarshalPolicies):
+	// snake_case keys and the versioned schema, not Go field names.
+	output := stdout.String()
+	for _, want := range []string{
+		`"schema_version":1`,
+		`"id":"web"`,
+		`"action":"auto_forward"`,
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("policy list --json missing %q: %s", want, output)
+		}
 	}
 }
 

@@ -131,6 +131,48 @@ func translateCondition(entry fileCondition) (core.PolicyCondition, error) {
 	return condition, nil
 }
 
+// MarshalPolicies encodes policies in the policies.jsonc file shape
+// (ADR-0005): the versioned file schema is the single contract for the
+// policy file, the CLI's --json output, and the desktop client.
+func MarshalPolicies(policies []core.ForwardingPolicy) ([]byte, error) {
+	file := policyFile{
+		SchemaVersion: policiesSchemaVersion,
+		Policies:      make([]filePolicy, 0, len(policies)),
+	}
+	for _, policy := range policies {
+		file.Policies = append(file.Policies, reversePolicy(policy))
+	}
+	return json.Marshal(file)
+}
+
+func reversePolicy(policy core.ForwardingPolicy) filePolicy {
+	conditions := make([]fileCondition, 0, len(policy.Conditions))
+	for _, condition := range policy.Conditions {
+		conditions = append(conditions, reverseCondition(condition))
+	}
+	return filePolicy{
+		ID:         policy.ID,
+		Priority:   policy.Priority,
+		Action:     string(policy.Action),
+		Conditions: conditions,
+	}
+}
+
+func reverseCondition(condition core.PolicyCondition) fileCondition {
+	var out fileCondition
+	if condition.RemotePorts != nil {
+		out.RemotePorts = &filePortRange{From: condition.RemotePorts.From, To: condition.RemotePorts.To}
+	}
+	if condition.BindScope != nil {
+		scope := string(*condition.BindScope)
+		out.BindScope = &scope
+	}
+	out.Executable = condition.Executable
+	out.AncestorExecutable = condition.AncestorExecutable
+	out.WorkingDirectoryTree = condition.WorkingDirectoryTree
+	return out
+}
+
 // FilePolicySource returns a policy source for the Manager's reconciliation
 // seam: each call rereads policies.jsonc (the Manager refreshes on every
 // observation generation, roughly the scanner's cadence), so external edits

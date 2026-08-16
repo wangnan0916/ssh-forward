@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -217,17 +216,7 @@ func (a *App) runListenerSuppress(ctx context.Context, args []string) error {
 
 func (a *App) writeOutcome(outcome core.Outcome, jsonOutput bool) error {
 	if jsonOutput {
-		encoded, err := json.Marshal(map[string]any{
-			"kind":     string(outcome.Kind),
-			"revision": uint64(outcome.Revision),
-			"forward": map[string]any{
-				"id":                   string(outcome.Forward.ID),
-				"kind":                 string(outcome.Forward.Kind),
-				"remote_port":          outcome.Forward.RemotePort,
-				"remote_family":        string(outcome.Forward.RemoteFamily),
-				"allocated_local_port": outcome.Forward.AllocatedLocalPort,
-			},
-		})
+		encoded, err := jsonrpc.MarshalOutcome(outcome)
 		if err != nil {
 			return err
 		}

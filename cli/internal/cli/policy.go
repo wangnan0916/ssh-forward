@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -40,7 +39,7 @@ func (a *App) runPolicyList(args []string) error {
 		return err
 	}
 	if *jsonOutput {
-		encoded, err := json.Marshal(policies)
+		encoded, err := app.MarshalPolicies(policies)
 		if err != nil {
 			return err
 		}

@@ -167,6 +167,13 @@ func marshalManagerError(err error) error {
 	})
 }
 
+// MarshalOutcome encodes an Outcome in the wire shape (the sibling of
+// MarshalSnapshot): CLI --json outcomes and the IPC protocol stay one
+// contract for script and desktop clients.
+func MarshalOutcome(outcome core.Outcome) ([]byte, error) {
+	return json.Marshal(marshalOutcome(outcome))
+}
+
 func marshalOutcome(outcome core.Outcome) wireOutcome {
 	return wireOutcome{
 		Kind:     string(outcome.Kind),
