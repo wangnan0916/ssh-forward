@@ -2,17 +2,29 @@
 # Every expansion below has a default and fallible probes degrade their output.
 SSH_FORWARD_SCANNER_VERSION=1
 # Wire frames on stdout, one per line, tab-separated (field 0 is the literal
-# "SF1", field 1 the frame type):
-#   B  boot frame, 12 fields: 2 sequence, 3 boot_hex, 4 network_hex,
-#      5 listener_capability, 6 socket_capability, 7 process_capability,
-#      8 listener_limit, 9 socket_record_limit, 10 process_record_limit,
-#      11 metadata_bytes_limit
-#   L  listener record: 2 sequence, 3 listener_record text (tab-embedded)
-#   P  process record: 2 sequence, 3 process_record text (tab-embedded)
-#   E  end frame: 2 sequence
-# The parser in scanner.go (parseScannerFrame) consumes exactly this layout;
-# extend both sides together. The boot frame's checksum is computed over
-# this file at embed time, so a layout change here is always visible there.
+# "SF1", field 1 the frame type). This header is the single schema statement
+# for the frame layout; the parser in scanner.go ((*scannerParser).accept)
+# consumes exactly this, so extend both sides together. The boot frame's
+# checksum is computed over this file at embed time, so a layout change here
+# is always visible there.
+#   B  boot frame, 12 fields:
+#       2 sequence, 3 boot_hex, 4 network_hex, 5 listener_capability,
+#       6 socket_capability, 7 process_capability, 8 listener_limit,
+#       9 socket_record_limit, 10 process_record_limit, 11 metadata_bytes_limit
+#   L  listener record, 7 fields: 2 sequence, then the listener record's
+#      4 fields tab-embedded:
+#       3 family (ipv4|ipv6), 4 bind_scope (loopback|wildcard),
+#       5 remote_port (hex, nonzero), 6 inode (decimal, "0" when
+#       unattributed)
+#   P  process record, 10 fields: 2 sequence, then the process record's
+#      7 fields tab-embedded:
+#       3 inode (decimal, nonzero, must have appeared in an L frame),
+#       4 owner (decimal), 5 depth (decimal, below the parser's 16),
+#       6 pid (decimal), 7 executable_hex, 8 working_directory_hex,
+#       9 arguments_hex (hex, up to 8192 chars each, i.e. 4096 bytes;
+#       arguments_hex splits on NUL; the sum is bounded by the boot frame's
+#       metadata_bytes_limit)
+#   E  end frame, 2 fields: 2 sequence
 interval=2
 # scan cadence in seconds; core counts Listener Lifetime grace in scan
 # cycles (default 3 cycles), so the effective grace is about 6s at this value
