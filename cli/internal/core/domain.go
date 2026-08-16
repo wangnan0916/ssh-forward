@@ -24,6 +24,31 @@ const (
 	FamilyIPv6 AddressFamily = "ipv6"
 )
 
+// ConnectionState is the Forwarding Session's life cycle as the mirror and
+// the Snapshot expose it. Transition table — who may write which state (the
+// only two legal writers are the Manager mirror under the Manager lock and
+// the host actor under its own lock):
+//
+//	disconnected → connecting: manager.beginConnectionLocked patches the
+//	    mirror on a command while the actor is unarmed (armed() guard). The
+//	    actor's startIfNeeded then re-states Connecting in its own state and
+//	    arms; both writes share the armed() projection as the single guard.
+//	connecting → connected: the actor's connect loop after the session
+//	    passes readiness (a.state.Connection = ConnectionConnected).
+//	connected → connecting: the actor after a retryable session end
+//	    (sessionDisposition == SessionRetry); the mirror follows via the
+//	    publication callback.
+//	* → disconnected: the actor's terminal paths — non-retryable session
+//	    end and publishConnectionFailure. The actor always writes
+//	    active=false in the same critical section, so the mirror's
+//	    disconnected state is equivalent to the actor being unarmed
+//	    (round-6 C1 invariant).
+//
+// Commands never write Connection directly: they declare through
+// beginConnectionLocked, which the three constraints of lock order,
+// same-revision outcome, and no-wait arming keep as the one Manager-side
+// write (manager.go). SessionDisposition (below) collapses suspend/closed
+// into the same terminal write.
 type ConnectionState string
 
 const (
