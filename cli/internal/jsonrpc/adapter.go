@@ -190,6 +190,15 @@ func marshalSnapshot(snapshot core.Snapshot) wireSnapshot {
 	for observationIndex, observation := range host.ListenerObservations {
 		observations[observationIndex] = marshalListenerObservation(observation)
 	}
+	lifetimes := make([]wireListenerLifetime, len(host.ListenerLifetimes))
+	for lifetimeIndex, lifetime := range host.ListenerLifetimes {
+		lifetimes[lifetimeIndex] = wireListenerLifetime{
+			Family:     string(lifetime.Family),
+			BindScope:  string(lifetime.BindScope),
+			RemotePort: lifetime.RemotePort,
+			Status:     string(lifetime.Status),
+		}
+	}
 	return wireSnapshot{
 		Revision: uint64(snapshot.Revision),
 		Host: &wireHost{
@@ -197,6 +206,7 @@ func marshalSnapshot(snapshot core.Snapshot) wireSnapshot {
 			Connection:           string(host.Connection),
 			Discovery:            marshalDiscovery(host.Discovery),
 			ListenerObservations: observations,
+			ListenerLifetimes:    lifetimes,
 			Forwards:             forwards,
 		},
 	}

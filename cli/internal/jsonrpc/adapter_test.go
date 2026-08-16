@@ -444,6 +444,12 @@ func discoveryFixtureSnapshot() core.Snapshot {
 					Arguments:        []string{"python3", "app.py"},
 				}}}},
 			}},
+			ListenerLifetimes: []core.ListenerLifetimeSnapshot{{
+				Family:     core.FamilyIPv4,
+				BindScope:  core.BindLoopback,
+				RemotePort: 8080,
+				Status:     core.LifetimeContinuous,
+			}},
 			Forwards: []core.ForwardSnapshot{},
 		},
 	}
@@ -463,7 +469,7 @@ func TestServeReturnsCompleteManagerSnapshot(t *testing.T) {
 	session := newTestSessionWithManager(t, manager)
 	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
 	response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.snapshot","params":{"scope":{"kind":"all"}}}`)
-	want := `{"jsonrpc":"2.0","id":"2","result":{"snapshot":{"revision":9,"host":{"alias":"development","connection":"connected","discovery":{"state":"degraded","capability":{"remote_listeners":"full","socket_identity":"full","process_metadata":"partial"},"baseline_established":true,"scanner_version":1,"scanner_checksum":"abc123","diagnostic":"process_metadata_partial"},"listener_observations":[{"family":"ipv4","bind_scope":"loopback","remote_port":8080,"socket_identities":["socket:one"],"process_chains":[{"processes":[{"pid":42,"executable":"/usr/bin/python3","working_directory":"/workspace","arguments":["python3","app.py"]}]}]}],"forwards":[{"id":"manual:operation-1","kind":"manual","remote_port":8080,"remote_family":"ipv4","allocated_local_port":8081,"local_families":["ipv4","ipv6"]}]}}}}`
+	want := `{"jsonrpc":"2.0","id":"2","result":{"snapshot":{"revision":9,"host":{"alias":"development","connection":"connected","discovery":{"state":"degraded","capability":{"remote_listeners":"full","socket_identity":"full","process_metadata":"partial"},"baseline_established":true,"scanner_version":1,"scanner_checksum":"abc123","diagnostic":"process_metadata_partial"},"listener_observations":[{"family":"ipv4","bind_scope":"loopback","remote_port":8080,"socket_identities":["socket:one"],"process_chains":[{"processes":[{"pid":42,"executable":"/usr/bin/python3","working_directory":"/workspace","arguments":["python3","app.py"]}]}]}],"listener_lifetimes":[{"family":"ipv4","bind_scope":"loopback","remote_port":8080,"status":"continuous"}],"forwards":[{"id":"manual:operation-1","kind":"manual","remote_port":8080,"remote_family":"ipv4","allocated_local_port":8081,"local_families":["ipv4","ipv6"]}]}}}}`
 	assertJSONEqual(t, response, []byte(want))
 }
 
