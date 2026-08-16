@@ -13,11 +13,35 @@ The private MVP targets one Apple Silicon Mac running macOS Tahoe and one Linux 
 ## Design
 
 - [Domain language](./CONTEXT.md)
-- [Private MVP](./docs/product/mvp.md)
 - [Implementation sequence](./docs/design/implementation-sequence.md)
-- [Transport spike verdict](./docs/design/transport-spike-verdict.md)
 - [Core Manager Interface](./docs/design/core-interface.md)
+- [JSON-RPC protocol](./docs/design/ipc-protocol.md)
+- [Testing strategy](./docs/design/testing-strategy.md)
+- [Transport spike verdict](./docs/design/transport-spike-verdict.md)
 - [ADRs](./docs/adr/)
+
+### Product
+
+- [Private MVP](./docs/product/mvp.md)
+- [Connection lifecycle](./docs/product/connection-lifecycle.md)
+- [Remote discovery](./docs/product/remote-discovery.md)
+- [Discovery and policy behavior](./docs/product/discovery-and-policy.md)
+- [Diagnostics and recovery](./docs/product/diagnostics-and-recovery.md)
+- [Performance budget](./docs/product/performance-budget.md)
+- [CLI and state](./docs/product/cli-and-state.md)
+- [Desktop experience](./docs/product/desktop-experience.md)
+- [Platform support](./docs/product/platform-support.md)
+- [Repository and releases](./docs/product/repository-and-releases.md)
+
+### Research
+
+- [Library options](./docs/research/library-options.md)
+- [IPC library options](./docs/research/ipc-library-options.md)
+- [Codinn Tunnel competitive analysis](./docs/research/codinn-tunnel-competitive-analysis.md)
+- [VS Code port forwarding](./docs/research/vscode-port-forwarding.md)
+
+### Security
+
 - [Threat model](./docs/security/threat-model.md)
 
 ## Development
