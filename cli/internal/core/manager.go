@@ -67,14 +67,9 @@ func newManager(options managerOptions) *manager {
 		watchers:         make(map[uint64]*snapshotStream),
 		commands:         make(map[CommandID]commandRecord),
 		pending:          make(map[CommandID]*pendingCommand),
-		hostSnapshot: HostSnapshot{
-			Alias:                options.host,
-			Connection:           ConnectionDisconnected,
-			Discovery:            stoppedDiscovery(),
-			ListenerObservations: make([]ListenerObservation, 0),
-		},
-		ctx:    ctx,
-		cancel: cancel,
+		hostSnapshot:     emptyHostSnapshot(options.host),
+		ctx:              ctx,
+		cancel:           cancel,
 	}
 	publishHost := m.publishHostState
 	if options.publishHost != nil {
@@ -93,17 +88,32 @@ func newManager(options managerOptions) *manager {
 	return m
 }
 
-// publishHostState is the only writer of the Manager's hostSnapshot copy; the
-// hostActor calls it after every per-host transition it owns.
-// beginConnectionLocked marks a disconnected host as Connecting without
-// publishing: the caller publishes once with the command outcome, so the
-// transition is visible in the same revision as the command result. The
-// hostActor then takes over state publication from Connected onward.
+// emptyHostSnapshot is the single construction of the pre-connection state
+// shape: the Manager seeds its mirror with it, and the hostActor's internal
+// state starts from it, so the two cannot drift in initial shape.
+func emptyHostSnapshot(host HostAlias) HostSnapshot {
+	return HostSnapshot{
+		Alias:                host,
+		Connection:           ConnectionDisconnected,
+		Discovery:            stoppedDiscovery(),
+		ListenerObservations: make([]ListenerObservation, 0),
+	}
+}
+
+// publishHostState is the actor's publication path into the Manager's mirror:
+// it replaces the mirror wholesale and publishes. beginConnectionLocked is the
+// command path's declaration — it patches the mirror to Connecting under the
+// Manager lock and lets the caller publish once with the command outcome, so
+// the transition is visible in the same revision as the command result. Both
+// write under the Manager lock and both treat HostSnapshot as the single
+// state structure; the actor takes over state evolution from Connected on.
 func (m *manager) beginConnectionLocked() {
 	if m.hostSnapshot.Connection != ConnectionDisconnected {
 		return
 	}
-	m.hostSnapshot.Connection = ConnectionConnecting
+	declared := m.hostSnapshot
+	declared.Connection = ConnectionConnecting
+	m.hostSnapshot = declared
 }
 
 func (m *manager) publishHostState(state HostSnapshot) {

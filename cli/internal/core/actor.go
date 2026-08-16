@@ -43,10 +43,7 @@ type hostActor struct {
 	mu                      sync.Mutex
 	active                  bool
 	session                 hostSession
-	connection              ConnectionState
-	discovery               DiscoverySnapshot
-	listenerObservations    []ListenerObservation
-	listenerLifetimes       []ListenerLifetimeSnapshot
+	state                   HostSnapshot
 	lastObservationSequence uint64
 
 	tracker       *lifetimeTracker
@@ -63,8 +60,7 @@ func newHostActor(options hostActorOptions) *hostActor {
 		retryDelay: options.retryDelay,
 		retryWait:  options.retryWait,
 		ctx:        options.ctx,
-		connection: ConnectionDisconnected,
-		discovery:  stoppedDiscovery(),
+		state:      emptyHostSnapshot(options.host),
 		tracker:    newLifetimeTracker(defaultListenerGraceCycles),
 		done:       make(chan struct{}),
 	}
@@ -83,7 +79,7 @@ func (a *hostActor) startIfNeeded() {
 		return
 	}
 	a.active = true
-	a.connection = ConnectionConnecting
+	a.state.Connection = ConnectionConnecting
 	a.done = make(chan struct{})
 	go a.run()
 }
@@ -137,8 +133,8 @@ func (a *hostActor) connect() {
 		}
 		a.session = session
 		a.dialer.Set(session)
-		a.connection = ConnectionConnected
-		a.discovery = startingDiscovery()
+		a.state.Connection = ConnectionConnected
+		a.state.Discovery = startingDiscovery()
 		a.lastObservationSequence = 0
 		a.publishLocked()
 		a.mu.Unlock()
@@ -151,12 +147,12 @@ func (a *hostActor) connect() {
 		a.session = nil
 		a.dialer.Set(nil)
 		if disposition == SessionRetry {
-			a.connection = ConnectionConnecting
+			a.state.Connection = ConnectionConnecting
 		} else {
-			a.connection = ConnectionDisconnected
+			a.state.Connection = ConnectionDisconnected
 			a.active = false
 		}
-		a.discovery = stoppedDiscovery()
+		a.state.Discovery = stoppedDiscovery()
 		a.publishLocked()
 		a.mu.Unlock()
 		if disposition != SessionRetry || !a.waitToReconnect(retryAttempt) {
@@ -211,13 +207,13 @@ func (a *hostActor) applyObservationSet(set ObservationSet) {
 	degradeTruncatedCapability(&capability, truncated)
 	complete := capability.RemoteListeners == CapabilityFull
 	if !complete {
-		observations, truncated = mergeBoundedListenerObservations(a.listenerObservations, observations)
+		observations, truncated = mergeBoundedListenerObservations(a.state.ListenerObservations, observations)
 		degradeTruncatedCapability(&capability, truncated)
 	}
 	discovery := DiscoverySnapshot{
 		State:               discoveryStateForCapability(capability),
 		Capability:          capability,
-		BaselineEstablished: complete || a.discovery.BaselineEstablished,
+		BaselineEstablished: complete || a.state.Discovery.BaselineEstablished,
 		ScannerVersion:      set.ScannerVersion,
 		// ScannerChecksum is evidence metadata: the scanner parser stamps
 		// each ObservationSet with the embedded script's digest, so clients
@@ -235,9 +231,9 @@ func (a *hostActor) applyObservationSet(set ObservationSet) {
 	// threshold changes a verdict. publishLocked deduplicates the no-change
 	// publication, so lifetime progression and publish suppression coexist.
 	verdicts := a.tracker.advance(observations)
-	a.discovery = discovery
-	a.listenerObservations = observations
-	a.listenerLifetimes = verdicts
+	a.state.Discovery = discovery
+	a.state.ListenerObservations = observations
+	a.state.ListenerLifetimes = verdicts
 	a.publishLocked()
 }
 func (a *hostActor) applyDiscoveryChange(change DiscoveryChange) {
@@ -248,11 +244,11 @@ func (a *hostActor) applyDiscoveryChange(change DiscoveryChange) {
 		a.failDiscoveryLocked("invalid_session_fact")
 		return
 	}
-	discovery := a.discovery
+	discovery := a.state.Discovery
 	discovery.State = change.State
 	discovery.Capability = change.Capability
 	discovery.Diagnostic = change.Diagnostic
-	a.discovery = discovery
+	a.state.Discovery = discovery
 	a.publishLocked()
 }
 
@@ -263,10 +259,10 @@ func (a *hostActor) applyInvalidDiscoveryFact() {
 }
 
 func (a *hostActor) failDiscoveryLocked(diagnostic string) {
-	discovery := a.discovery
+	discovery := a.state.Discovery
 	discovery.State = DiscoveryFailed
 	discovery.Diagnostic = diagnostic
-	a.discovery = discovery
+	a.state.Discovery = discovery
 	a.publishLocked()
 }
 
@@ -274,8 +270,8 @@ func (a *hostActor) publishConnectionFailure() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.active = false
-	a.connection = ConnectionDisconnected
-	a.discovery = stoppedDiscovery()
+	a.state.Connection = ConnectionDisconnected
+	a.state.Discovery = stoppedDiscovery()
 	a.publishLocked()
 }
 
@@ -286,18 +282,11 @@ func (a *hostActor) publishConnectionFailure() {
 // free. The tracker's unconditional advance above is unaffected: it is a side
 // effect on the actor, not a publication.
 func (a *hostActor) publishLocked() {
-	next := HostSnapshot{
-		Alias:                a.host,
-		Connection:           a.connection,
-		Discovery:            a.discovery,
-		ListenerObservations: a.listenerObservations,
-		ListenerLifetimes:    a.listenerLifetimes,
-	}
-	if reflect.DeepEqual(a.lastPublished, next) {
+	if reflect.DeepEqual(a.lastPublished, a.state) {
 		return
 	}
-	a.lastPublished = next
-	a.publish(next)
+	a.lastPublished = a.state
+	a.publish(a.state)
 }
 
 func (a *hostActor) waitToReconnect(attempt int) bool {
