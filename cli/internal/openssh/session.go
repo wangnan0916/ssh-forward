@@ -51,26 +51,14 @@ func (s *Session) DialContext(ctx context.Context, target netip.AddrPort) (proxy
 }
 
 func (s *Session) Next(ctx context.Context) (core.SessionFact, error) {
-	for {
-		fact, found, scannerClosed := s.facts.pop()
-		if found {
-			return fact, nil
-		}
-		if scannerClosed {
-			select {
-			case <-s.done:
-				return nil, s.terminalError()
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
-		}
-		select {
-		case <-s.facts.notify:
-		case <-s.done:
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
+	fact, drained, err := s.facts.next(ctx, s.done)
+	if err != nil {
+		return nil, err
 	}
+	if drained {
+		return nil, s.terminalError()
+	}
+	return fact, nil
 }
 
 func (s *Session) Close(ctx context.Context) error {

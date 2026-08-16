@@ -1,6 +1,7 @@
 package openssh
 
 import (
+	"context"
 	"sync"
 
 	"ssh-forward/cli/internal/core"
@@ -16,6 +17,10 @@ const maxQueuedSessionFacts = 8
 // first complete observation after connecting and dropping it would silently
 // delay baseline establishment past a queue overflow. Every later set may be
 // replaced by newer evidence.
+//
+// The consumer surface is next: one call that blocks until a fact is
+// available or the queue is drained and closed, so the blocking protocol
+// (wakeup channel, closed interpretation) lives here, not in the Session.
 type sessionFactQueue struct {
 	mu                sync.Mutex
 	items             []core.SessionFact
@@ -62,9 +67,40 @@ func (q *sessionFactQueue) push(fact core.SessionFact) {
 	q.signalLocked()
 }
 
-func (q *sessionFactQueue) pop() (core.SessionFact, bool, bool) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
+// next blocks until a fact is available, the queue is drained and closed, or
+// ctx is done. The Session's done channel participates so a closing Session
+// unblocks the wait; the scanner always closes the queue before done, so the
+// drained path waits only for done (or ctx) and the Session then translates
+// its terminal error without blocking again. drained=true means the queue
+// has no more facts and is closed; trailing facts are always returned first.
+func (q *sessionFactQueue) next(ctx context.Context, sessionDone <-chan struct{}) (core.SessionFact, bool, error) {
+	for {
+		q.mu.Lock()
+		fact, found, drained := q.popLocked()
+		q.mu.Unlock()
+		if found {
+			return fact, false, nil
+		}
+		if drained {
+			select {
+			case <-sessionDone:
+				return nil, true, nil
+			case <-ctx.Done():
+				return nil, false, ctx.Err()
+			}
+		}
+		select {
+		case <-q.notify:
+		case <-sessionDone:
+		case <-ctx.Done():
+			return nil, false, ctx.Err()
+		}
+	}
+}
+
+// popLocked removes the oldest pending fact, or the held terminal
+// DiscoveryChange once everything else has drained.
+func (q *sessionFactQueue) popLocked() (core.SessionFact, bool, bool) {
 	if len(q.items) == 0 {
 		if q.terminalDiscovery == nil {
 			return nil, false, q.closed
@@ -80,9 +116,6 @@ func (q *sessionFactQueue) pop() (core.SessionFact, bool, bool) {
 		// From here on, overflow may replace the newest ObservationSet
 		// freely; the transport guarantee applies to the first one only.
 		q.firstSetDelivered = true
-	}
-	if len(q.items) != 0 {
-		q.signalLocked()
 	}
 	return fact, true, q.closed
 }
