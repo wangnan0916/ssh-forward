@@ -43,10 +43,26 @@ type ObservationBudget struct {
 	MetadataBytes  int
 }
 
+// DiscoveryReason is the vocabulary scanner-side facts may use to report
+// why Discovery is degraded or failed. The actor owns the single translation
+// from reason to wire diagnostic, so the user-visible Diagnostic strings
+// have exactly one producer.
+type DiscoveryReason string
+
+const (
+	// ReasonFrameInvalid reports a scanner frame that failed to parse.
+	ReasonFrameInvalid DiscoveryReason = "frame_invalid"
+	// ReasonStreamFailed reports the scanner output stream ending in error.
+	ReasonStreamFailed DiscoveryReason = "stream_failed"
+	// ReasonSessionInvalid reports a fact the actor's re-validation gate
+	// rejected (defense against a misbehaving adapter).
+	ReasonSessionInvalid DiscoveryReason = "session_invalid"
+)
+
 type DiscoveryChange struct {
 	State      DiscoveryState
 	Capability DiscoveryCapability
-	Diagnostic string
+	Reason     DiscoveryReason
 }
 
 func (DiscoveryChange) isSessionFact() {}

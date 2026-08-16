@@ -106,7 +106,7 @@ func scanObservationFrames(reader io.Reader, emit func(core.SessionFact)) {
 		emit(core.DiscoveryChange{
 			State:      state,
 			Capability: lastCapability,
-			Diagnostic: "invalid_scanner_frame",
+			Reason:     core.ReasonFrameInvalid,
 		})
 	}
 	for scanner.Scan() {
@@ -143,7 +143,7 @@ func scanObservationFrames(reader io.Reader, emit func(core.SessionFact)) {
 		emit(core.DiscoveryChange{
 			State:      core.DiscoveryFailed,
 			Capability: lastCapability,
-			Diagnostic: "scanner_framing_failed",
+			Reason:     core.ReasonStreamFailed,
 		})
 	}
 	_, _ = io.Copy(io.Discard, reader)
@@ -195,6 +195,9 @@ func (p *scannerParser) begin(fields []string) error {
 		return errInvalidScannerFrame
 	}
 	sequence, err := parseUint(fields[2], 64)
+	// Cheap stream-local filter: a non-increasing sequence cannot be a
+	// legitimate observation. The actor's re-validation gate (applyObservationSet)
+	// is the authority; this only avoids passing bad frames up the stream.
 	if err != nil || sequence == 0 || sequence <= p.lastSequence {
 		return errInvalidScannerFrame
 	}

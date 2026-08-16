@@ -8,7 +8,6 @@ import (
 	"reflect"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"ssh-forward/cli/internal/proxy"
 )
@@ -196,8 +195,11 @@ func (a *hostActor) applySessionFact(fact SessionFact) {
 func (a *hostActor) applyObservationSet(set ObservationSet) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	// Re-validation gate — the authority on what reaches the mirror. The
+	// scanner's parser is a cheap stream-local filter; a misbehaving adapter
+	// (stale sequence, bad capability, unknown budget) is rejected here.
 	if set.Sequence == 0 || set.Sequence <= a.lastObservationSequence || !validDiscoveryCapability(set.Capability) || !validObservationBudget(set.Budget) {
-		a.failDiscoveryLocked("invalid_session_fact")
+		a.failDiscoveryLocked(ReasonSessionInvalid)
 		return
 	}
 	gapped := set.Sequence != a.lastObservationSequence+1
@@ -236,18 +238,36 @@ func (a *hostActor) applyObservationSet(set ObservationSet) {
 	a.state.ListenerLifetimes = verdicts
 	a.publishLocked()
 }
+
+// diagnosticForReason is the single translation from scanner-side report
+// reasons to user-visible Discovery diagnostics. The wire strings are
+// contractual (rendered by clients); the parser and queue never write them.
+func diagnosticForReason(reason DiscoveryReason) (string, bool) {
+	switch reason {
+	case ReasonFrameInvalid:
+		return "invalid_scanner_frame", true
+	case ReasonStreamFailed:
+		return "scanner_framing_failed", true
+	case ReasonSessionInvalid:
+		return "invalid_session_fact", true
+	default:
+		return "", false
+	}
+}
+
 func (a *hostActor) applyDiscoveryChange(change DiscoveryChange) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	diagnostic, known := diagnosticForReason(change.Reason)
 	if (change.State != DiscoveryDegraded && change.State != DiscoveryFailed) ||
-		!validDiscoveryCapability(change.Capability) || len(change.Diagnostic) > 128 || !utf8.ValidString(change.Diagnostic) {
-		a.failDiscoveryLocked("invalid_session_fact")
+		!validDiscoveryCapability(change.Capability) || !known {
+		a.failDiscoveryLocked(ReasonSessionInvalid)
 		return
 	}
 	discovery := a.state.Discovery
 	discovery.State = change.State
 	discovery.Capability = change.Capability
-	discovery.Diagnostic = change.Diagnostic
+	discovery.Diagnostic = diagnostic
 	a.state.Discovery = discovery
 	a.publishLocked()
 }
@@ -255,10 +275,14 @@ func (a *hostActor) applyDiscoveryChange(change DiscoveryChange) {
 func (a *hostActor) applyInvalidDiscoveryFact() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.failDiscoveryLocked("invalid_session_fact")
+	a.failDiscoveryLocked(ReasonSessionInvalid)
 }
 
-func (a *hostActor) failDiscoveryLocked(diagnostic string) {
+// failDiscoveryLocked is the actor's own failure verdict, reached through
+// its re-validation gate: a misbehaving adapter (stale sequence, bad
+// capability, unknown budget, invalid report) must not corrupt the mirror.
+func (a *hostActor) failDiscoveryLocked(reason DiscoveryReason) {
+	diagnostic, _ := diagnosticForReason(reason)
 	discovery := a.state.Discovery
 	discovery.State = DiscoveryFailed
 	discovery.Diagnostic = diagnostic

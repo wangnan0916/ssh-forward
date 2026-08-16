@@ -51,7 +51,7 @@ func TestScannerRejectsProcessEvidenceExpansionAcrossListenerEndpoints(t *testin
 		t.Fatalf("scanner facts = %#v, want one degraded DiscoveryChange", facts)
 	}
 	change, ok := facts[0].(core.DiscoveryChange)
-	if !ok || change.State != core.DiscoveryDegraded || change.Diagnostic != "invalid_scanner_frame" {
+	if !ok || change.State != core.DiscoveryDegraded || change.Reason != core.ReasonFrameInvalid {
 		t.Fatalf("scanner fact = %#v, want degraded invalid frame", facts[0])
 	}
 }
@@ -162,7 +162,7 @@ func TestScannerRejectsDeclaredBudgetBeyondFrameLimits(t *testing.T) {
 				t.Fatalf("scanner facts = %#v, want one invalid frame change", facts)
 			}
 			change, ok := facts[0].(core.DiscoveryChange)
-			if !ok || change.Diagnostic != "invalid_scanner_frame" {
+			if !ok || change.Reason != core.ReasonFrameInvalid {
 				t.Fatalf("scanner fact = %#v, want invalid frame change", facts[0])
 			}
 		})
@@ -185,7 +185,7 @@ func TestScannerRejectsRecordsBeyondDeclaredBudget(t *testing.T) {
 	if len(facts) != 1 {
 		t.Fatalf("scanner facts = %#v, want one invalid frame change", facts)
 	}
-	if change, ok := facts[0].(core.DiscoveryChange); !ok || change.Diagnostic != "invalid_scanner_frame" {
+	if change, ok := facts[0].(core.DiscoveryChange); !ok || change.Reason != core.ReasonFrameInvalid {
 		t.Fatalf("scanner fact = %#v, want invalid frame change", facts[0])
 	}
 }
