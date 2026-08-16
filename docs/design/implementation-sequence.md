@@ -12,7 +12,7 @@ Slices 1–4 are complete: the baseline, control-plane tracer, one-host Manual F
 2. Establish the Go module, disposable Linux integration harness, Manager Interface, and JSON-RPC hello/status path.
 3. Deliver one-host Manual Forward end to end.
 4. Add agentless discovery and Snapshot Watch.
-5. Add Policy, Listener Lifetime, and continuous reconciliation.
+5. Add Policy, Listener Lifetime, and continuous reconciliation. Slice 5 opens with two named decisions (recorded by the round-14 architecture review): (a) the product requires Managed Forward removal "after two consecutive observations and five seconds" (discovery-and-policy.md) while core counts observation cycles because verdicts are deliberately deterministic and clock-free (lifetime.go) — slice 5 must decide how the wall clock reaches the reconciliation path through a seam (none exists yet) without breaking the determinism constitution; (b) session outages freeze Listener Lifetime verdicts today (the tracker advances only on ObservationSets) and the spec is silent on whether an outage counts toward disappearance grace — pick and pin one reading, since "Listener ended" retires One-time Approvals.
 6. Complete the domain-oriented CLI.
 7. Build the SwiftUI menu panel and Dashboard.
 8. Add packaging, signing, notarization, and release checks.
