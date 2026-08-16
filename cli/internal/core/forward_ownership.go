@@ -76,10 +76,17 @@ func (f *proxyOwnedForward) Close(ctx context.Context) error {
 	return f.endpoint.Close(ctx)
 }
 
-func closeOwnedForward(forward ownedForward) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+// closeWithTimeout bounds a best-effort Close. Forward endpoints and
+// Forwarding Sessions share this one habit — a bounded, fire-and-forget
+// teardown — differing only in how long a slow Close may take.
+func closeWithTimeout(close func(context.Context) error, timeout time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	_ = forward.Close(ctx)
+	_ = close(ctx)
+}
+
+func closeOwnedForward(forward ownedForward) {
+	closeWithTimeout(forward.Close, time.Second)
 }
 
 type forwardEntry struct {

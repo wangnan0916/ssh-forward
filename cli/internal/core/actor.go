@@ -334,9 +334,7 @@ func sessionDisposition(err error) SessionDisposition {
 }
 
 func closeHostSession(session hostSession) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = session.Close(ctx)
+	closeWithTimeout(session.Close, 5*time.Second)
 }
 
 var errTransportUnavailable = errors.New("Development Host transport is unavailable")
