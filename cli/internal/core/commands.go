@@ -71,6 +71,25 @@ func (m *manager) failCommandLocked(id CommandID) {
 	}
 }
 
+// completeCommand is the single completion point for an admitted command: it
+// records the outcome and releases the command's worker slot. Every handler
+// reaches exactly one of completeCommand (success or async-completion path)
+// or failCommandAndRelease (error path); the worker release always rides
+// along, never sprinkled at call sites.
+func (m *manager) completeCommand(id CommandID, command Command, outcome Outcome) {
+	m.mu.Lock()
+	m.completeCommandLocked(id, command, outcome)
+	m.mu.Unlock()
+	m.workers.Done()
+}
+
+// failCommandAndRelease rejects an admitted command and releases its worker
+// slot; it mirrors completeCommand for the error paths.
+func (m *manager) failCommandAndRelease(id CommandID) {
+	m.failCommand(id)
+	m.workers.Done()
+}
+
 func (m *manager) completeCommandLocked(id CommandID, command Command, outcome Outcome) {
 	m.commands[id] = commandRecord{command: command, outcome: cloneOutcome(outcome)}
 	m.failCommandLocked(id)

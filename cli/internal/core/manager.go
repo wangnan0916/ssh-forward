@@ -141,14 +141,13 @@ func (m *manager) addManualForward(ctx context.Context, add AddManualForward) (O
 	if outcome, replayed, err := m.beginCommand(ctx, add.CommandID, add); replayed || err != nil {
 		return outcome, err
 	}
-	defer m.workers.Done()
 	if add.Host != m.host || m.host == "" {
-		m.failCommand(add.CommandID)
+		m.failCommandAndRelease(add.CommandID)
 		return Outcome{}, &DomainError{Kind: ErrorUnknownHost}
 	}
 	remote, err := manualTarget(add.Family, add.RemotePort)
 	if err != nil {
-		m.failCommand(add.CommandID)
+		m.failCommandAndRelease(add.CommandID)
 		return Outcome{}, err
 	}
 
@@ -159,7 +158,7 @@ func (m *manager) addManualForward(ctx context.Context, add AddManualForward) (O
 		PreferredLocalPort: add.RemotePort,
 	})
 	if err != nil {
-		m.failCommand(add.CommandID)
+		m.failCommandAndRelease(add.CommandID)
 		if errors.Is(err, errLocalEndpointConflict) {
 			return Outcome{}, &DomainError{Kind: ErrorLocalPortConflict, Retryable: true}
 		}
@@ -172,6 +171,7 @@ func (m *manager) addManualForward(ctx context.Context, add AddManualForward) (O
 		closed := m.closed
 		m.failCommandLocked(add.CommandID)
 		m.mu.Unlock()
+		m.workers.Done()
 		closeOwnedForward(owner)
 		if closed {
 			return Outcome{}, &DomainError{Kind: ErrorManagerClosed, Retryable: true}
@@ -181,14 +181,15 @@ func (m *manager) addManualForward(ctx context.Context, add AddManualForward) (O
 	if !m.forwards.add(owner) {
 		m.failCommandLocked(add.CommandID)
 		m.mu.Unlock()
+		m.workers.Done()
 		closeOwnedForward(owner)
 		return Outcome{}, &DomainError{Kind: ErrorCommandIDConflict}
 	}
 	m.beginConnectionLocked()
 	m.publishLocked()
 	outcome := Outcome{Kind: OutcomeForwardAdded, Revision: m.revision, Forward: cloneForward(forward)}
-	m.completeCommandLocked(add.CommandID, add, outcome)
 	m.mu.Unlock()
+	m.completeCommand(add.CommandID, add, outcome)
 
 	// Always arm: the actor re-checks its liveness under its own lock, so a
 	// command racing the actor's terminal publication (which sets active
@@ -206,8 +207,7 @@ func (m *manager) removeForward(ctx context.Context, remove RemoveForward) (Outc
 	}
 	owner, forward, err := m.reserveRemoval(ctx, remove)
 	if err != nil {
-		m.failCommand(remove.CommandID)
-		m.workers.Done()
+		m.failCommandAndRelease(remove.CommandID)
 		return Outcome{}, err
 	}
 
@@ -218,7 +218,7 @@ func (m *manager) removeForward(ctx context.Context, remove RemoveForward) (Outc
 	select {
 	case closeErr := <-closed:
 		outcome := m.completeRemoval(remove, forward)
-		m.workers.Done()
+		m.completeCommand(remove.CommandID, remove, outcome)
 		if closeErr != nil {
 			return Outcome{}, closeErr
 		}
@@ -226,8 +226,7 @@ func (m *manager) removeForward(ctx context.Context, remove RemoveForward) (Outc
 	case <-ctx.Done():
 		go func() {
 			<-closed
-			m.completeRemoval(remove, forward)
-			m.workers.Done()
+			m.completeCommand(remove.CommandID, remove, m.completeRemoval(remove, forward))
 		}()
 		return Outcome{}, ctx.Err()
 	}
@@ -275,9 +274,7 @@ func (m *manager) completeRemoval(remove RemoveForward, forward ForwardSnapshot)
 		forward = removed
 	}
 	m.publishLocked()
-	outcome := Outcome{Kind: OutcomeForwardRemoved, Revision: m.revision, Forward: cloneForward(forward)}
-	m.completeCommandLocked(remove.CommandID, remove, outcome)
-	return outcome
+	return Outcome{Kind: OutcomeForwardRemoved, Revision: m.revision, Forward: cloneForward(forward)}
 }
 
 func manualTarget(family AddressFamily, port uint16) (netip.AddrPort, error) {
