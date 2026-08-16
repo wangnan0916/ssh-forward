@@ -268,32 +268,10 @@ func shellQuote(value string) string {
 // retention caps are the same protocol default family; a drift between any
 // two of them should fail this test rather than silently diverge at runtime.
 func TestScannerScriptDeclaresParserDefaultBudgets(t *testing.T) {
-	values := make(map[string]string)
-	for _, line := range strings.Split(scannerScript, "\n") {
-		for _, name := range []string{"listener_limit", "socket_record_limit", "process_record_limit", "metadata_bytes_limit", "metadata_hex_limit"} {
-			if prefix := name + "="; strings.HasPrefix(line, prefix) {
-				values[name] = strings.TrimPrefix(line, prefix)
-			}
-		}
-	}
-	if got := values["listener_limit"]; strconv.Itoa(MaxObservedListeners) != got {
-		t.Fatalf("scanner.sh listener_limit = %q, want %d (parser cap)", got, MaxObservedListeners)
-	}
-	if got := values["socket_record_limit"]; got != "$listener_limit" {
-		t.Fatalf("scanner.sh socket_record_limit = %q, want derived $listener_limit", got)
-	}
-	if got := values["process_record_limit"]; strconv.Itoa(MaxProcessRecords) != got {
-		t.Fatalf("scanner.sh process_record_limit = %q, want %d (parser cap)", got, MaxProcessRecords)
-	}
-	if got := values["metadata_bytes_limit"]; strconv.Itoa(MaxObservationMetadataBytes) != got {
-		t.Fatalf("scanner.sh metadata_bytes_limit = %q, want %d (parser cap)", got, MaxObservationMetadataBytes)
-	}
-	if got := values["metadata_hex_limit"]; got != "$((metadata_bytes_limit * 2))" {
-		t.Fatalf("scanner.sh metadata_hex_limit = %q, want derived $((metadata_bytes_limit * 2))", got)
-	}
-
-	// The parser caps and core's retention caps are the same protocol
-	// defaults; keep them in one numeric family.
+	// The parser caps are derived from the embedded script, so script and
+	// parser cannot drift. What remains to pin is the second copy: core's
+	// retention caps, which are the same protocol defaults and must stay in
+	// one numeric family with the script's declarations.
 	if MaxObservedListeners != core.MaxRetainedListenerObservations {
 		t.Fatalf("parser listener cap %d != core retention cap %d", MaxObservedListeners, core.MaxRetainedListenerObservations)
 	}

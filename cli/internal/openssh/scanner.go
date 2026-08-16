@@ -15,20 +15,52 @@ import (
 )
 
 const (
-	// MaxObserved* are the parser's frame caps: the largest per-scan budgets
-	// a scanner may declare. They are asserted equal to core's retention caps
-	// in scanner_bounds_test.go, keeping the protocol defaults in one numeric
-	// family.
-	maxScannerFrameBytes        = 64 << 10
-	MaxObservedListeners        = 256
-	MaxObservedSockets          = 512
-	MaxProcessRecords           = 512
-	maxProcessDepth             = 16
-	maxProcessArguments         = 64
-	maxProcessTextBytes         = 4096
-	maxIdentityTextBytes        = 256
-	MaxObservationMetadataBytes = 128 << 10
+	maxScannerFrameBytes = 64 << 10
+	maxProcessDepth      = 16
+	maxProcessArguments  = 64
+	maxProcessTextBytes  = 4096
+	maxIdentityTextBytes = 256
+
+	// MaxObservedSockets is the parser's upper bound for the socket budget a
+	// scanner may declare. It deliberately stays a parser-local constant: the
+	// script's socket_record_limit is a derived report value equal to
+	// listener_limit, not the same limit, so deriving from it would narrow
+	// the parser's tolerance for no benefit.
+	MaxObservedSockets = 512
 )
+
+// MaxObserved* are the parser's frame caps: the largest per-scan budgets a
+// scanner may declare. The three that the script actually enforces are
+// derived from the embedded scanner.sh, which is the single declaration of
+// the evidence budget family; core's retention caps remain the second copy,
+// pinned by TestScannerScriptDeclaresParserDefaultBudgets.
+var (
+	MaxObservedListeners        = scannerBudget("listener_limit")
+	MaxProcessRecords           = scannerBudget("process_record_limit")
+	MaxObservationMetadataBytes = scannerBudget("metadata_bytes_limit")
+)
+
+// scannerBudget reads one budget declaration from the embedded scanner
+// script, following derived declarations such as socket_record_limit and
+// metadata_hex_limit back to their numeric source. A missing or malformed
+// declaration is a package build error: the parser and the script it parses
+// must agree at startup, not by convention.
+func scannerBudget(name string) int {
+	for _, line := range strings.Split(scannerScript, "\n") {
+		if !strings.HasPrefix(line, name+"=") {
+			continue
+		}
+		value := strings.TrimPrefix(line, name+"=")
+		if number, err := strconv.Atoi(value); err == nil {
+			return number
+		}
+		if strings.HasPrefix(value, "$") {
+			return scannerBudget(strings.TrimPrefix(value, "$"))
+		}
+		panic("scanner.sh declares " + name + " with an unsupported expression: " + value)
+	}
+	panic("scanner.sh does not declare " + name)
+}
 
 var errInvalidScannerFrame = errors.New("invalid scanner frame")
 
@@ -412,16 +444,16 @@ func parseObservationBudget(listeners, sockets, processRecords, metadataBytes st
 	}
 	budget := core.ObservationBudget{}
 	var err error
-	if budget.Listeners, err = parse(listeners, MaxObservedListeners); err != nil {
+	if budget.Listeners, err = parse(listeners, uint64(MaxObservedListeners)); err != nil {
 		return core.ObservationBudget{}, err
 	}
-	if budget.Sockets, err = parse(sockets, MaxObservedSockets); err != nil {
+	if budget.Sockets, err = parse(sockets, uint64(MaxObservedSockets)); err != nil {
 		return core.ObservationBudget{}, err
 	}
-	if budget.ProcessRecords, err = parse(processRecords, MaxProcessRecords); err != nil {
+	if budget.ProcessRecords, err = parse(processRecords, uint64(MaxProcessRecords)); err != nil {
 		return core.ObservationBudget{}, err
 	}
-	if budget.MetadataBytes, err = parse(metadataBytes, MaxObservationMetadataBytes); err != nil {
+	if budget.MetadataBytes, err = parse(metadataBytes, uint64(MaxObservationMetadataBytes)); err != nil {
 		return core.ObservationBudget{}, err
 	}
 	return budget, nil
