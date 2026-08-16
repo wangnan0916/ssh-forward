@@ -145,17 +145,7 @@ func probeSOCKS(address netip.AddrPort) error {
 	if err := connection.SetDeadline(time.Now().Add(50 * time.Millisecond)); err != nil {
 		return err
 	}
-	if _, err := connection.Write([]byte{5, 1, 0}); err != nil {
-		return err
-	}
-	response := make([]byte, 2)
-	if _, err := io.ReadFull(connection, response); err != nil {
-		return err
-	}
-	if response[0] != 5 || response[1] != 0 {
-		return errors.New("OpenSSH SOCKS probe rejected no-authentication method")
-	}
-	return nil
+	return proxy.NegotiateMethod(connection)
 }
 
 // sessionErrorForExit is the single translation from an OpenSSH exit class

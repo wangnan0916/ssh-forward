@@ -44,7 +44,11 @@ func (d *SOCKS5Dialer) DialContext(ctx context.Context, target netip.AddrPort) (
 	return tcpConnection, nil
 }
 
-func negotiateSOCKS5(connection net.Conn, target netip.AddrPort) error {
+// NegotiateMethod performs the SOCKS5 no-authentication method negotiation:
+// send the {5,1,0} greeting and verify the server's two-byte reply selects
+// no authentication. The dial path and the OpenSSH Forwarding Session
+// readiness probe share this one handshake, so the two cannot drift.
+func NegotiateMethod(connection net.Conn) error {
 	if _, err := connection.Write([]byte{5, 1, 0}); err != nil {
 		return err
 	}
@@ -54,6 +58,13 @@ func negotiateSOCKS5(connection net.Conn, target netip.AddrPort) error {
 	}
 	if greeting[0] != 5 || greeting[1] != 0 {
 		return errors.New("SOCKS server rejected no-authentication method")
+	}
+	return nil
+}
+
+func negotiateSOCKS5(connection net.Conn, target netip.AddrPort) error {
+	if err := NegotiateMethod(connection); err != nil {
+		return err
 	}
 
 	request := []byte{5, 1, 0}
