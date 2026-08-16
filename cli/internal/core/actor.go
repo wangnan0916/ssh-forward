@@ -96,11 +96,17 @@ func (a *hostActor) isActive() bool {
 // run marks the loop inactive on the way out. The connect loop itself also
 // sets active false before publishing its final Disconnected transition, so
 // a concurrently arriving command sees a completed session and can re-arm.
+// done is captured up front: a re-arm replaces a.done with a fresh channel
+// while this goroutine is still winding down, and each run must close only
+// the channel it was launched with.
 func (a *hostActor) run() {
+	a.mu.Lock()
+	done := a.done
+	a.mu.Unlock()
 	defer func() {
 		a.mu.Lock()
 		a.active = false
-		close(a.done)
+		close(done)
 		a.mu.Unlock()
 	}()
 	a.connect()

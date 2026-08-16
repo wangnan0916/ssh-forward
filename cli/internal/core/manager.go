@@ -12,6 +12,7 @@ type managerOptions struct {
 	host             HostAlias
 	connector        hostConnector
 	forwardAllocator forwardAllocator
+	publishHost      func(HostSnapshot)
 	retryDelay       func(int) time.Duration
 	retryWait        func(context.Context, time.Duration) bool
 }
@@ -75,11 +76,15 @@ func newManager(options managerOptions) *manager {
 		ctx:    ctx,
 		cancel: cancel,
 	}
+	publishHost := m.publishHostState
+	if options.publishHost != nil {
+		publishHost = options.publishHost
+	}
 	m.actor = newHostActor(hostActorOptions{
 		host:       options.host,
 		connector:  options.connector,
 		dialer:     dialer,
-		publish:    m.publishHostState,
+		publish:    publishHost,
 		retryDelay: retryDelay,
 		retryWait:  retryWait,
 		ctx:        ctx,
@@ -94,12 +99,11 @@ func newManager(options managerOptions) *manager {
 // publishing: the caller publishes once with the command outcome, so the
 // transition is visible in the same revision as the command result. The
 // hostActor then takes over state publication from Connected onward.
-func (m *manager) beginConnectionLocked() bool {
+func (m *manager) beginConnectionLocked() {
 	if m.hostSnapshot.Connection != ConnectionDisconnected {
-		return false
+		return
 	}
 	m.hostSnapshot.Connection = ConnectionConnecting
-	return true
 }
 
 func (m *manager) publishHostState(state HostSnapshot) {
@@ -170,15 +174,19 @@ func (m *manager) addManualForward(ctx context.Context, add AddManualForward) (O
 		closeOwnedForward(owner)
 		return Outcome{}, &DomainError{Kind: ErrorCommandIDConflict}
 	}
-	startConnection := m.beginConnectionLocked()
+	m.beginConnectionLocked()
 	m.publishLocked()
 	outcome := Outcome{Kind: OutcomeForwardAdded, Revision: m.revision, Forward: cloneForward(forward)}
 	m.completeCommandLocked(add.CommandID, add, outcome)
 	m.mu.Unlock()
 
-	if startConnection {
-		m.actor.startIfNeeded()
-	}
+	// Always arm: the actor re-checks its liveness under its own lock, so a
+	// command racing the actor's terminal publication (which sets active
+	// false before publishing Disconnected) still re-arms once that
+	// publication lands. beginConnectionLocked may have declined to publish
+	// Connecting because it read a stale Connected copy; the actor's arming
+	// decision is authoritative regardless.
+	m.actor.startIfNeeded()
 	return outcome, nil
 }
 

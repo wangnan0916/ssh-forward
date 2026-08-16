@@ -281,3 +281,93 @@ func TestManagerRearmsConnectionAfterTerminalFailure(t *testing.T) {
 		t.Fatal("re-arm connection attempt did not start")
 	}
 }
+
+// TestCommandAlwaysAttemptsConnectionAfterTerminalSession pins the arming
+// contract under the terminal-publish race: a command that reaches the
+// Manager while the actor is between its terminal transition (active=false)
+// and its final Disconnected publication must still arm a connection
+// attempt. The injected publish callback freezes the actor inside that
+// window deterministically.
+func TestCommandAlwaysAttemptsConnectionAfterTerminalSession(t *testing.T) {
+	connector := &countingSuspendConnector{started: make(chan int, 4)}
+	disconnectedPublish := make(chan struct{})
+	releasePublish := make(chan struct{})
+	var once sync.Once
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releasePublish) }) }
+	t.Cleanup(release)
+	publishHost := func(state HostSnapshot) {
+		if state.Connection == ConnectionDisconnected {
+			once.Do(func() { close(disconnectedPublish) })
+			<-releasePublish
+		}
+	}
+	manager := newManager(managerOptions{
+		host:        HostAlias("development"),
+		connector:   connector,
+		publishHost: publishHost,
+	})
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	t.Cleanup(release)
+
+	if _, err := manager.Execute(context.Background(), AddManualForward{
+		CommandID:  CommandID("operation-1"),
+		Host:       HostAlias("development"),
+		RemotePort: freePort(t),
+		Family:     FamilyAuto,
+	}); err != nil {
+		t.Fatalf("first AddManualForward: %v", err)
+	}
+	select {
+	case attempt := <-connector.started:
+		if attempt != 1 {
+			t.Fatalf("first connection attempt = %d, want 1", attempt)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first connection attempt did not start")
+	}
+	// The actor is now frozen inside its terminal Disconnected publication,
+	// with active already false. A second command must not return without
+	// arming a new attempt: it waits out the terminal publish, then re-arms.
+	type result struct {
+		outcome Outcome
+		err     error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		outcome, err := manager.Execute(context.Background(), AddManualForward{
+			CommandID:  CommandID("operation-2"),
+			Host:       HostAlias("development"),
+			RemotePort: freePort(t),
+			Family:     FamilyAuto,
+		})
+		resultCh <- result{outcome, err}
+	}()
+	select {
+	case <-disconnectedPublish:
+	case <-time.After(time.Second):
+		t.Fatal("terminal Disconnected publication never reached the publish callback")
+	}
+	select {
+	case res := <-resultCh:
+		t.Fatalf("second command returned before the terminal publish completed: %#v %v", res.outcome, res.err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	release()
+	select {
+	case res := <-resultCh:
+		if res.err != nil {
+			t.Fatalf("second AddManualForward: %v", res.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second command did not return after the terminal publish completed")
+	}
+	select {
+	case attempt := <-connector.started:
+		if attempt != 2 {
+			t.Fatalf("re-arm connection attempt = %d, want 2", attempt)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second command did not re-arm a connection attempt")
+	}
+}
