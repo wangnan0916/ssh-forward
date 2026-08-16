@@ -76,7 +76,6 @@ func (s *connectionSession) handleWatch(ctx context.Context, request *jrpc2.Requ
 		return nil, &jrpc2.Error{Code: jrpc2.InternalError, Message: "internal error"}
 	}
 
-	s.workers.Add(1)
 	go func() {
 		defer s.workers.Done()
 		s.runWatch(watch)
@@ -160,7 +159,9 @@ func (s *connectionSession) releaseWatchSlot() {
 
 // registerWatch converts a reserved slot into a registered Watch and assigns
 // its ID, all under the session lock; it fails only if the session closed
-// while the stream was being set up.
+// while the stream was being set up. The worker count is added under the
+// same lock: close() sets closed there and only then runs Wait, so a new
+// Add can never follow Wait (WaitGroup misuse).
 func (s *connectionSession) registerWatch(stream core.SnapshotStream) (*connectionWatch, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -175,6 +176,7 @@ func (s *connectionSession) registerWatch(stream core.SnapshotStream) (*connecti
 		activate: make(chan struct{}),
 	}
 	s.watches[watch.id] = watch
+	s.workers.Add(1)
 	return watch, true
 }
 
