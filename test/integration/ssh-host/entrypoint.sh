@@ -2,7 +2,11 @@
 
 set -eu
 
-install -o testdev -g testdev -m 0600 /run/fixture/authorized_keys /home/testdev/.ssh/authorized_keys
+fixture_port_v4=${SSH_FORWARD_FIXTURE_PORT_V4:-38080}
+fixture_port_v6=${SSH_FORWARD_FIXTURE_PORT_V6:-38081}
+fixture_user=${SSH_FORWARD_TEST_USER:-testdev}
+
+install -o "$fixture_user" -g "$fixture_user" -m 0600 /run/fixture/authorized_keys "/home/$fixture_user/.ssh/authorized_keys"
 ssh-keygen -A >/dev/null 2>&1
 
 fixture_pid=''
@@ -16,13 +20,13 @@ cleanup() {
 }
 trap 'cleanup; exit 143' HUP INT TERM
 
-runuser -u testdev -- /usr/bin/python3 /usr/local/lib/ssh-forward-test/fixture.py &
+runuser -u "$fixture_user" -- /usr/bin/python3 /usr/local/lib/ssh-forward-test/fixture.py &
 fixture_pid=$!
 ready=0
 for _ in $(seq 1 100); do
     sockets=$(ss -H -ltn)
-    if printf '%s\n' "$sockets" | grep -q '127.0.0.1:38080' \
-        && printf '%s\n' "$sockets" | grep -q '\[::1\]:38081'; then
+    if printf '%s\n' "$sockets" | grep -q "127.0.0.1:$fixture_port_v4" \
+        && printf '%s\n' "$sockets" | grep -q "\[::1\]:$fixture_port_v6"; then
         ready=1
         break
     fi

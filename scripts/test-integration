@@ -22,6 +22,9 @@ if [ "${#run_prefix}" -gt 32 ]; then
 fi
 run_id=$run_prefix-$random_id
 export SSH_FORWARD_TEST_RUN_ID=$run_id
+set -a
+. "$root/scripts/internal/harness.env"
+set +a
 docker_context=${SSH_FORWARD_TEST_DOCKER_CONTEXT:-$(docker context show)}
 export SSH_FORWARD_TEST_DOCKER_CONTEXT=$docker_context
 

@@ -22,7 +22,7 @@ func TestAgentlessDiscoveryThroughDisposableDevelopmentHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create OpenSSH Adapter: %v", err)
 	}
-	manager := app.NewManager(core.HostAlias("ssh-forward-test-host"), adapter)
+	manager := app.NewManager(core.HostAlias(testHostAlias()), adapter)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -32,8 +32,8 @@ func TestAgentlessDiscoveryThroughDisposableDevelopmentHost(t *testing.T) {
 	})
 	if _, err := manager.Execute(context.Background(), core.AddManualForward{
 		CommandID:  core.CommandID("discovery-trigger"),
-		Host:       core.HostAlias("ssh-forward-test-host"),
-		RemotePort: 38080,
+		Host:       core.HostAlias(testHostAlias()),
+		RemotePort: fixturePortV4(),
 		Family:     core.FamilyIPv4,
 	}); err != nil {
 		t.Fatalf("start Forwarding Session: %v", err)
@@ -61,8 +61,8 @@ func TestAgentlessDiscoveryThroughDisposableDevelopmentHost(t *testing.T) {
 	if host.Discovery.Capability.RemoteListeners != core.CapabilityFull || host.Discovery.Capability.SocketIdentity != core.CapabilityFull {
 		t.Fatalf("Discovery Capability = %#v, want complete listener and socket evidence", host.Discovery.Capability)
 	}
-	assertFixtureObservation(t, host.ListenerObservations, core.FamilyIPv4, 38080)
-	assertFixtureObservation(t, host.ListenerObservations, core.FamilyIPv6, 38081)
+	assertFixtureObservation(t, host.ListenerObservations, core.FamilyIPv4, fixturePortV4())
+	assertFixtureObservation(t, host.ListenerObservations, core.FamilyIPv6, fixturePortV6())
 
 	baselineRevision := snapshot.Revision
 	// The first identical scan reclassifies the baseline listeners from new to

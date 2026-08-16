@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 
 import signal
+import os
 import socket
 import threading
 
@@ -49,6 +50,8 @@ def listen(family, host, port):
 
 signal.signal(signal.SIGTERM, stop)
 signal.signal(signal.SIGINT, stop)
-listen(socket.AF_INET, "127.0.0.1", 38080)
-listen(socket.AF_INET6, "::1", 38081)
+port_v4 = int(os.environ.get("SSH_FORWARD_FIXTURE_PORT_V4", "38080"))
+port_v6 = int(os.environ.get("SSH_FORWARD_FIXTURE_PORT_V6", "38081"))
+listen(socket.AF_INET, "127.0.0.1", port_v4)
+listen(socket.AF_INET6, "::1", port_v6)
 STOP.wait()

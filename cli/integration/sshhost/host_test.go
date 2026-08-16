@@ -29,7 +29,7 @@ func TestDisposableHostProvidesUnprivilegedDiscoveryEnvironment(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, "/usr/bin/ssh", "-F", config, "ssh-forward-test-host", "sh", "-s")
+	command := exec.CommandContext(ctx, "/usr/bin/ssh", "-F", config, testHostAlias(), "sh", "-s")
 	command.Stdin = bytes.NewBufferString(`
 has() { command -v "$1" >/dev/null 2>&1 && printf true || printf false; }
 printf '{"uid":%s,"proc_tcp":%s,"ss":%s,"lsof":%s,"python":%s}\n' \
@@ -77,7 +77,7 @@ func isolatedSSHConfig(t *testing.T) string {
 		t.Fatalf("refusing SSH config outside disposable harness: %s", resolvedConfig)
 	}
 
-	command := exec.Command("/usr/bin/ssh", "-G", "-F", resolvedConfig, "ssh-forward-test-host")
+	command := exec.Command("/usr/bin/ssh", "-G", "-F", resolvedConfig, testHostAlias())
 	output, err := command.Output()
 	if err != nil {
 		t.Fatalf("resolve disposable SSH configuration: %v", err)
@@ -98,7 +98,7 @@ func isolatedSSHConfig(t *testing.T) string {
 		t.Fatalf("unsafe disposable SSH port %q", effective["port"])
 	}
 	expectedIdentity := filepath.Join(filepath.Dir(resolvedConfig), "id_ed25519")
-	if effective["hostname"] != "127.0.0.1" || effective["user"] != "testdev" || effective["identityfile"] != expectedIdentity {
+	if effective["hostname"] != "127.0.0.1" || effective["user"] != testUser() || effective["identityfile"] != expectedIdentity {
 		t.Fatalf("unsafe effective SSH configuration: hostname=%q user=%q identity=%q", effective["hostname"], effective["user"], effective["identityfile"])
 	}
 	return resolvedConfig

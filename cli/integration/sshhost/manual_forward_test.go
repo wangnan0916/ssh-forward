@@ -26,7 +26,7 @@ func TestManualForwardThroughDisposableDevelopmentHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create OpenSSH Adapter: %v", err)
 	}
-	manager := app.NewManager(core.HostAlias("ssh-forward-test-host"), adapter)
+	manager := app.NewManager(core.HostAlias(testHostAlias()), adapter)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -36,8 +36,8 @@ func TestManualForwardThroughDisposableDevelopmentHost(t *testing.T) {
 	})
 	added, err := manager.Execute(context.Background(), core.AddManualForward{
 		CommandID:  core.CommandID("integration-add"),
-		Host:       core.HostAlias("ssh-forward-test-host"),
-		RemotePort: 38080,
+		Host:       core.HostAlias(testHostAlias()),
+		RemotePort: fixturePortV4(),
 		Family:     core.FamilyAuto,
 	})
 	if err != nil {
@@ -98,7 +98,7 @@ func TestIPv6ManualForwardThroughDisposableDevelopmentHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create OpenSSH Adapter: %v", err)
 	}
-	manager := app.NewManager(core.HostAlias("ssh-forward-test-host"), adapter)
+	manager := app.NewManager(core.HostAlias(testHostAlias()), adapter)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -108,8 +108,8 @@ func TestIPv6ManualForwardThroughDisposableDevelopmentHost(t *testing.T) {
 	})
 	added, err := manager.Execute(context.Background(), core.AddManualForward{
 		CommandID:  core.CommandID("integration-ipv6"),
-		Host:       core.HostAlias("ssh-forward-test-host"),
-		RemotePort: 38081,
+		Host:       core.HostAlias(testHostAlias()),
+		RemotePort: fixturePortV6(),
 		Family:     core.FamilyIPv6,
 	})
 	if err != nil {

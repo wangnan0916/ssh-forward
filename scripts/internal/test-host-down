@@ -4,12 +4,15 @@ set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 compose="$root/test/integration/ssh-host/compose.yaml"
+set -a
+. "$root/scripts/internal/harness.env"
+set +a
 run_id=${SSH_FORWARD_TEST_RUN_ID:?SSH_FORWARD_TEST_RUN_ID is required}
 case "$run_id" in
     *[!a-z0-9_-]*) printf 'invalid SSH_FORWARD_TEST_RUN_ID: %s\n' "$run_id" >&2; exit 2 ;;
 esac
 project=ssh-forward-integration-$run_id
-image=ssh-forward-test-host:$run_id
+image=$SSH_FORWARD_TEST_IMAGE:$run_id
 state_dir="$root/.tmp/integration/$run_id"
 docker_context=${SSH_FORWARD_TEST_DOCKER_CONTEXT:-}
 if [ -z "$docker_context" ] && [ -s "$state_dir/docker_context" ]; then
