@@ -35,14 +35,14 @@ func Serve(ctx context.Context, conn net.Conn, manager core.Manager) error {
 	pending.onResponse = session.onResponseSent
 	defer session.close()
 	methods := handler.Map{
-		"manager.execute": func(ctx context.Context, request *jrpc2.Request) (any, error) {
+		methodExecute: func(ctx context.Context, request *jrpc2.Request) (any, error) {
 			return handleExecute(ctx, request, manager)
 		},
-		"manager.snapshot": func(ctx context.Context, request *jrpc2.Request) (any, error) {
+		methodSnapshot: func(ctx context.Context, request *jrpc2.Request) (any, error) {
 			return handleSnapshot(ctx, request, manager)
 		},
-		"manager.watch":   session.handleWatch,
-		"manager.unwatch": session.handleUnwatch,
+		methodWatch:   session.handleWatch,
+		methodUnwatch: session.handleUnwatch,
 	}
 	stopSession := context.AfterFunc(ctx, func() { _ = pending.Close() })
 	defer stopSession()

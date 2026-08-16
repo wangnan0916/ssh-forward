@@ -194,11 +194,11 @@ func (s *connectionSession) runWatch(watch *connectionWatch) {
 			return
 		}
 		params := snapshotNotification{WatchID: watch.id, Snapshot: marshalSnapshot(snapshot)}
-		if !notificationFits("manager.snapshot", params) {
+		if !notificationFits(methodSnapshot, params) {
 			s.sendResyncRequired(watch, "snapshot_too_large")
 			return
 		}
-		if !s.sendWatchNotification(watch, "manager.snapshot", params) {
+		if !s.sendWatchNotification(watch, methodSnapshot, params) {
 			return
 		}
 	}
@@ -211,7 +211,7 @@ func (s *connectionSession) runWatch(watch *connectionWatch) {
 // protocol doc promises.
 func (s *connectionSession) sendResyncRequired(watch *connectionWatch, reason string) {
 	params := resyncNotification{WatchID: watch.id, Reason: reason}
-	s.sendWatchNotification(watch, "manager.resync_required", params)
+	s.sendWatchNotification(watch, methodResyncRequired, params)
 }
 
 // Keep a Watch's delivery and stop acknowledgement in one order: unwatch may

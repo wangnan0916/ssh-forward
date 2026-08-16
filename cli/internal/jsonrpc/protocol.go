@@ -12,18 +12,27 @@ import (
 )
 
 const (
-	protocolMajor     = 1
-	protocolMinor     = 0
-	maxFrameBytes     = 1 << 20
-	maxCapabilities   = 64
-	maxCapabilitySize = 128
-	maxPendingCalls   = 64
-	maxHandlers       = 8
-	maxOperationID    = 128
-	maxHostAlias      = core.MaxHostAliasLength
-	maxForwardID      = 256
-	maxWatchID        = 64
-	maxSessionWatches = 8
+	protocolMajor = 1
+	protocolMinor = 0
+
+	// Wire method and notification names. Request-method keys (the handler
+	// map in Serve) and notification-method names (the Watch fan-out) are
+	// the same wire strings; named here so the two roles cannot drift.
+	methodExecute        = "manager.execute"
+	methodSnapshot       = "manager.snapshot"
+	methodWatch          = "manager.watch"
+	methodUnwatch        = "manager.unwatch"
+	methodResyncRequired = "manager.resync_required"
+	maxFrameBytes        = 1 << 20
+	maxCapabilities      = 64
+	maxCapabilitySize    = 128
+	maxPendingCalls      = 64
+	maxHandlers          = 8
+	maxOperationID       = 128
+	maxHostAlias         = core.MaxHostAliasLength
+	maxForwardID         = 256
+	maxWatchID           = 64
+	maxSessionWatches    = 8
 
 	capabilityWatchSnapshot = "watch-snapshot-v1"
 )
