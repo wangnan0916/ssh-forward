@@ -30,14 +30,16 @@ SSH_FORWARD_SCANNER_VERSION=1
 # the declaration, so the two sides cannot drift.
 interval=2
 # scan cadence in seconds; core counts Listener Lifetime grace in scan
-# cycles (default 3 cycles), so the effective grace is about 6s at this value
+# cycles (default 3 cycles), so the effective grace is 4 consecutive
+# absences, about 8s at this value (see lifetime.go defaultListenerGraceCycles)
 sequence=0
 previous_fingerprint=''
 listener_records=''
 process_records=''
 process_capability=unavailable
 # Cadence family: interval is the scan cadence in seconds (core counts
-# Listener Lifetime grace in scan cycles, 3 cycles ~= 6s at this value);
+# Listener Lifetime grace in scan cycles — 3 cycles of tolerance plus the
+# ending scan, 4 consecutive absences, about 8s at this value);
 # attribution runs on fingerprint change, on bounded backoff while process
 # capability is partial (5 scans ~= 10s), and on slow periodic refresh
 # (30 scans ~= 60s); the fallback chain tries at most 3 source degradations.

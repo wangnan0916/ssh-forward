@@ -26,7 +26,7 @@ A Forward first attempts to bind its Preferred Local Port. On address-in-use fai
 
 ## Listener continuity
 
-Listener Lifetime continuity is based on observed sockets rather than port number or PID alone. Hot reload that inherits an existing socket keeps the Lifetime. If every previously observed socket disappears and replacement sockets occupy the same port, a new Lifetime begins; One-time Approval and One-time Suppression do not carry into it. Absent listeners pass through a disappearance grace (three observation cycles, about six seconds at the scanner's two-second cadence) before the Lifetime ends.
+Listener Lifetime continuity is based on observed sockets rather than port number or PID alone. Hot reload that inherits an existing socket keeps the Lifetime. If every previously observed socket disappears and replacement sockets occupy the same port, a new Lifetime begins; One-time Approval and One-time Suppression do not carry into it. Absent listeners pass through a disappearance grace before the Lifetime ends: three observation cycles of tolerance plus the ending scan, i.e. four consecutive absences, about eight seconds at the scanner's two-second cadence.
 
 ## Continuous policy reconciliation
 
