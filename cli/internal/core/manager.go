@@ -22,6 +22,15 @@ type managerOptions struct {
 	publishHost      func(HostSnapshot)
 	retryDelay       func(int) time.Duration
 	retryWait        func(context.Context, time.Duration) bool
+	// policies is the Forwarding Policy source seam (slice 5): the
+	// reconciliation path refreshes its policy cache from this function
+	// outside the Manager lock. nil means no policies (default Ask).
+	policies func() []ForwardingPolicy
+	// now is the wall-clock seam for the reconciliation path's
+	// five-second removal floor (decision recorded in
+	// implementation-sequence.md slice 5). The Listener Lifetime tracker
+	// never uses it. nil defaults to time.Now.
+	now func() time.Time
 }
 
 type manager struct {
@@ -39,6 +48,15 @@ type manager struct {
 	commands         map[CommandID]commandRecord
 	commandOrder     []CommandID
 	pending          map[CommandID]*pendingCommand
+
+	policyCache  []ForwardingPolicy
+	policySource func() []ForwardingPolicy
+	now          func() time.Time
+	approvals    map[remoteListenerKey]struct{}
+	suppressions map[remoteListenerKey]struct{}
+	reconcile    chan struct{}
+	createState  map[remoteListenerKey]int
+	removalState map[ForwardID]*managedRemoval
 
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -75,6 +93,14 @@ func newManager(options managerOptions) *manager {
 	if allocator == nil {
 		allocator = proxyForwardAllocator{dialer: dialer}
 	}
+	now := options.now
+	if now == nil {
+		now = time.Now
+	}
+	policySource := options.policies
+	if policySource == nil {
+		policySource = func() []ForwardingPolicy { return nil }
+	}
 	m := &manager{
 		host:             options.host,
 		forwardAllocator: allocator,
@@ -83,20 +109,31 @@ func newManager(options managerOptions) *manager {
 		commands:         make(map[CommandID]commandRecord),
 		commandOrder:     make([]CommandID, 0, maxCommandRecords),
 		pending:          make(map[CommandID]*pendingCommand),
+		policySource:     policySource,
+		now:              now,
+		approvals:        make(map[remoteListenerKey]struct{}),
+		suppressions:     make(map[remoteListenerKey]struct{}),
+		reconcile:        make(chan struct{}, 8),
+		createState:      make(map[remoteListenerKey]int),
+		removalState:     make(map[ForwardID]*managedRemoval),
 		hostSnapshot:     emptyHostSnapshot(options.host),
 		ctx:              ctx,
 		cancel:           cancel,
 	}
+	m.policyCache = policySource()
+	m.workers.Add(1)
+	go m.reconcileLoop()
 	publishHost := m.publishHostState
 	if options.publishHost != nil {
 		publishHost = options.publishHost
 	}
 	m.actor = newHostActor(hostActorOptions{
-		host:      options.host,
-		connector: options.connector,
-		dialer:    dialer,
-		publish:   publishHost,
-		ctx:       ctx,
+		host:          options.host,
+		connector:     options.connector,
+		dialer:        dialer,
+		publish:       publishHost,
+		onObservation: m.notifyReconcile,
+		ctx:           ctx,
 	}, retryDelay, retryWait)
 	m.snapshot = m.buildSnapshotLocked()
 	return m
@@ -153,12 +190,28 @@ func (m *manager) publishHostState(state HostSnapshot) {
 	m.publishLocked()
 }
 
+// notifyReconcile wakes the reconciliation worker after the actor applied a
+// new observation generation. The worker reads the mirror outside the
+// Manager lock, so a non-blocking signal is all this may do; the channel is
+// buffered because the signal must not be lost while the worker is busy
+// with a previous generation.
+func (m *manager) notifyReconcile() {
+	select {
+	case m.reconcile <- struct{}{}:
+	default:
+	}
+}
+
 func (m *manager) Execute(ctx context.Context, command Command) (Outcome, error) {
 	switch command := command.(type) {
 	case AddManualForward:
 		return m.addManualForward(ctx, command)
 	case RemoveForward:
 		return m.removeForward(ctx, command)
+	case ApproveListener:
+		return m.approveListener(ctx, command)
+	case SuppressListener:
+		return m.suppressListener(ctx, command)
 	default:
 		return Outcome{}, &DomainError{Kind: ErrorInvalidCommand}
 	}
@@ -293,6 +346,127 @@ func (m *manager) completeRemoval(remove RemoveForward, forward ForwardSnapshot)
 	}
 	m.publishLocked()
 	return Outcome{Kind: OutcomeForwardRemoved, Revision: m.revision, Forward: cloneForward(forward)}
+}
+
+// ApproveListener records a One-time Approval for the current Listener
+// Lifetime and immediately creates its Managed Forward (the user's explicit
+// intent needs no hysteresis). If the listener already has a Managed
+// Forward, only the approval is recorded.
+func (m *manager) approveListener(ctx context.Context, approve ApproveListener) (Outcome, error) {
+	if outcome, replayed, err := m.beginCommand(ctx, approve.CommandID, approve); replayed || err != nil {
+		return outcome, err
+	}
+	if approve.Host != m.host || m.host == "" {
+		m.failCommandAndRelease(approve.CommandID)
+		return Outcome{}, &DomainError{Kind: ErrorUnknownHost}
+	}
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		m.failCommandAndRelease(approve.CommandID)
+		return Outcome{}, &DomainError{Kind: ErrorManagerClosed, Retryable: true}
+	}
+	key, observation, found := m.findListenerLocked(approve.RemotePort, approve.Family)
+	if !found {
+		m.mu.Unlock()
+		m.failCommandAndRelease(approve.CommandID)
+		return Outcome{}, &DomainError{Kind: ErrorListenerNotFound}
+	}
+	m.approvals[key] = struct{}{}
+	if m.forwards.hasManagedForListener(key, observation) {
+		m.publishLocked()
+		m.mu.Unlock()
+		m.completeCommand(approve.CommandID, approve, Outcome{Kind: OutcomeApprovalRecorded, Revision: m.revision})
+		return Outcome{Kind: OutcomeApprovalRecorded, Revision: m.revision}, nil
+	}
+	m.mu.Unlock()
+
+	remote, err := manualTarget(observation.Family, approve.RemotePort)
+	if err != nil {
+		m.failCommandAndRelease(approve.CommandID)
+		return Outcome{}, err
+	}
+	owner, err := m.forwardAllocator.Allocate(ctx, forwardSpec{
+		ID:                 ForwardID("managed:" + managedForwardToken(key)),
+		Kind:               ForwardManaged,
+		Remote:             remote,
+		PreferredLocalPort: approve.RemotePort,
+	})
+	if err != nil {
+		m.mu.Lock()
+		delete(m.approvals, key)
+		m.mu.Unlock()
+		m.failCommandAndRelease(approve.CommandID)
+		return Outcome{}, err
+	}
+	forward := owner.Projection()
+
+	m.mu.Lock()
+	if m.closed || ctx.Err() != nil {
+		closed := m.closed
+		m.failCommandLockedAndReleaseForward(approve.CommandID, owner)
+		m.mu.Unlock()
+		if closed {
+			return Outcome{}, &DomainError{Kind: ErrorManagerClosed, Retryable: true}
+		}
+		return Outcome{}, ctx.Err()
+	}
+	if !m.forwards.add(owner) {
+		m.failCommandLockedAndReleaseForward(approve.CommandID, owner)
+		m.mu.Unlock()
+		return Outcome{}, &DomainError{Kind: ErrorCommandIDConflict}
+	}
+	m.publishLocked()
+	outcome := Outcome{Kind: OutcomeApprovalRecorded, Revision: m.revision, Forward: cloneForward(forward)}
+	m.mu.Unlock()
+	m.completeCommand(approve.CommandID, approve, outcome)
+	return outcome, nil
+}
+
+// SuppressListener records a One-time Suppression for the current Listener
+// Lifetime: the listener leaves the Ask list until the lifetime ends.
+func (m *manager) suppressListener(ctx context.Context, suppress SuppressListener) (Outcome, error) {
+	if outcome, replayed, err := m.beginCommand(ctx, suppress.CommandID, suppress); replayed || err != nil {
+		return outcome, err
+	}
+	if suppress.Host != m.host || m.host == "" {
+		m.failCommandAndRelease(suppress.CommandID)
+		return Outcome{}, &DomainError{Kind: ErrorUnknownHost}
+	}
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		m.failCommandAndRelease(suppress.CommandID)
+		return Outcome{}, &DomainError{Kind: ErrorManagerClosed, Retryable: true}
+	}
+	key, _, found := m.findListenerLocked(suppress.RemotePort, suppress.Family)
+	if !found {
+		m.mu.Unlock()
+		m.failCommandAndRelease(suppress.CommandID)
+		return Outcome{}, &DomainError{Kind: ErrorListenerNotFound}
+	}
+	m.suppressions[key] = struct{}{}
+	m.publishLocked()
+	outcome := Outcome{Kind: OutcomeSuppressionRecorded, Revision: m.revision}
+	m.mu.Unlock()
+	m.completeCommand(suppress.CommandID, suppress, outcome)
+	return outcome, nil
+}
+
+// findListenerLocked locates the Listener the commands target: an exact
+// family when one is given (FamilyAuto or empty matches the first listener
+// on the port, deterministically — observations are canonically ordered).
+func (m *manager) findListenerLocked(port uint16, family AddressFamily) (remoteListenerKey, ListenerObservation, bool) {
+	for _, observation := range m.hostSnapshot.ListenerObservations {
+		if observation.RemotePort != port {
+			continue
+		}
+		if family != FamilyAuto && family != "" && observation.Family != family {
+			continue
+		}
+		return listenerKey(observation), observation, true
+	}
+	return remoteListenerKey{}, ListenerObservation{}, false
 }
 
 // manualTarget is the authoritative defense for a Manual Forward's target:

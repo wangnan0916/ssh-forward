@@ -36,7 +36,7 @@ func TestManagerPublishesListenerLifetimes(t *testing.T) {
 	want = []ListenerLifetimeSnapshot{
 		{Family: FamilyIPv4, BindScope: BindLoopback, RemotePort: 8080, Status: LifetimeContinuous},
 		{Family: FamilyIPv4, BindScope: BindLoopback, RemotePort: 9090, Status: LifetimeContinuous},
-		{Family: FamilyIPv6, BindScope: BindLoopback, RemotePort: 8080, Status: LifetimeNew},
+		{Family: FamilyIPv6, BindScope: BindLoopback, RemotePort: 8080, Status: LifetimeNew, PostBaseline: true},
 	}
 	if got := snapshot.Host.ListenerLifetimes; !reflect.DeepEqual(got, want) {
 		t.Fatalf("second generation Listener Lifetimes = %#v, want %#v", got, want)
@@ -59,7 +59,7 @@ func TestManagerPublishesListenerLifetimeReplacement(t *testing.T) {
 		t.Fatalf("Snapshot: %v", err)
 	}
 	want := []ListenerLifetimeSnapshot{
-		{Family: FamilyIPv4, BindScope: BindLoopback, RemotePort: 8080, Status: LifetimeReplaced},
+		{Family: FamilyIPv4, BindScope: BindLoopback, RemotePort: 8080, Status: LifetimeReplaced, PostBaseline: true},
 	}
 	if got := snapshot.Host.ListenerLifetimes; !reflect.DeepEqual(got, want) {
 		t.Fatalf("replaced Listener Lifetimes = %#v, want %#v", got, want)

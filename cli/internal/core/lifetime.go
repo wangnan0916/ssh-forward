@@ -26,11 +26,14 @@ const (
 )
 
 // ListenerLifetimeSnapshot is one Remote Listener's current lifetime status.
+// PostBaseline records whether the Listener was first observed after the
+// Discovery Baseline: only post-baseline Listeners enter the Ask flow.
 type ListenerLifetimeSnapshot struct {
-	Family     AddressFamily
-	BindScope  ListenerBindScope
-	RemotePort uint16
-	Status     LifetimeStatus
+	Family       AddressFamily
+	BindScope    ListenerBindScope
+	RemotePort   uint16
+	Status       LifetimeStatus
+	PostBaseline bool
 }
 
 // defaultListenerGraceCycles is the disappearance tolerance for a Listener
@@ -42,12 +45,14 @@ type ListenerLifetimeSnapshot struct {
 const defaultListenerGraceCycles = 3
 
 type listenerLifetime struct {
-	identities map[SocketIdentity]struct{}
-	grace      int
+	identities   map[SocketIdentity]struct{}
+	grace        int
+	postBaseline bool
 }
 
 type lifetimeTracker struct {
 	graceCycles int
+	baseline    bool
 	lifetimes   map[remoteListenerKey]*listenerLifetime
 }
 
@@ -56,6 +61,14 @@ func newLifetimeTracker(graceCycles int) *lifetimeTracker {
 		graceCycles: graceCycles,
 		lifetimes:   make(map[remoteListenerKey]*listenerLifetime),
 	}
+}
+
+// markBaseline records that the Discovery Baseline is established: Listeners
+// first observed from here on enter the Ask flow. Baseline is established by
+// the actor on the first complete ObservationSet (actor.go); the tracker
+// stays clock-free and knows nothing about sessions or outages.
+func (t *lifetimeTracker) markBaseline() {
+	t.baseline = true
 }
 
 // advance classifies the current observation generation against the previous
@@ -71,15 +84,15 @@ func (t *lifetimeTracker) advance(observations []ListenerObservation) []Listener
 		record := t.lifetimes[key]
 		switch {
 		case record == nil:
-			t.lifetimes[key] = &listenerLifetime{identities: identities}
-			verdicts = append(verdicts, lifetimeVerdict(key, LifetimeNew))
+			t.lifetimes[key] = &listenerLifetime{identities: identities, postBaseline: t.baseline}
+			verdicts = append(verdicts, lifetimeVerdict(key, LifetimeNew, t.baseline))
 		case len(record.identities) != 0 && len(identities) != 0 && !overlappingIdentities(record.identities, identities):
-			t.lifetimes[key] = &listenerLifetime{identities: identities}
-			verdicts = append(verdicts, lifetimeVerdict(key, LifetimeReplaced))
+			t.lifetimes[key] = &listenerLifetime{identities: identities, postBaseline: true}
+			verdicts = append(verdicts, lifetimeVerdict(key, LifetimeReplaced, true))
 		default:
 			record.identities = identities
 			record.grace = 0
-			verdicts = append(verdicts, lifetimeVerdict(key, LifetimeContinuous))
+			verdicts = append(verdicts, lifetimeVerdict(key, LifetimeContinuous, record.postBaseline))
 		}
 	}
 	for key, record := range t.lifetimes {
@@ -89,10 +102,10 @@ func (t *lifetimeTracker) advance(observations []ListenerObservation) []Listener
 		record.grace++
 		if record.grace > t.graceCycles {
 			delete(t.lifetimes, key)
-			verdicts = append(verdicts, lifetimeVerdict(key, LifetimeEnded))
+			verdicts = append(verdicts, lifetimeVerdict(key, LifetimeEnded, record.postBaseline))
 			continue
 		}
-		verdicts = append(verdicts, lifetimeVerdict(key, LifetimeGrace))
+		verdicts = append(verdicts, lifetimeVerdict(key, LifetimeGrace, record.postBaseline))
 	}
 	slices.SortFunc(verdicts, func(left, right ListenerLifetimeSnapshot) int {
 		if order := cmp.Compare(left.Family, right.Family); order != 0 {
@@ -123,11 +136,12 @@ func overlappingIdentities(previous, current map[SocketIdentity]struct{}) bool {
 	return false
 }
 
-func lifetimeVerdict(key remoteListenerKey, status LifetimeStatus) ListenerLifetimeSnapshot {
+func lifetimeVerdict(key remoteListenerKey, status LifetimeStatus, postBaseline bool) ListenerLifetimeSnapshot {
 	return ListenerLifetimeSnapshot{
-		Family:     key.family,
-		BindScope:  key.scope,
-		RemotePort: key.port,
-		Status:     status,
+		Family:       key.family,
+		BindScope:    key.scope,
+		RemotePort:   key.port,
+		Status:       status,
+		PostBaseline: postBaseline,
 	}
 }

@@ -24,6 +24,11 @@ type hostActorOptions struct {
 	dialer    *currentDialer
 	publish   func(HostSnapshot)
 	ctx       context.Context
+	// onObservation notifies the Manager that a new observation generation
+	// was applied. It fires once per ObservationSet — not on connection
+	// state or Discovery-only publications — so the reconciliation worker
+	// advances its hysteresis exactly once per generation.
+	onObservation func()
 }
 
 // hostActor owns one Development Host's Forwarding Session, Discovery State,
@@ -38,6 +43,7 @@ type hostActor struct {
 	publish    func(HostSnapshot)
 	retryDelay func(int) time.Duration
 	retryWait  func(context.Context, time.Duration) bool
+	onObserve  func()
 	ctx        context.Context
 
 	mu                      sync.Mutex
@@ -57,6 +63,7 @@ func newHostActor(options hostActorOptions, retryDelay func(int) time.Duration, 
 		connector:  options.connector,
 		dialer:     options.dialer,
 		publish:    options.publish,
+		onObserve:  options.onObservation,
 		retryDelay: retryDelay,
 		retryWait:  retryWait,
 		ctx:        options.ctx,
@@ -242,19 +249,29 @@ func (a *hostActor) applyObservationSet(set ObservationSet) {
 		// produced it); budget drift is instead rejected in-band.
 		ScannerChecksum: set.ScannerChecksum,
 	}
-	if gapped {
-		discovery.State = DiscoveryDegraded
-		discovery.Diagnostic = "observation_resync"
-	}
 	// The tracker always advances: absent listeners accrue grace even when
 	// the observation set itself is unchanged, and only crossing the grace
 	// threshold changes a verdict. publishLocked deduplicates the no-change
 	// publication, so lifetime progression and publish suppression coexist.
 	verdicts := a.tracker.advance(observations)
+	// The first complete observation establishes the Discovery Baseline;
+	// Listeners first observed from then on enter the Ask flow. The mark
+	// comes after advance so the baseline generation's own Listeners stay
+	// pre-baseline; the mark itself is idempotent.
+	if complete && !a.state.Discovery.BaselineEstablished {
+		a.tracker.markBaseline()
+	}
+	if gapped {
+		discovery.State = DiscoveryDegraded
+		discovery.Diagnostic = "observation_resync"
+	}
 	a.state.Discovery = discovery
 	a.state.ListenerObservations = observations
 	a.state.ListenerLifetimes = verdicts
 	a.publishLocked()
+	if a.onObserve != nil {
+		a.onObserve()
+	}
 }
 
 // diagnosticForReason is the single translation from scanner-side report

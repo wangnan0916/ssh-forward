@@ -150,7 +150,10 @@ type ListenerObservation struct {
 
 type ForwardKind string
 
-const ForwardManual ForwardKind = "manual"
+const (
+	ForwardManual  ForwardKind = "manual"
+	ForwardManaged ForwardKind = "managed"
+)
 
 type Command interface {
 	isCommand()
@@ -172,11 +175,39 @@ type RemoveForward struct {
 
 func (RemoveForward) isCommand() {}
 
+// ApproveListener creates a Managed Forward for the current Listener
+// Lifetime through One-time Approval: the approval lasts exactly one
+// Listener Lifetime and retires when the verdict turns ended or replaced.
+// Family is optional (FamilyAuto or empty matches the first Listener on
+// the port).
+type ApproveListener struct {
+	CommandID  CommandID
+	Host       HostAlias
+	RemotePort uint16
+	Family     AddressFamily
+}
+
+func (ApproveListener) isCommand() {}
+
+// SuppressListener asks no further questions during the current Listener
+// Lifetime; the suppression retires with the lifetime. Family is optional
+// (FamilyAuto or empty matches the first Listener on the port).
+type SuppressListener struct {
+	CommandID  CommandID
+	Host       HostAlias
+	RemotePort uint16
+	Family     AddressFamily
+}
+
+func (SuppressListener) isCommand() {}
+
 type OutcomeKind string
 
 const (
-	OutcomeForwardAdded   OutcomeKind = "forward_added"
-	OutcomeForwardRemoved OutcomeKind = "forward_removed"
+	OutcomeForwardAdded        OutcomeKind = "forward_added"
+	OutcomeForwardRemoved      OutcomeKind = "forward_removed"
+	OutcomeApprovalRecorded    OutcomeKind = "approval_recorded"
+	OutcomeSuppressionRecorded OutcomeKind = "suppression_recorded"
 )
 
 type ErrorKind string
@@ -187,6 +218,7 @@ const (
 	ErrorCommandIDConflict ErrorKind = "command_id_conflict"
 	ErrorLocalPortConflict ErrorKind = "local_port_conflict"
 	ErrorForwardNotFound   ErrorKind = "forward_not_found"
+	ErrorListenerNotFound  ErrorKind = "listener_not_found"
 	ErrorManagerClosed     ErrorKind = "manager_closed"
 	ErrorWatchLimit        ErrorKind = "watch_limit"
 )
@@ -215,12 +247,22 @@ type ForwardSnapshot struct {
 	LocalFamilies      []AddressFamily
 }
 
+// ListenerAskSnapshot is one Remote Listener currently needing a user
+// decision: first observed after the Discovery Baseline, no policy or
+// One-time Suppression governs it, and no policy matched automatically.
+type ListenerAskSnapshot struct {
+	Family     AddressFamily
+	BindScope  ListenerBindScope
+	RemotePort uint16
+}
+
 type HostSnapshot struct {
 	Alias                HostAlias
 	Connection           ConnectionState
 	Discovery            DiscoverySnapshot
 	ListenerObservations []ListenerObservation
 	ListenerLifetimes    []ListenerLifetimeSnapshot
+	AskListeners         []ListenerAskSnapshot
 	Forwards             []ForwardSnapshot
 }
 
