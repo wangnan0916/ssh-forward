@@ -47,11 +47,19 @@ var (
 		Message: "watch-snapshot-v1 capability is required",
 	}).WithData(errorData{Kind: "capability_required"})
 
-	errWatchLimit = (&jrpc2.Error{
+	errWatchLimit = watchLimitError()
+)
+
+// watchLimitError is the single construction of the Watch-limit wire error.
+// Both limits produce it: the per-connection Watch slot cap enforced in the
+// session and the Manager's global Watch cap translated from core, so the
+// code, message, and retryable flag cannot drift between the two paths.
+func watchLimitError() *jrpc2.Error {
+	return (&jrpc2.Error{
 		Code:    -32015,
 		Message: "too many active Watches",
 	}).WithData(errorData{Kind: "watch_limit", Retryable: true})
-)
+}
 
 type protocolVersion struct {
 	Major int `json:"major"`

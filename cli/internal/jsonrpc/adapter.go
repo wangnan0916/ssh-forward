@@ -128,8 +128,7 @@ func marshalManagerError(err error) error {
 		code = -32014
 		message = "Manager is closed"
 	case core.ErrorWatchLimit:
-		code = -32015
-		message = "too many active Watches"
+		return watchLimitError()
 	default:
 		return &jrpc2.Error{Code: jrpc2.InternalError, Message: "internal error"}
 	}
