@@ -21,6 +21,11 @@ import (
 
 var ErrInvalidAlias = errors.New("invalid Development Host alias")
 
+// maxStderrTailBytes bounds the retained stderr tail used to classify exit
+// causes; the same 64 KiB magnitude as the scanner's maxScannerFrameBytes,
+// named here so the budget has one declaration.
+const maxStderrTailBytes = 64 << 10
+
 type Options struct {
 	Executable   string
 	ConfigFile   string
@@ -98,6 +103,9 @@ func (a *Adapter) ValidateAlias(ctx context.Context, alias string) error {
 }
 
 func (a *Adapter) Start(ctx context.Context, alias string) (*Session, error) {
+	// Guard the exported surface: Connect validates first for the transport
+	// seam, but Start is also called directly by tests and must never hand
+	// an unchecked alias (e.g. one starting with '-') to ssh.
 	if !validAlias(alias) {
 		return nil, ErrInvalidAlias
 	}
@@ -115,7 +123,7 @@ func (a *Adapter) Start(ctx context.Context, alias string) (*Session, error) {
 		"sh", "-s",
 	)
 	command := exec.Command(a.executable, arguments...)
-	stderr := &boundedBuffer{limit: 64 << 10}
+	stderr := &boundedBuffer{limit: maxStderrTailBytes}
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -167,12 +175,12 @@ func (a *Adapter) configArguments() []string {
 }
 
 func approvedEnvironment() []string {
+	// The LC_* locale family passes wholesale below; the explicit entries
+	// are every other allowlisted variable.
 	allowed := map[string]bool{
 		"DISPLAY":       true,
 		"HOME":          true,
 		"LANG":          true,
-		"LC_ALL":        true,
-		"LC_CTYPE":      true,
 		"LOGNAME":       true,
 		"PATH":          true,
 		"SHELL":         true,
