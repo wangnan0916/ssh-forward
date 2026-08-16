@@ -6,24 +6,24 @@ The greenfield product, repository, and eventual executable are named `ssh-forwa
 
 ## Repository
 
-After the design session reaches shared understanding and the user explicitly authorizes implementation, the personal project root will become a new local Git repository with no inherited history, tag, or remote. Creating or pushing a remote is a separate future decision.
+The personal project root is a new local Git repository with no inherited history, tag, or remote (created at implementation start; the design documents were captured in the first commits). Creating or pushing a remote is a separate future decision.
 
 ```text
 /
-├── cli/
+├── cli/             # Go Manager module (present)
 │   ├── go.mod
-│   ├── cmd/ssh-forward/
+│   ├── cmd/         # planned CLI entry (slice 6), landing on app.NewManager
 │   └── internal/
-├── desktop/
-├── schema/
-├── scripts/
-├── test/
+├── desktop/         # planned native macOS app (later phase)
+├── schema/          # planned versioned config/policy schema (Policy slice)
+├── scripts/         # integration harness (present)
+├── test/            # protocol fixtures + disposable-host image (present)
 ├── docs/
 ├── CONTEXT.md
 └── README.md
 ```
 
-No legacy source directory is included. The first commit captures the accepted design documents before formal code. The transport spike ran on a separate throwaway branch; only its verdict and resulting decision changes returned to `main`.
+No legacy source directory is included. The transport spike ran on a separate throwaway branch; only its verdict and resulting decision changes returned to `main`.
 
 ## Versions
 
