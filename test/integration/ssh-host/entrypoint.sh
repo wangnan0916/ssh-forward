@@ -41,7 +41,7 @@ fi
 
 /usr/sbin/sshd -D -e \
     -o AllowTcpForwarding=yes \
-    -o AllowUsers=testdev \
+    -o AllowUsers="$fixture_user" \
     -o AuthenticationMethods=publickey \
     -o GatewayPorts=no \
     -o KbdInteractiveAuthentication=no \
