@@ -24,6 +24,20 @@ const (
 	FamilyIPv6 AddressFamily = "ipv6"
 )
 
+// ValidAddressFamily is the single family whitelist. The IPC Adapter
+// pre-checks with it so an invalid family fails as wire-invalid parameters,
+// and manualTarget re-enforces it as the authoritative defense; adding a
+// family means editing this one switch. Like MaxHostAliasLength above, the
+// whitelist lives with the domain type it constrains.
+func ValidAddressFamily(family AddressFamily) bool {
+	switch family {
+	case FamilyAuto, FamilyIPv4, FamilyIPv6:
+		return true
+	default:
+		return false
+	}
+}
+
 // ConnectionState is the Forwarding Session's life cycle as the mirror and
 // the Snapshot expose it. Transition table — who may write which state (the
 // only two legal writers are the Manager mirror under the Manager lock and
