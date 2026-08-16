@@ -27,6 +27,15 @@ const (
 
 var errInvalidSessionTarget = errors.New("OpenSSH Forwarding Session target must be remote loopback")
 
+// probeRetryInterval and probeTimeout are the SOCKS-readiness probe cadence:
+// the probe retries every probeRetryInterval, and each attempt (dial and
+// handshake) is budgeted probeTimeout, so a slow start fails fast and the
+// waitUntilReady caller's overall timeout owns the total.
+const (
+	probeRetryInterval = 10 * time.Millisecond
+	probeTimeout       = 50 * time.Millisecond
+)
+
 type Session struct {
 	command     *exec.Cmd
 	dialer      proxy.Dialer
@@ -106,7 +115,7 @@ func (s *Session) terminalError() error {
 func (s *Session) waitUntilReady(ctx context.Context, address netip.AddrPort, timeout time.Duration) error {
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
-	retry := time.NewTicker(10 * time.Millisecond)
+	retry := time.NewTicker(probeRetryInterval)
 	defer retry.Stop()
 	for {
 		if probeSOCKS(address) == nil {
@@ -125,12 +134,12 @@ func (s *Session) waitUntilReady(ctx context.Context, address netip.AddrPort, ti
 }
 
 func probeSOCKS(address netip.AddrPort) error {
-	connection, err := net.DialTimeout("tcp4", address.String(), 50*time.Millisecond)
+	connection, err := net.DialTimeout("tcp4", address.String(), probeTimeout)
 	if err != nil {
 		return err
 	}
 	defer connection.Close()
-	if err := connection.SetDeadline(time.Now().Add(50 * time.Millisecond)); err != nil {
+	if err := connection.SetDeadline(time.Now().Add(probeTimeout)); err != nil {
 		return err
 	}
 	return proxy.NegotiateMethod(connection)
