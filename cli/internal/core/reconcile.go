@@ -177,7 +177,7 @@ func (r *reconciler) askListeners(host HostSnapshot) []ListenerAskSnapshot {
 	}
 	postBaseline := make(map[remoteListenerKey]bool, len(host.ListenerLifetimes))
 	for _, verdict := range host.ListenerLifetimes {
-		postBaseline[remoteListenerKey{family: verdict.Family, scope: verdict.BindScope, port: verdict.RemotePort}] = verdict.PostBaseline
+		postBaseline[lifetimeKey(verdict)] = verdict.PostBaseline
 	}
 	ask := make([]ListenerAskSnapshot, 0)
 	for _, observation := range host.ListenerObservations {
@@ -252,7 +252,7 @@ func (m *manager) reconcileOnce() {
 	}
 	statusByKey := make(map[remoteListenerKey]LifetimeStatus, len(host.ListenerLifetimes))
 	for _, verdict := range host.ListenerLifetimes {
-		statusByKey[remoteListenerKey{family: verdict.Family, scope: verdict.BindScope, port: verdict.RemotePort}] = verdict.Status
+		statusByKey[lifetimeKey(verdict)] = verdict.Status
 	}
 
 	// Desired Managed Forwards: one per Listener that is either governed by

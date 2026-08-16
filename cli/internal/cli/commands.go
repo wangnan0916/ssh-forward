@@ -43,6 +43,19 @@ func (a *App) runStatus(ctx context.Context, args []string) error {
 	return a.writeStatusHuman(snapshot)
 }
 
+// listenerID is the Remote Listener identity on the wire: family, bind
+// scope, and port. Status rendering compares identities, not fields — the
+// identity triple has one construction and one equality here.
+type listenerID struct {
+	family core.AddressFamily
+	scope  core.ListenerBindScope
+	port   uint16
+}
+
+func idOfListener(listener core.ListenerObservation) listenerID {
+	return listenerID{family: listener.Family, scope: listener.BindScope, port: listener.RemotePort}
+}
+
 func (a *App) writeStatusHuman(snapshot core.Snapshot) error {
 	host := snapshot.Host
 	var builder strings.Builder
@@ -53,14 +66,24 @@ func (a *App) writeStatusHuman(snapshot core.Snapshot) error {
 		fmt.Fprintf(&builder, "  diagnostic: %s\n", host.Discovery.Diagnostic)
 	}
 	if len(host.ListenerObservations) != 0 {
+		statusByID := make(map[listenerID]string, len(host.ListenerLifetimes))
+		for _, lifetime := range host.ListenerLifetimes {
+			statusByID[listenerID{family: lifetime.Family, scope: lifetime.BindScope, port: lifetime.RemotePort}] = string(lifetime.Status)
+		}
+		askByID := make(map[listenerID]bool, len(host.AskListeners))
+		for _, candidate := range host.AskListeners {
+			askByID[listenerID{family: candidate.Family, scope: candidate.BindScope, port: candidate.RemotePort}] = true
+		}
 		builder.WriteString("Listeners:\n")
 		for _, listener := range host.ListenerObservations {
-			status := lifetimeStatus(host.ListenerLifetimes, listener)
+			id := idOfListener(listener)
+			status, tracked := statusByID[id]
+			if !tracked {
+				status = "untracked"
+			}
 			ask := ""
-			for _, candidate := range host.AskListeners {
-				if candidate.Family == listener.Family && candidate.BindScope == listener.BindScope && candidate.RemotePort == listener.RemotePort {
-					ask = " — Ask"
-				}
+			if askByID[id] {
+				ask = " — Ask"
 			}
 			fmt.Fprintf(&builder, "  %d/%s %s — %s%s\n",
 				listener.RemotePort, listener.Family, listener.BindScope, status, ask)
@@ -75,15 +98,6 @@ func (a *App) writeStatusHuman(snapshot core.Snapshot) error {
 	}
 	_, err := io.WriteString(a.Stdout, builder.String())
 	return err
-}
-
-func lifetimeStatus(lifetimes []core.ListenerLifetimeSnapshot, listener core.ListenerObservation) string {
-	for _, lifetime := range lifetimes {
-		if lifetime.Family == listener.Family && lifetime.BindScope == listener.BindScope && lifetime.RemotePort == listener.RemotePort {
-			return string(lifetime.Status)
-		}
-	}
-	return "untracked"
 }
 
 // runForward executes the forward command family: add and remove.
