@@ -49,8 +49,9 @@ type hostActor struct {
 	listenerLifetimes       []ListenerLifetimeSnapshot
 	lastObservationSequence uint64
 
-	tracker *lifetimeTracker
-	done    chan struct{}
+	tracker       *lifetimeTracker
+	lastPublished HostSnapshot
+	done          chan struct{}
 }
 
 func newHostActor(options hostActorOptions) *hostActor {
@@ -231,12 +232,9 @@ func (a *hostActor) applyObservationSet(set ObservationSet) {
 	}
 	// The tracker always advances: absent listeners accrue grace even when
 	// the observation set itself is unchanged, and only crossing the grace
-	// threshold changes a verdict, so comparing the verdicts below keeps the
-	// no-change publish deduplication without freezing lifetime progression.
+	// threshold changes a verdict. publishLocked deduplicates the no-change
+	// publication, so lifetime progression and publish suppression coexist.
 	verdicts := a.tracker.advance(observations)
-	if reflect.DeepEqual(a.discovery, discovery) && reflect.DeepEqual(a.listenerObservations, observations) && reflect.DeepEqual(a.listenerLifetimes, verdicts) {
-		return
-	}
 	a.discovery = discovery
 	a.listenerObservations = observations
 	a.listenerLifetimes = verdicts
@@ -254,9 +252,6 @@ func (a *hostActor) applyDiscoveryChange(change DiscoveryChange) {
 	discovery.State = change.State
 	discovery.Capability = change.Capability
 	discovery.Diagnostic = change.Diagnostic
-	if reflect.DeepEqual(a.discovery, discovery) {
-		return
-	}
 	a.discovery = discovery
 	a.publishLocked()
 }
@@ -271,9 +266,6 @@ func (a *hostActor) failDiscoveryLocked(diagnostic string) {
 	discovery := a.discovery
 	discovery.State = DiscoveryFailed
 	discovery.Diagnostic = diagnostic
-	if reflect.DeepEqual(a.discovery, discovery) {
-		return
-	}
 	a.discovery = discovery
 	a.publishLocked()
 }
@@ -282,22 +274,30 @@ func (a *hostActor) publishConnectionFailure() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.active = false
-	if a.connection == ConnectionDisconnected {
-		return
-	}
 	a.connection = ConnectionDisconnected
 	a.discovery = stoppedDiscovery()
 	a.publishLocked()
 }
 
+// publishLocked publishes one per-host snapshot and is the single place that
+// suppresses no-change publications: it compares against the last snapshot it
+// handed to the Manager. Callers mutate state and publish unconditionally, so
+// new state fields (for example Policy reconciliation verdicts) get dedup for
+// free. The tracker's unconditional advance above is unaffected: it is a side
+// effect on the actor, not a publication.
 func (a *hostActor) publishLocked() {
-	a.publish(HostSnapshot{
+	next := HostSnapshot{
 		Alias:                a.host,
 		Connection:           a.connection,
 		Discovery:            a.discovery,
 		ListenerObservations: a.listenerObservations,
 		ListenerLifetimes:    a.listenerLifetimes,
-	})
+	}
+	if reflect.DeepEqual(a.lastPublished, next) {
+		return
+	}
+	a.lastPublished = next
+	a.publish(next)
 }
 
 func (a *hostActor) waitToReconnect(attempt int) bool {
