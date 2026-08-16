@@ -25,6 +25,12 @@ type connectionSession struct {
 	pendingWatches int
 	nextWatchID    uint64
 	watches        map[string]*connectionWatch
+	// pendingWatchResponses maps in-flight manager.watch request ids to the
+	// server-assigned Watch IDs their responses will introduce. onResponseSent
+	// consumes one entry per delivered response, so the map is bounded by the
+	// number of watch requests in flight (itself bounded by the watch slots)
+	// and dies with the session.
+	pendingWatchResponses map[string]string
 }
 
 type connectionWatch struct {
@@ -39,11 +45,12 @@ type connectionWatch struct {
 func newConnectionSession(ctx context.Context, manager core.Manager, capabilities negotiatedCapabilities) *connectionSession {
 	sessionCtx, cancel := context.WithCancel(ctx)
 	return &connectionSession{
-		ctx:          sessionCtx,
-		cancel:       cancel,
-		manager:      manager,
-		capabilities: capabilities,
-		watches:      make(map[string]*connectionWatch),
+		ctx:                   sessionCtx,
+		cancel:                cancel,
+		manager:               manager,
+		capabilities:          capabilities,
+		watches:               make(map[string]*connectionWatch),
+		pendingWatchResponses: make(map[string]string),
 	}
 }
 
@@ -75,6 +82,12 @@ func (s *connectionSession) handleWatch(ctx context.Context, request *jrpc2.Requ
 		_ = stream.Close()
 		return nil, &jrpc2.Error{Code: jrpc2.InternalError, Message: "internal error"}
 	}
+	// Record which request id this response introduces: onResponseSent then
+	// activates the Watch by looking up the already-decoded request id,
+	// instead of re-parsing the result the handler itself just marshalled.
+	s.mu.Lock()
+	s.pendingWatchResponses[request.ID()] = watch.id
+	s.mu.Unlock()
 
 	go func() {
 		defer s.workers.Done()
@@ -86,31 +99,17 @@ func (s *connectionSession) handleWatch(ctx context.Context, request *jrpc2.Requ
 	}, nil
 }
 
-// watchResponseID reports the server-assigned Watch ID introduced by a
-// manager.watch response that carries a Snapshot. The envelope arrives
-// already decoded from the channel's Send path; only the method-specific
-// result is parsed here.
-func watchResponseID(envelope decodedResponse) (string, bool) {
-	if len(envelope.Result) == 0 {
-		return "", false
-	}
-	var result struct {
-		WatchID  string          `json:"watch_id"`
-		Snapshot json.RawMessage `json:"snapshot"`
-	}
-	if json.Unmarshal(envelope.Result, &result) != nil || result.WatchID == "" || len(result.Snapshot) == 0 {
-		return "", false
-	}
-	return result.WatchID, true
-}
-
 // onResponseSent runs after a response frame is written, so no notification
-// can overtake the response that introduces a Watch. The handler committed
-// the Watch to s.watches before the response was sent, so the lookup always
-// succeeds for watch responses; the guard keeps the activation channel closed
-// at most once.
+// can overtake the response that introduces a Watch. handleWatch recorded
+// the request-id → watch-id mapping before the response was written, and the
+// channel delivers the already-decoded request id here, so no result parsing
+// is needed; the lookup always succeeds for watch responses. The guard keeps
+// the activation channel closed at most once.
 func (s *connectionSession) onResponseSent(envelope decodedResponse) {
-	watchID, ok := watchResponseID(envelope)
+	s.mu.Lock()
+	watchID, ok := s.pendingWatchResponses[string(envelope.ID)]
+	delete(s.pendingWatchResponses, string(envelope.ID))
+	s.mu.Unlock()
 	if !ok {
 		return
 	}
