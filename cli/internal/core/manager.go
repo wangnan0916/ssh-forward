@@ -344,7 +344,7 @@ func (m *manager) approveListener(ctx context.Context, approve ApproveListener) 
 		m.failCommandAndRelease(approve.CommandID)
 		return Outcome{}, &DomainError{Kind: ErrorManagerClosed, Retryable: true}
 	}
-	key, observation, found := m.findListenerLocked(approve.RemotePort, approve.Family)
+	key, _, found := m.findListenerLocked(approve.RemotePort, approve.Family)
 	if !found {
 		m.mu.Unlock()
 		m.failCommandAndRelease(approve.CommandID)
@@ -359,17 +359,7 @@ func (m *manager) approveListener(ctx context.Context, approve ApproveListener) 
 	}
 	m.mu.Unlock()
 
-	remote, err := manualTarget(observation.Family, approve.RemotePort)
-	if err != nil {
-		m.failCommandAndRelease(approve.CommandID)
-		return Outcome{}, err
-	}
-	owner, err := m.forwardAllocator.Allocate(ctx, forwardSpec{
-		ID:                 ForwardID("managed:" + managedForwardToken(key)),
-		Kind:               ForwardManaged,
-		Remote:             remote,
-		PreferredLocalPort: approve.RemotePort,
-	})
+	owner, err := m.allocateManagedForward(ctx, key)
 	if err != nil {
 		m.mu.Lock()
 		delete(m.reconciler.approvals, key)
@@ -390,9 +380,14 @@ func (m *manager) approveListener(ctx context.Context, approve ApproveListener) 
 		return Outcome{}, ctx.Err()
 	}
 	if !m.forwards.add(owner) {
-		m.failCommandLockedAndReleaseForward(approve.CommandID, owner)
+		// The reconciliation worker registered the same Managed Forward
+		// first: the approval's intent is already served, so the outcome
+		// is the approval record — not a command conflict.
+		_ = owner.Close(context.Background())
+		m.publishLocked()
 		m.mu.Unlock()
-		return Outcome{}, &DomainError{Kind: ErrorCommandIDConflict}
+		m.completeCommand(approve.CommandID, approve, Outcome{Kind: OutcomeApprovalRecorded, Revision: m.revision})
+		return Outcome{Kind: OutcomeApprovalRecorded, Revision: m.revision}, nil
 	}
 	m.publishLocked()
 	outcome := Outcome{Kind: OutcomeApprovalRecorded, Revision: m.revision, Forward: cloneForward(forward)}

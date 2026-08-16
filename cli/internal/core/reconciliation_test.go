@@ -190,6 +190,25 @@ func askPorts(snapshot Snapshot) map[uint16]bool {
 	return ports
 }
 
+func TestManagedForwardIdentityRoundTripsThroughSpec(t *testing.T) {
+	key := remoteListenerKey{family: FamilyIPv4, scope: BindLoopback, port: 8080}
+	spec, err := managedForwardSpec(key)
+	if err != nil {
+		t.Fatalf("managedForwardSpec: %v", err)
+	}
+	if spec.Kind != ForwardManaged || spec.PreferredLocalPort != 8080 {
+		t.Fatalf("spec = %+v, want managed kind on port 8080", spec)
+	}
+	recovered, known := managedForwardKey(spec.ID)
+	if !known || recovered != key {
+		t.Fatalf("managedForwardKey(%q) = %+v, %v; want %+v", spec.ID, recovered, known, key)
+	}
+	// The token is the one identity format both creation paths share.
+	if string(spec.ID) != "managed:"+managedForwardToken(key) {
+		t.Fatalf("ID %q does not match token %q", spec.ID, managedForwardToken(key))
+	}
+}
+
 func TestAutoPolicyCreatesManagedForwardAfterTwoObservations(t *testing.T) {
 	h := newReconcileHarness(t, []ForwardingPolicy{
 		{ID: "p1", Action: PolicyAutoForward, Conditions: []PolicyCondition{{RemotePorts: policyPort(8080)}}},

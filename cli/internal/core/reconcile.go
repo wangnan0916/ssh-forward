@@ -389,6 +389,18 @@ func managedForwardSpec(key remoteListenerKey) (forwardSpec, error) {
 	}, nil
 }
 
+// allocateManagedForward allocates the Local Endpoint for a Managed Forward
+// serving key, through the single spec construction above. Registration is
+// the caller's: the worker and the approve command differ in how they treat
+// a registration race, and both close a losing owner.
+func (m *manager) allocateManagedForward(ctx context.Context, key remoteListenerKey) (ownedForward, error) {
+	spec, err := managedForwardSpec(key)
+	if err != nil {
+		return nil, err
+	}
+	return m.forwardAllocator.Allocate(ctx, spec)
+}
+
 // managedForwardToken builds a stable, collision-resistant Managed Forward
 // identity from the listener key: reconciliation must address the same
 // forward across observations and commands.
