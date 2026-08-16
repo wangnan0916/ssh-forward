@@ -65,18 +65,16 @@ func (r *reconciler) notify() {
 	}
 }
 
-// cloneDecisions snapshots the One-time decision sets so the worker can
-// evaluate a generation without holding the Manager lock.
-func (r *reconciler) cloneDecisions() (approvals, suppressions map[remoteListenerKey]struct{}) {
-	approvals = make(map[remoteListenerKey]struct{}, len(r.approvals))
+// cloneApprovals snapshots the One-time Approval set so the worker can
+// evaluate a generation without holding the Manager lock. Suppressions are
+// deliberately not cloned: the worker's delta never depends on them (they
+// shape only the Ask derivation, which reads under the lock).
+func (r *reconciler) cloneApprovals() map[remoteListenerKey]struct{} {
+	approvals := make(map[remoteListenerKey]struct{}, len(r.approvals))
 	for key := range r.approvals {
 		approvals[key] = struct{}{}
 	}
-	suppressions = make(map[remoteListenerKey]struct{}, len(r.suppressions))
-	for key := range r.suppressions {
-		suppressions[key] = struct{}{}
-	}
-	return approvals, suppressions
+	return approvals
 }
 
 // retiredDecisions finds One-time decisions whose Listener Lifetime ended
@@ -258,8 +256,8 @@ func (m *manager) reconcileOnce() {
 		return
 	}
 	host := m.hostSnapshot
-	approvals, _ := m.reconciler.cloneDecisions()
-	managedKeys := m.forwards.managedKeysLocked()
+	approvals := m.reconciler.cloneApprovals()
+	managedEntries := m.forwards.managedForwardsLocked()
 	m.mu.RUnlock()
 
 	observationByKey := make(map[remoteListenerKey]ListenerObservation, len(host.ListenerObservations))
@@ -301,6 +299,11 @@ func (m *manager) reconcileOnce() {
 	// consecutive observations of the same auto verdict. The has-managed
 	// check reads the lock-snapshot taken above, so it never races a
 	// command's add.
+	managedKeys := make(map[remoteListenerKey]struct{}, len(managedEntries))
+	for _, entry := range managedEntries {
+		managedKeys[entry.key] = struct{}{}
+	}
+
 	var toCreate []forwardSpec
 	for key := range desired {
 		_, managed := managedKeys[key]
@@ -316,19 +319,14 @@ func (m *manager) reconcileOnce() {
 
 	// Advance the removal hysteresis for Managed Forwards that are no
 	// longer desired (policy mismatch, Ignore, retirement, disappearance).
+	// The entry list above is the one traversal: no table re-walk, no
+	// clone-and-sort of the full snapshot (Manual Forwards are irrelevant).
 	var toRemove []ForwardID
-	for _, forward := range m.forwards.snapshots() {
-		if forward.Kind != ForwardManaged {
-			continue
-		}
-		key, known := managedForwardKey(forward.ID)
-		if !known {
-			continue
-		}
-		_, isRetired := retiredKeys[key]
-		_, stillDesired := desired[key]
-		if m.reconciler.removalStep(forward.ID, stillDesired, isRetired) {
-			toRemove = append(toRemove, forward.ID)
+	for _, entry := range managedEntries {
+		_, isRetired := retiredKeys[entry.key]
+		_, stillDesired := desired[entry.key]
+		if m.reconciler.removalStep(entry.id, stillDesired, isRetired) {
+			toRemove = append(toRemove, entry.id)
 		}
 	}
 

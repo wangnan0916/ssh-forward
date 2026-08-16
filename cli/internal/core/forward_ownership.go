@@ -125,29 +125,45 @@ func (t *forwardTable) removeDirect(id ForwardID) (ownedForward, bool) {
 	return entry.owner, true
 }
 
-// managedKeysLocked reports the listener keys currently served by Managed
-// Forwards, in one pass over the table. It is the single implementation of
-// the "at most one Managed Forward per Listener" predicate.
-func (t *forwardTable) managedKeysLocked() map[remoteListenerKey]struct{} {
-	keys := make(map[remoteListenerKey]struct{}, len(t.entries))
+// managedForwardEntry pairs a Managed Forward's identity with the listener
+// key it serves, in one pass over the table: reconciliation needs exactly
+// this shape for the has-managed set and the removal candidates.
+type managedForwardEntry struct {
+	id  ForwardID
+	key remoteListenerKey
+}
+
+// managedForwardsLocked lists the Managed Forward entries in one pass, with
+// no cloning or sorting: the reconciliation worker iterates this instead of
+// the full table snapshot (Manual Forwards are irrelevant to its delta).
+func (t *forwardTable) managedForwardsLocked() []managedForwardEntry {
+	entries := make([]managedForwardEntry, 0, len(t.entries))
 	for _, entry := range t.entries {
 		projection := entry.owner.Projection()
 		if projection.Kind != ForwardManaged {
 			continue
 		}
 		if managedKey, known := managedForwardKey(projection.ID); known {
-			keys[managedKey] = struct{}{}
+			entries = append(entries, managedForwardEntry{id: projection.ID, key: managedKey})
 		}
 	}
-	return keys
+	return entries
 }
 
 // hasManagedForListener reports whether a Managed Forward already serves
 // the given listener key; the approve command uses it to record an
 // approval without duplicating a forward an auto policy already created.
 func (t *forwardTable) hasManagedForListener(key remoteListenerKey) bool {
-	_, found := t.managedKeysLocked()[key]
-	return found
+	for _, entry := range t.entries {
+		projection := entry.owner.Projection()
+		if projection.Kind != ForwardManaged {
+			continue
+		}
+		if managedKey, known := managedForwardKey(projection.ID); known && managedKey == key {
+			return true
+		}
+	}
+	return false
 }
 
 type removalReservationState uint8
