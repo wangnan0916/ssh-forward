@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"errors"
+	"ssh-forward/cli/internal/core"
 	"ssh-forward/cli/internal/openssh"
 )
 
@@ -62,14 +64,25 @@ listener.close()
 		t.Fatalf("Start: %v", err)
 	}
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		_ = session.Close(ctx)
+		_ = session.Close(cleanupCtx)
 	})
-	select {
-	case <-session.Done():
-	case <-time.After(time.Second):
-		t.Fatal("Session.Wait remained blocked on descendant-held stderr")
+	// Session termination is observed through the stream: Next returns the
+	// terminal SessionError once the session actually ends.
+	terminationCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	// Consume trailing facts until the terminal SessionError appears.
+	var sessionError *core.SessionError
+	for {
+		_, err := session.Next(terminationCtx)
+		if errors.As(err, &sessionError) {
+			break
+		}
+		if err == nil {
+			continue
+		}
+		t.Fatalf("Next after Close = %v, want terminal SessionError", err)
 	}
 	contents, err := os.ReadFile(childPath)
 	if err != nil {
@@ -79,9 +92,9 @@ listener.close()
 	if err != nil {
 		t.Fatalf("parse descendant PID: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	closeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := session.Close(ctx); err != nil {
+	if err := session.Close(closeCtx); err != nil {
 		t.Fatalf("close completed Session: %v", err)
 	}
 	deadline := time.Now().Add(time.Second)

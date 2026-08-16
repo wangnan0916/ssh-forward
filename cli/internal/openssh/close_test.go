@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"ssh-forward/cli/internal/core"
 	"ssh-forward/cli/internal/openssh"
 )
 
@@ -59,9 +60,22 @@ while True:
 	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
 		t.Fatalf("Close exceeded its bound: %v", elapsed)
 	}
-	select {
-	case <-session.Done():
-	case <-time.After(time.Second):
-		t.Fatal("OpenSSH process was not reaped after forced shutdown")
+	// Session termination is observed through the stream, not a channel:
+	// Next returns the terminal SessionError once the process is reaped.
+	terminationCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	// Next can hand out trailing facts still queued from the scanner before
+	// it reports the terminal SessionError, so consume until the terminal
+	// error (or the bound expires).
+	var sessionError *core.SessionError
+	for {
+		_, err := session.Next(terminationCtx)
+		if errors.As(err, &sessionError) {
+			break
+		}
+		if err == nil {
+			continue
+		}
+		t.Fatalf("Next after forced shutdown = %v, want terminal SessionError", err)
 	}
 }

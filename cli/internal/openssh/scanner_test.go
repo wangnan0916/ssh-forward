@@ -182,9 +182,4 @@ listener.close()
 	if _, err := session.Next(quietContext); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Next after failed discovery = %v, want deadline while Forwarding Session remains alive", err)
 	}
-	select {
-	case <-session.Done():
-		t.Fatal("failed discovery terminated the Forwarding Session")
-	default:
-	}
 }

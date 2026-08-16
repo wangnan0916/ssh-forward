@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/netip"
 	"os/exec"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"ssh-forward/cli/internal/core"
 	"ssh-forward/cli/internal/proxy"
@@ -46,10 +48,6 @@ func (s *Session) DialContext(ctx context.Context, target netip.AddrPort) (proxy
 		return nil, errInvalidSessionTarget
 	}
 	return s.dialer.DialContext(ctx, target)
-}
-
-func (s *Session) Done() <-chan struct{} {
-	return s.done
 }
 
 func (s *Session) Next(ctx context.Context) (core.SessionFact, error) {
@@ -115,6 +113,49 @@ func (s *Session) exitedKind() exitKind {
 
 func (s *Session) terminalError() error {
 	return sessionErrorForExit(s.exitedKind())
+}
+
+func (s *Session) waitUntilReady(ctx context.Context, address netip.AddrPort, timeout time.Duration) error {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	retry := time.NewTicker(10 * time.Millisecond)
+	defer retry.Stop()
+	for {
+		if probeSOCKS(address) == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-s.done:
+			return sessionErrorForExit(s.exitedKind())
+		case <-deadline.C:
+			return errors.New("OpenSSH SOCKS readiness timed out")
+		case <-retry.C:
+		}
+	}
+}
+
+func probeSOCKS(address netip.AddrPort) error {
+	connection, err := net.DialTimeout("tcp4", address.String(), 50*time.Millisecond)
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+	if err := connection.SetDeadline(time.Now().Add(50 * time.Millisecond)); err != nil {
+		return err
+	}
+	if _, err := connection.Write([]byte{5, 1, 0}); err != nil {
+		return err
+	}
+	response := make([]byte, 2)
+	if _, err := io.ReadFull(connection, response); err != nil {
+		return err
+	}
+	if response[0] != 5 || response[1] != 0 {
+		return errors.New("OpenSSH SOCKS probe rejected no-authentication method")
+	}
+	return nil
 }
 
 // sessionErrorForExit is the single translation from an OpenSSH exit class
