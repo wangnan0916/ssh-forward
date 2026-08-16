@@ -8,7 +8,8 @@ SSH_FORWARD_SCANNER_VERSION=1
 # checksum is computed over this file at embed time, so a layout change here
 # is always visible there.
 #   B  boot frame, 12 fields:
-#       2 sequence, 3 boot_hex, 4 network_hex, 5 listener_capability,
+#       2 sequence, 3 boot_hex, 4 network_hex (hex, up to
+#       identity_text_hex_limit chars each), 5 listener_capability,
 #       6 socket_capability, 7 process_capability, 8 listener_limit,
 #       9 socket_record_limit, 10 process_record_limit, 11 metadata_bytes_limit
 #   L  listener record, 7 fields: 2 sequence, then the listener record's
@@ -19,12 +20,14 @@ SSH_FORWARD_SCANNER_VERSION=1
 #   P  process record, 10 fields: 2 sequence, then the process record's
 #      7 fields tab-embedded:
 #       3 inode (decimal, nonzero, must have appeared in an L frame),
-#       4 owner (decimal), 5 depth (decimal, below the parser's 16),
+#       4 owner (decimal), 5 depth (decimal, below process_depth_limit),
 #       6 pid (decimal), 7 executable_hex, 8 working_directory_hex,
-#       9 arguments_hex (hex, up to 8192 chars each, i.e. 4096 bytes;
-#       arguments_hex splits on NUL; the sum is bounded by the boot frame's
-#       metadata_bytes_limit)
+#       9 arguments_hex (hex, up to process_text_hex_limit chars each, i.e.
+#       process_text_bytes bytes; arguments_hex splits on NUL; the sum is
+#       bounded by the boot frame's metadata_bytes_limit)
 #   E  end frame, 2 fields: 2 sequence
+# Every cap above is declared in this file and derived by the parser from
+# the declaration, so the two sides cannot drift.
 interval=2
 # scan cadence in seconds; core counts Listener Lifetime grace in scan
 # cycles (default 3 cycles), so the effective grace is about 6s at this value
@@ -42,6 +45,11 @@ socket_record_limit=$listener_limit
 process_record_limit=512
 metadata_bytes_limit=131072
 metadata_hex_limit=$((metadata_bytes_limit * 2))
+process_depth_limit=16
+process_text_bytes=4096
+process_text_hex_limit=$((process_text_bytes * 2))
+identity_text_bytes=256
+identity_text_hex_limit=$((identity_text_bytes * 2))
 
 hex_stream() {
     od -An -v -tx1 | tr -d ' \n'
@@ -53,18 +61,18 @@ hex_text() {
 
 read_process_arguments() {
     command_line=$1
-    arguments_hex=$(dd if="$command_line" bs=4097 count=1 2>/dev/null | hex_stream || true)
-    if [ "${#arguments_hex}" -le 8192 ]; then
+    arguments_hex=$(dd if="$command_line" bs=$((process_text_bytes + 1)) count=1 2>/dev/null | hex_stream || true)
+    if [ "${#arguments_hex}" -le "$process_text_hex_limit" ]; then
         return 0
     fi
-    arguments_hex=$(printf '%.8192s' "$arguments_hex")
+    arguments_hex=$(printf "%.${process_text_hex_limit}s" "$arguments_hex")
     return 1
 }
 
 boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || printf unavailable)
 network_namespace=$(readlink /proc/self/ns/net 2>/dev/null || printf unavailable)
-boot_hex=$(hex_text "$boot_id")
-network_hex=$(hex_text "$network_namespace")
+boot_hex=$(hex_text "$boot_id" | cut -c1-"$identity_text_hex_limit")
+network_hex=$(hex_text "$network_namespace" | cut -c1-"$identity_text_hex_limit")
 socket_capability=full
 if [ "$boot_id" = unavailable ] || [ "$network_namespace" = unavailable ]; then
     socket_capability=partial
@@ -313,7 +321,7 @@ attribute_processes() {
         current=$owner
         depth=0
         visited=''
-        while [ "$depth" -lt 16 ] && [ "$current" -gt 0 ] 2>/dev/null; do
+        while [ "$depth" -lt "$process_depth_limit" ] && [ "$current" -gt 0 ] 2>/dev/null; do
             case " $visited " in
                 *" $current "*) process_overflow=1; break ;;
             esac
@@ -334,7 +342,7 @@ attribute_processes() {
             current=$parent
             depth=$((depth + 1))
         done
-        if [ "$depth" -ge 16 ] && [ "$current" -gt 1 ] 2>/dev/null; then
+        if [ "$depth" -ge "$process_depth_limit" ] && [ "$current" -gt 1 ] 2>/dev/null; then
             process_overflow=1
         fi
         [ -n "$chain" ] || continue

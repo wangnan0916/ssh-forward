@@ -16,10 +16,7 @@ import (
 
 const (
 	maxScannerFrameBytes = 64 << 10
-	maxProcessDepth      = 16
 	maxProcessArguments  = 64
-	maxProcessTextBytes  = 4096
-	maxIdentityTextBytes = 256
 
 	// MaxObservedSockets is the parser's upper bound for the socket budget a
 	// scanner may declare. It deliberately stays a parser-local constant: the
@@ -27,6 +24,15 @@ const (
 	// listener_limit, not the same limit, so deriving from it would narrow
 	// the parser's tolerance for no benefit.
 	MaxObservedSockets = 512
+)
+
+// The frame caps below are derived from the embedded scanner.sh, the single
+// declaration of every frame limit; a missing or malformed declaration is a
+// package build error (see scannerBudget).
+var (
+	maxProcessDepth      = scannerBudget("process_depth_limit")
+	maxProcessTextBytes  = scannerBudget("process_text_bytes")
+	maxIdentityTextBytes = scannerBudget("identity_text_bytes")
 )
 
 // MaxObserved* are the parser's frame caps: the largest per-scan budgets a
@@ -307,7 +313,7 @@ func (p *scannerParser) process(fields []string) error {
 		return err
 	}
 	depth, err := parseUint(fields[5], 8)
-	if err != nil || depth >= maxProcessDepth {
+	if err != nil || depth >= uint64(maxProcessDepth) {
 		return errInvalidScannerFrame
 	}
 	pid, err := parsePositiveInt(fields[6])

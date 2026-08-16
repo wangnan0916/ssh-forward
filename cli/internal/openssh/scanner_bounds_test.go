@@ -296,8 +296,9 @@ printf '%%s|%%s\n' "$status" "${#arguments_hex}"
 	if err != nil {
 		t.Fatalf("read bounded command line: %v\n%s", err, output)
 	}
-	if got := strings.TrimSpace(string(output)); got != "partial|8192" {
-		t.Fatalf("bounded command line = %q, want partial with 4096 encoded bytes", got)
+	want := fmt.Sprintf("partial|%d", maxProcessTextBytes*2)
+	if got := strings.TrimSpace(string(output)); got != want {
+		t.Fatalf("bounded command line = %q, want %q (script truncation must match the parser's text cap)", got, want)
 	}
 }
 
