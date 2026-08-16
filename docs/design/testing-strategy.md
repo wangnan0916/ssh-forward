@@ -7,7 +7,8 @@ Formal implementation uses red-green TDD in vertical slices. Tests exercise beha
 3. JSON-RPC Adapter — shared Go/Swift golden transcripts, framing bounds, version mismatch, typed errors, cancellation, Watch coalescing, and resync.
 4. CLI — subprocess behavior and structured output against a real local Manager.
 5. Proxy — real loopback half-close, cancellation, throughput, allocation, and containerized remote end-to-end tests.
-6. Swift Manager client and Dashboard state model — protocol fixtures and observable UI state transitions.
+6. Composition root (`app.NewManager`) — today a pure pass-through to `core.NewConfiguredManager`, covered only by the integration suite (which the default `go test ./...` run skips); when slice 5 adds the Forwarding Policy source, One-time Approval storage, and Ask state through this seam, that wiring gains its own tests here.
+7. Swift Manager client and Dashboard state model — protocol fixtures and observable UI state transitions.
 
 Tests do not address actor mailboxes, private matcher helpers, or internal fields. Manager tests drive the per-host actor deterministically through the declared `managerOptions` test seam — connector and publisher injection — and deliberately pin specific publication counts (a command outcome and its Connecting state share a revision; no-change snapshots are deduplicated; both are exactly the behaviors that drift). Those pins are the intended update points when slice 5 adds publication sites; relax the count, not the monotone progression. Other packages stay black-box through their module interfaces. Race runs (go test -race) currently supplement behavioral slices; fuzz, leak, fault-injection, and benchmark targets join when their surfaces land.
 
