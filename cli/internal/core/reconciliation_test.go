@@ -387,6 +387,35 @@ func TestSuppressionHidesAskAndRetiresWithLifetime(t *testing.T) {
 	})
 }
 
+func TestPolicyEditChangingOnlyAskVerdictsRefreshesAsk(t *testing.T) {
+	h := newReconcileHarness(t, nil)
+	h.push(loopbackListener(8000)) // baseline generation, pre-baseline
+	h.waitFor("baseline settles", func(s Snapshot) bool {
+		return s.Host != nil && s.Host.Discovery.BaselineEstablished
+	})
+	h.push(loopbackListener(8080))
+	h.waitFor("Ask appears", func(s Snapshot) bool { return askPorts(s)[8080] })
+
+	// The edit changes only the Ask verdict: no policy touches any
+	// forward, so the generation's delta is empty — but the Ask list must
+	// still follow the file (the policy cache commits before the delta
+	// check, and a changed set republishes even without a delta).
+	h.policies.set([]ForwardingPolicy{
+		{ID: "p1", Action: PolicyIgnore, Conditions: []PolicyCondition{{RemotePorts: policyPort(8080)}}},
+	})
+	h.push(loopbackListener(8080))
+	h.waitFor("Ask list follows the edited policy", func(s Snapshot) bool {
+		return !askPorts(s)[8080]
+	})
+
+	// And the reverse: an edit back to default Ask restores the Ask entry.
+	h.policies.set(nil)
+	h.push(loopbackListener(8080))
+	h.waitFor("Ask list follows the reverted policy", func(s Snapshot) bool {
+		return askPorts(s)[8080]
+	})
+}
+
 func TestPolicyMismatchRemovalRequiresTwoObservationsAndFiveSeconds(t *testing.T) {
 	h := newReconcileHarness(t, []ForwardingPolicy{
 		{ID: "p1", Action: PolicyAutoForward, Conditions: []PolicyCondition{{RemotePorts: policyPort(8080)}}},
