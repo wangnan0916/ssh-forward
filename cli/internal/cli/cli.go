@@ -1,0 +1,43 @@
+package cli
+
+import (
+	"context"
+	"fmt"
+	"io"
+
+	"ssh-forward/cli/internal/core"
+)
+
+// App is the CLI surface's testable core: it owns the Manager reference
+// and the output streams, and its Run method parses one command line.
+// The main package is a thin shell that builds the real Manager and
+// delegates here.
+type App struct {
+	Manager      core.Manager
+	Host         core.HostAlias
+	PoliciesPath string
+	Stdout       io.Writer
+	Stderr       io.Writer
+}
+
+// Run parses and executes one command line, e.g. ["status", "--json"].
+// Commands follow the product domain (cli-and-state.md); every resource
+// command supports --json structured output.
+func (a *App) Run(ctx context.Context, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("missing command (status, forward, listener, policy)")
+	}
+	command, rest := args[0], args[1:]
+	switch command {
+	case "status":
+		return a.runStatus(ctx, rest)
+	case "forward":
+		return a.runForward(ctx, rest)
+	case "listener":
+		return a.runListener(ctx, rest)
+	case "policy":
+		return a.runPolicy(ctx, rest)
+	default:
+		return fmt.Errorf("unknown command %q (status, forward, listener, policy)", command)
+	}
+}

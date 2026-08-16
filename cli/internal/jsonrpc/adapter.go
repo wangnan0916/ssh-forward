@@ -205,6 +205,13 @@ func handleSnapshot(ctx context.Context, request *jrpc2.Request, manager core.Ma
 	return snapshotResult{Snapshot: marshalSnapshot(snapshot)}, nil
 }
 
+// MarshalSnapshot encodes a Snapshot in the wire shape (the same shape
+// manager.snapshot returns over JSON-RPC), so CLI --json output and the IPC
+// protocol stay one contract for script and desktop clients.
+func MarshalSnapshot(snapshot core.Snapshot) ([]byte, error) {
+	return json.Marshal(marshalSnapshot(snapshot))
+}
+
 func marshalSnapshot(snapshot core.Snapshot) wireSnapshot {
 	if snapshot.Host == nil {
 		return wireSnapshot{Revision: uint64(snapshot.Revision)}

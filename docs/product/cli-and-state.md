@@ -2,7 +2,7 @@
 
 ## Status
 
-The command surface and state layout below are the **planned product contract** and land with the CLI slice (see implementation-sequence.md); no CLI binary exists yet. Today the Manager is consumed over the IPC wire by the integration tests, and `app.NewManager` in the Go module is the prepared seam where the CLI entry point will land. `--json` output is a contract commitment, not yet an implementation.
+The command surface below is implemented (slice 6, implementation-sequence.md): `cli/cmd/ssh-forward/` builds the CLI binary, which runs the headless Manager in-process and exposes the domain command surface with wire-shaped `--json` output. The state layout (configuration locations, `policies.jsonc`, `config.jsonc`) is the **planned product contract** and lands progressively with the CLI and desktop slices; today the Manager reads `policies.jsonc` (with `SSH_FORWARD_CONFIG_DIR` override) and the integration tests consume the Manager over the IPC wire. `app.NewManager` in the Go module is the composition seam where the CLI entry point and the desktop core both land.
 
 ## New command contract
 
