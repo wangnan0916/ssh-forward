@@ -135,6 +135,10 @@ func (m *manager) completeCommandLocked(id CommandID, command Command, outcome O
 	m.failCommandLocked(id)
 }
 
+// sameCommand recognizes a replayed operation ID: a command with the same
+// ID and the same shape answers from the journal instead of re-executing.
+// Every command type is an all-comparable struct, so one equality per type
+// covers the full retry contract.
 func sameCommand(left, right Command) bool {
 	switch left := left.(type) {
 	case AddManualForward:
@@ -142,6 +146,12 @@ func sameCommand(left, right Command) bool {
 		return ok && left == right
 	case RemoveForward:
 		right, ok := right.(RemoveForward)
+		return ok && left == right
+	case ApproveListener:
+		right, ok := right.(ApproveListener)
+		return ok && left == right
+	case SuppressListener:
+		right, ok := right.(SuppressListener)
 		return ok && left == right
 	default:
 		return false
