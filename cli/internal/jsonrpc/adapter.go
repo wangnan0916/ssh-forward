@@ -72,7 +72,7 @@ func handleExecute(ctx context.Context, request *jrpc2.Request, manager core.Man
 		var add addManualForwardParams
 		if json.Unmarshal(params.Command, &add) != nil || len(add.OperationID) == 0 || len(add.OperationID) > maxOperationID ||
 			len(add.Host) == 0 || len(add.Host) > maxHostAlias || add.RemotePort == 0 ||
-			(add.Family != string(core.FamilyAuto) && add.Family != string(core.FamilyIPv4) && add.Family != string(core.FamilyIPv6)) {
+			!core.ValidAddressFamily(core.AddressFamily(add.Family)) {
 			return nil, errInvalidParameters
 		}
 		command = core.AddManualForward{

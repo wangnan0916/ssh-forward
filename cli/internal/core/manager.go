@@ -291,8 +291,21 @@ func (m *manager) completeRemoval(remove RemoveForward, forward ForwardSnapshot)
 	return Outcome{Kind: OutcomeForwardRemoved, Revision: m.revision, Forward: cloneForward(forward)}
 }
 
+// ValidAddressFamily is the single family whitelist for Manual Forwards.
+// The IPC Adapter pre-checks with it so an invalid family fails as
+// wire-invalid parameters, and manualTarget enforces it again as the
+// authoritative defense; adding a family means editing this one switch.
+func ValidAddressFamily(family AddressFamily) bool {
+	switch family {
+	case FamilyAuto, FamilyIPv4, FamilyIPv6:
+		return true
+	default:
+		return false
+	}
+}
+
 func manualTarget(family AddressFamily, port uint16) (netip.AddrPort, error) {
-	if port == 0 {
+	if port == 0 || !ValidAddressFamily(family) {
 		return netip.AddrPort{}, &DomainError{Kind: ErrorInvalidCommand}
 	}
 	switch family {
