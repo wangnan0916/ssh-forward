@@ -139,6 +139,15 @@ func (c *validatingChannel) reject(code jrpc2.Code, message string, result error
 	return result
 }
 
+// decodedResponse is the response frame decoded once by the channel's Send
+// path and delivered to onResponse instead of raw bytes, so response
+// structure knowledge lives in one place. Result carries the raw
+// method-specific result, decoded by the session that owns the semantics.
+type decodedResponse struct {
+	ID     json.RawMessage
+	Result json.RawMessage
+}
+
 // pendingChannel bounds jrpc2's inbound queue. It reports each successfully
 // written response to onResponse (installed by the connection session, which
 // owns any response-triggered activation); the channel itself is
@@ -149,7 +158,7 @@ type pendingChannel struct {
 	slots chan struct{}
 	done  chan struct{}
 
-	onResponse func(message []byte)
+	onResponse func(decodedResponse)
 
 	closeOnce sync.Once
 	closeErr  error
@@ -187,28 +196,37 @@ func (c *pendingChannel) Recv() ([]byte, error) {
 }
 
 func (c *pendingChannel) Send(message []byte) error {
-	response := isResponse(message)
+	envelope, response := decodeResponseEnvelope(message)
 	err := c.Channel.Send(message)
 	if !response {
 		return err
 	}
 	c.release()
 	if err == nil && c.onResponse != nil {
-		c.onResponse(message)
+		c.onResponse(envelope)
 	}
 	return nil
 }
 
-func isResponse(message []byte) bool {
+// decodeResponseEnvelope decodes a frame once and classifies it: a response
+// has an id and no method; anything else (request, notification, garbage) is
+// not a response.
+func decodeResponseEnvelope(message []byte) (decodedResponse, bool) {
 	var object map[string]json.RawMessage
 	if json.Unmarshal(message, &object) != nil {
-		return false
+		return decodedResponse{}, false
 	}
 	if _, request := object["method"]; request {
-		return false
+		return decodedResponse{}, false
 	}
-	_, found := object["id"]
-	return found
+	id, found := object["id"]
+	if !found {
+		return decodedResponse{}, false
+	}
+	return decodedResponse{
+		ID:     id,
+		Result: object["result"],
+	}, true
 }
 
 func (c *pendingChannel) Close() error {

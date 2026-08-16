@@ -87,12 +87,11 @@ func (s *connectionSession) handleWatch(ctx context.Context, request *jrpc2.Requ
 }
 
 // watchResponseID reports the server-assigned Watch ID introduced by a
-// manager.watch response that carries a Snapshot.
-func watchResponseID(message []byte) (string, bool) {
-	var envelope struct {
-		Result json.RawMessage `json:"result"`
-	}
-	if json.Unmarshal(message, &envelope) != nil || len(envelope.Result) == 0 {
+// manager.watch response that carries a Snapshot. The envelope arrives
+// already decoded from the channel's Send path; only the method-specific
+// result is parsed here.
+func watchResponseID(envelope decodedResponse) (string, bool) {
+	if len(envelope.Result) == 0 {
 		return "", false
 	}
 	var result struct {
@@ -110,8 +109,8 @@ func watchResponseID(message []byte) (string, bool) {
 // the Watch to s.watches before the response was sent, so the lookup always
 // succeeds for watch responses; the guard keeps the activation channel closed
 // at most once.
-func (s *connectionSession) onResponseSent(message []byte) {
-	watchID, ok := watchResponseID(message)
+func (s *connectionSession) onResponseSent(envelope decodedResponse) {
+	watchID, ok := watchResponseID(envelope)
 	if !ok {
 		return
 	}
