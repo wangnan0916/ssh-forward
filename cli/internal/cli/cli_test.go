@@ -251,6 +251,15 @@ func TestListenerSuppress(t *testing.T) {
 	}
 }
 
+func TestListenerApproveRejectsInvalidFamily(t *testing.T) {
+	// The wire adapter rejects a bad family as invalid parameters; the
+	// CLI must say the same instead of a misleading Listener-not-found.
+	_, err := runApp(t, &fakeManager{}, "listener", "approve", "--remote-port", "8080", "--family", "bogus")
+	if err == nil || !strings.Contains(err.Error(), "--family") {
+		t.Fatalf("invalid family err = %v, want --family error", err)
+	}
+}
+
 func TestUnknownCommand(t *testing.T) {
 	if _, err := runApp(t, &fakeManager{}, "frobnicate"); err == nil {
 		t.Fatal("unknown command succeeded")

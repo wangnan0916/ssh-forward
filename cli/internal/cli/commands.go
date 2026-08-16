@@ -104,29 +104,30 @@ func (a *App) runForward(ctx context.Context, args []string) error {
 func (a *App) runForwardAdd(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("forward add", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	jsonOutput := flags.Bool("json", false, "emit the wire-shaped outcome")
-	remotePort := flags.Uint("remote-port", 0, "remote port to forward")
-	family := flags.String("family", "auto", "auto, ipv4, or ipv6")
-	operationID := flags.String("operation-id", "", "stable operation ID for retries")
+	common := newCommandFlags(flags)
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
 		return fmt.Errorf("forward add takes no positional arguments")
 	}
-	if *remotePort == 0 || *remotePort > 65535 {
-		return fmt.Errorf("forward add requires --remote-port 1..65535")
+	if err := common.requireRemotePort(); err != nil {
+		return err
+	}
+	family, err := common.family()
+	if err != nil {
+		return err
 	}
 	outcome, err := a.Manager.Execute(ctx, core.AddManualForward{
-		CommandID:  core.CommandID(operationIDOrRandom(*operationID)),
+		CommandID:  common.operationIDOrRandom(),
 		Host:       a.Host,
-		RemotePort: uint16(*remotePort),
-		Family:     core.AddressFamily(*family),
+		RemotePort: uint16(*common.remotePort),
+		Family:     family,
 	})
 	if err != nil {
 		return err
 	}
-	return a.writeOutcome(outcome, *jsonOutput)
+	return a.writeOutcome(outcome, *common.jsonOutput)
 }
 
 func (a *App) runForwardRemove(ctx context.Context, args []string) error {
@@ -169,49 +170,53 @@ func (a *App) runListener(ctx context.Context, args []string) error {
 func (a *App) runListenerApprove(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("listener approve", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	jsonOutput := flags.Bool("json", false, "emit the wire-shaped outcome")
-	remotePort := flags.Uint("remote-port", 0, "remote port to approve")
-	family := flags.String("family", "auto", "auto, ipv4, or ipv6")
-	operationID := flags.String("operation-id", "", "stable operation ID for retries")
+	common := newCommandFlags(flags)
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if *remotePort == 0 || *remotePort > 65535 {
-		return fmt.Errorf("listener approve requires --remote-port 1..65535")
+	if err := common.requireRemotePort(); err != nil {
+		return err
+	}
+	family, err := common.family()
+	if err != nil {
+		return err
 	}
 	outcome, err := a.Manager.Execute(ctx, core.ApproveListener{
-		CommandID:  core.CommandID(operationIDOrRandom(*operationID)),
+		CommandID:  common.operationIDOrRandom(),
 		Host:       a.Host,
-		RemotePort: uint16(*remotePort),
-		Family:     core.AddressFamily(*family),
+		RemotePort: uint16(*common.remotePort),
+		Family:     family,
 	})
 	if err != nil {
 		return err
 	}
-	return a.writeOutcome(outcome, *jsonOutput)
+	return a.writeOutcome(outcome, *common.jsonOutput)
 }
 
 func (a *App) runListenerSuppress(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("listener suppress", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	jsonOutput := flags.Bool("json", false, "emit the wire-shaped outcome")
-	remotePort := flags.Uint("remote-port", 0, "remote port to suppress")
-	operationID := flags.String("operation-id", "", "stable operation ID for retries")
+	common := newCommandFlags(flags)
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if *remotePort == 0 || *remotePort > 65535 {
-		return fmt.Errorf("listener suppress requires --remote-port 1..65535")
+	if err := common.requireRemotePort(); err != nil {
+		return err
+	}
+	family, err := common.family()
+	if err != nil {
+		return err
 	}
 	outcome, err := a.Manager.Execute(ctx, core.SuppressListener{
-		CommandID:  core.CommandID(operationIDOrRandom(*operationID)),
+		CommandID:  common.operationIDOrRandom(),
 		Host:       a.Host,
-		RemotePort: uint16(*remotePort),
+		RemotePort: uint16(*common.remotePort),
+		Family:     family,
 	})
 	if err != nil {
 		return err
 	}
-	return a.writeOutcome(outcome, *jsonOutput)
+	return a.writeOutcome(outcome, *common.jsonOutput)
 }
 
 func (a *App) writeOutcome(outcome core.Outcome, jsonOutput bool) error {
