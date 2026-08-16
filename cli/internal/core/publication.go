@@ -8,6 +8,12 @@ import (
 
 const maxManagerWatches = 128
 
+// ErrResyncRequired is the Manager→Adapter resync channel promised by the
+// IPC protocol ("Manager-required resync"): a SnapshotStream may end with it
+// when core can no longer deliver a consistent sequence to the watcher.
+// Core has no producer today — the jsonrpc Adapter only emits resync itself
+// for oversized Snapshots — but persistence replay (slice 5) is expected to
+// consume this channel, so it stays wired end to end.
 var (
 	ErrSnapshotStreamClosed   = errors.New("snapshot stream is closed")
 	ErrConcurrentSnapshotNext = errors.New("another SnapshotStream.Next call is active")

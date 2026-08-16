@@ -328,6 +328,11 @@ func waitForRetry(ctx context.Context, delay time.Duration) bool {
 	}
 }
 
+// sessionDisposition collapses SessionSuspend and SessionClosed into one
+// non-retry terminal: both end the connect loop, and reconnect policy does
+// not yet distinguish "user must fix authentication" from "session shut
+// down". Policy reconciliation (slice 5) will need the distinction for
+// Ask-state waits and will consume the disposition directly.
 func sessionDisposition(err error) SessionDisposition {
 	if errors.Is(err, context.Canceled) {
 		return SessionClosed

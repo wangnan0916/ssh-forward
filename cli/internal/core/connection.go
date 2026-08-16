@@ -66,7 +66,6 @@ const (
 	SessionReasonAuthentication SessionReason = "authentication"
 	SessionReasonHostKey        SessionReason = "host_key"
 	SessionReasonTransport      SessionReason = "transport"
-	SessionReasonProtocol       SessionReason = "protocol"
 	SessionReasonClosed         SessionReason = "closed"
 )
 
