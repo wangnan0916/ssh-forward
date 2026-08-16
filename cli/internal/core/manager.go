@@ -109,8 +109,21 @@ func emptyHostSnapshot(host HostAlias) HostSnapshot {
 // the transition is visible in the same revision as the command result. Both
 // write under the Manager lock and both treat HostSnapshot as the single
 // state structure; the actor takes over state evolution from Connected on.
+// beginConnectionLocked is the command path's Connecting declaration: it
+// patches the mirror under the Manager lock so the transition is visible in
+// the same Revision as the command outcome. This is the one place the
+// Manager writes the mirror directly — structurally forced by three
+// constraints: (1) the actor lock can never be taken inside the Manager lock
+// (the actor publishes under the Manager lock, so the reverse order would
+// deadlock), (2) the command outcome must share a Revision with Connecting
+// (UI contract pinned by tests), and (3) commands must never block on the
+// arming publication (round-4 race-free arming). The guard reads the actor's
+// own armed() projection instead of the mirror state: the mirror is
+// Disconnected exactly while the actor is unarmed, because every
+// active=false write lands in the same critical section as the Disconnected
+// publication.
 func (m *manager) beginConnectionLocked() {
-	if m.hostSnapshot.Connection != ConnectionDisconnected {
+	if m.actor.armed() {
 		return
 	}
 	declared := m.hostSnapshot

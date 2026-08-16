@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"ssh-forward/cli/internal/proxy"
@@ -40,7 +41,7 @@ type hostActor struct {
 	ctx        context.Context
 
 	mu                      sync.Mutex
-	active                  bool
+	active                  atomic.Bool
 	session                 hostSession
 	state                   HostSnapshot
 	lastObservationSequence uint64
@@ -65,28 +66,37 @@ func newHostActor(options hostActorOptions) *hostActor {
 	}
 }
 
-// startIfNeeded launches the connect loop unless one is already running or
+// startIfNeeded launches the connect loop unless it is already running or
 // the Manager is shutting down. It is idempotent and re-arms after the loop
 // ends, so a later command can retry a terminally failed session. The
 // Manager has already published the Connecting transition synchronously
-// under its own lock, so startIfNeeded publishes nothing itself; the loop
+// under its own lock (beginConnectionLocked, gated on this method's armed()
+// projection), so startIfNeeded publishes nothing itself; the loop
 // publishes from Connected onward.
 func (a *hostActor) startIfNeeded() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.active || a.ctx.Err() != nil {
+	if a.armed() {
 		return
 	}
-	a.active = true
+	a.active.Store(true)
 	a.state.Connection = ConnectionConnecting
 	a.done = make(chan struct{})
 	go a.run()
 }
 
+// armed is the single arming authority: the connect loop is either running
+// (active) or the Manager is shutting down (ctx done). beginConnectionLocked
+// reads this same projection without the actor lock — the mirror cannot
+// diverge because every active=false write lands in the same critical
+// section as the Disconnected publication (see connect's terminal paths and
+// publishConnectionFailure).
+func (a *hostActor) armed() bool {
+	return a.active.Load() || a.ctx.Err() != nil
+}
+
 func (a *hostActor) isActive() bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.active
+	return a.active.Load()
 }
 
 // run marks the loop inactive on the way out. The connect loop itself also
@@ -101,7 +111,7 @@ func (a *hostActor) run() {
 	a.mu.Unlock()
 	defer func() {
 		a.mu.Lock()
-		a.active = false
+		a.active.Store(false)
 		close(done)
 		a.mu.Unlock()
 	}()
@@ -149,7 +159,7 @@ func (a *hostActor) connect() {
 			a.state.Connection = ConnectionConnecting
 		} else {
 			a.state.Connection = ConnectionDisconnected
-			a.active = false
+			a.active.Store(false)
 		}
 		a.state.Discovery = stoppedDiscovery()
 		a.publishLocked()
@@ -293,7 +303,7 @@ func (a *hostActor) failDiscoveryLocked(reason DiscoveryReason) {
 func (a *hostActor) publishConnectionFailure() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.active = false
+	a.active.Store(false)
 	a.state.Connection = ConnectionDisconnected
 	a.state.Discovery = stoppedDiscovery()
 	a.publishLocked()
