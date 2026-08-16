@@ -197,6 +197,12 @@ func TestManualForwardRetainsEndpointAcrossSessionReplacement(t *testing.T) {
 	}
 }
 
+// waitForConnectionState asserts an exact revision alongside the connection
+// state: these tests deliberately pin publication counts, because the
+// Manager's "command outcome and Connecting share a revision" contract and
+// the no-change publication dedup are exactly the behaviors that drift. When
+// slice 5 adds publication sites, these numbers are the intended update
+// points — assert the new count, do not weaken to monotone progression.
 func waitForConnectionState(t *testing.T, manager Manager, state ConnectionState, revision Revision) Snapshot {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
