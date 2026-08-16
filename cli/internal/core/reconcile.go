@@ -30,6 +30,7 @@ type managedRemoval struct {
 // commands write the decision sets through the Manager.
 type reconciler struct {
 	policyCache  []ForwardingPolicy
+	evaluated    []ForwardingPolicy
 	policySource func() []ForwardingPolicy
 	now          func() time.Time
 	approvals    map[remoteListenerKey]struct{}
@@ -40,8 +41,10 @@ type reconciler struct {
 }
 
 func newReconciler(policySource func() []ForwardingPolicy, now func() time.Time) *reconciler {
+	initial := policySource()
 	return &reconciler{
-		policyCache:  policySource(),
+		policyCache:  initial,
+		evaluated:    sortPolicies(initial),
 		policySource: policySource,
 		now:          now,
 		approvals:    make(map[remoteListenerKey]struct{}),
@@ -105,13 +108,23 @@ func (r *reconciler) retire(retired []remoteListenerKey) {
 	}
 }
 
-// commitPolicies records the policy set this generation evaluated and
-// reports whether it differs from the cached set, so the worker can
-// republish when an edit changed only derived Ask verdicts.
-func (r *reconciler) commitPolicies(policies []ForwardingPolicy) bool {
-	changed := !policySetsEqual(r.policyCache, policies)
-	r.policyCache = policies
+// commitPolicies records the policy set this generation evaluated (the
+// source order, for equality against the next read) and its priority-sorted
+// evaluation order (sorted once per generation), reporting whether the set
+// differs from the cache so the worker can republish when an edit changed
+// only derived Ask verdicts.
+func (r *reconciler) commitPolicies(source, ordered []ForwardingPolicy) bool {
+	changed := !policySetsEqual(r.policyCache, source)
+	r.policyCache = source
+	r.evaluated = ordered
 	return changed
+}
+
+// evaluate applies the cached policies to one observation without
+// re-sorting: the worker sorted this generation's set at commit, so every
+// per-publish Ask derivation is a linear scan.
+func (r *reconciler) evaluate(observation ListenerObservation) PolicyVerdict {
+	return evaluateOrdered(r.evaluated, observation)
 }
 
 // policySetsEqual compares policy sets by value, treating nil and empty as
@@ -191,7 +204,7 @@ func (r *reconciler) askListeners(host HostSnapshot) []ListenerAskSnapshot {
 		if _, approved := r.approvals[key]; approved {
 			continue
 		}
-		if evaluatePolicies(r.policyCache, observation).Action != PolicyAsk {
+		if r.evaluate(observation).Action != PolicyAsk {
 			continue
 		}
 		ask = append(ask, ListenerAskSnapshot{
@@ -234,8 +247,11 @@ func (m *manager) reconcileLoop() {
 
 func (m *manager) reconcileOnce() {
 	// The policy source is a user-injected function (file-backed in
-	// production): call it outside both locks.
+	// production): call it outside both locks, and sort this generation's
+	// set once — every evaluation below, and every Ask derivation until
+	// the next commit, reuses this order.
 	policies := m.reconciler.policySource()
+	ordered := sortPolicies(policies)
 	m.mu.RLock()
 	if m.closed {
 		m.mu.RUnlock()
@@ -263,7 +279,11 @@ func (m *manager) reconcileOnce() {
 			desired[key] = struct{}{}
 			continue
 		}
-		if evaluatePolicies(policies, observation).Action == PolicyAutoForward {
+		// No Discovery Baseline gate here: an auto policy applies from
+		// the first observation (boot-time listeners forward at once).
+		// The Baseline only gates Ask, which is for listeners that
+		// appear after the boot set.
+		if evaluateOrdered(ordered, observation).Action == PolicyAutoForward {
 			desired[key] = struct{}{}
 		}
 	}
@@ -320,7 +340,7 @@ func (m *manager) reconcileOnce() {
 		m.mu.Unlock()
 		return
 	}
-	policyChanged := m.reconciler.commitPolicies(policies)
+	policyChanged := m.reconciler.commitPolicies(policies, ordered)
 	if len(toCreate) == 0 && len(toRemove) == 0 && len(retired) == 0 {
 		if policyChanged {
 			m.publishLocked()
