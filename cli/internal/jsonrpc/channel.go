@@ -139,6 +139,43 @@ func (c *validatingChannel) reject(code jrpc2.Code, message string, result error
 	return result
 }
 
+// envelopeShape is the JSON-RPC envelope decoded once: which members are
+// present and their raw values. The directional classifiers — request,
+// response, notification — layer their rules on this single shape statement,
+// so the schema's conventions (the jsonrpc member, the id's null meaning)
+// have one home instead of three partial map-decode copies.
+type envelopeShape struct {
+	ID      json.RawMessage
+	Method  json.RawMessage
+	Result  json.RawMessage
+	Error   json.RawMessage
+	JSONRPC string
+	Params  json.RawMessage
+	HasID   bool
+}
+
+// decodeEnvelopeShape decodes one frame into its member shape. Garbage or a
+// bare null is not a shape; each classifier then applies its direction's
+// rules.
+func decodeEnvelopeShape(message []byte) (envelopeShape, bool) {
+	var object map[string]json.RawMessage
+	if json.Unmarshal(message, &object) != nil || object == nil {
+		return envelopeShape{}, false
+	}
+	shape := envelopeShape{
+		ID:     object["id"],
+		Method: object["method"],
+		Result: object["result"],
+		Error:  object["error"],
+		Params: object["params"],
+	}
+	shape.HasID = object["id"] != nil
+	if raw, found := object["jsonrpc"]; found {
+		_ = json.Unmarshal(raw, &shape.JSONRPC)
+	}
+	return shape, true
+}
+
 // decodedResponse is the response frame decoded once by the channel's Send
 // path and delivered to onResponse instead of raw bytes, so response
 // structure knowledge lives in one place. Result carries the raw
@@ -212,20 +249,13 @@ func (c *pendingChannel) Send(message []byte) error {
 // has an id and no method; anything else (request, notification, garbage) is
 // not a response.
 func decodeResponseEnvelope(message []byte) (decodedResponse, bool) {
-	var object map[string]json.RawMessage
-	if json.Unmarshal(message, &object) != nil {
-		return decodedResponse{}, false
-	}
-	if _, request := object["method"]; request {
-		return decodedResponse{}, false
-	}
-	id, found := object["id"]
-	if !found {
+	shape, ok := decodeEnvelopeShape(message)
+	if !ok || shape.Method != nil || !shape.HasID {
 		return decodedResponse{}, false
 	}
 	return decodedResponse{
-		ID:     id,
-		Result: object["result"],
+		ID:     shape.ID,
+		Result: shape.Result,
 	}, true
 }
 
@@ -245,10 +275,9 @@ func (c *pendingChannel) release() {
 }
 
 func isNotification(message []byte) bool {
-	var object map[string]json.RawMessage
-	if json.Unmarshal(message, &object) != nil {
+	shape, ok := decodeEnvelopeShape(message)
+	if !ok {
 		return false
 	}
-	id, hasID := object["id"]
-	return !hasID || bytes.Equal(bytes.TrimSpace(id), []byte("null"))
+	return !shape.HasID || bytes.Equal(bytes.TrimSpace(shape.ID), []byte("null"))
 }

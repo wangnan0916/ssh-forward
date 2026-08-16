@@ -314,29 +314,32 @@ func negotiateHello(frames channel.Channel) (negotiatedCapabilities, error) {
 }
 
 func decodeRequestEnvelope(message []byte) (requestEnvelope, bool) {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(message, &fields); err != nil || fields == nil {
+	shape, ok := decodeEnvelopeShape(message)
+	if !ok {
 		return requestEnvelope{}, false
 	}
-	if _, found := fields["result"]; found {
+	if shape.Result != nil || shape.Error != nil {
 		return requestEnvelope{}, false
 	}
-	if _, found := fields["error"]; found {
+	// The jsonrpc member is enforced for inbound requests; the channel's
+	// Send path decodes the same shape for outbound responses, which are
+	// server-authored and always carry it.
+	if shape.JSONRPC != "2.0" {
 		return requestEnvelope{}, false
 	}
-	var request requestEnvelope
-	if json.Unmarshal(fields["jsonrpc"], &request.JSONRPC) != nil || request.JSONRPC != "2.0" {
+	var method string
+	if json.Unmarshal(shape.Method, &method) != nil || method == "" {
 		return requestEnvelope{}, false
 	}
-	if json.Unmarshal(fields["method"], &request.Method) != nil || request.Method == "" {
+	if !validRequestID(shape.ID) {
 		return requestEnvelope{}, false
 	}
-	request.ID = fields["id"]
-	if !validRequestID(request.ID) {
-		return requestEnvelope{}, false
-	}
-	request.Params = fields["params"]
-	return request, true
+	return requestEnvelope{
+		JSONRPC: shape.JSONRPC,
+		Method:  method,
+		ID:      shape.ID,
+		Params:  shape.Params,
+	}, true
 }
 
 func validRequestID(raw json.RawMessage) bool {
