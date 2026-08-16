@@ -112,6 +112,16 @@ type remoteListenerKey struct {
 	port   uint16
 }
 
+// mergeBoundedListenerObservations folds a new scan's observations into the
+// retained set under the listener cap. The cap is enforced twice on purpose:
+// map admission below prefers retained entries (inserted first) over new
+// ones, which keeps a partial scan's evidence stable instead of replacing it
+// with whatever the canonical sort happens to place first; the final bound
+// then applies the deterministic canonical ordering and the socket, process,
+// and metadata budgets. The bound's listener branch is inert on this path —
+// the map can never hold more than the cap — but live on the actor's fresh
+// full-scan path, where the observation count is not checked against the
+// declared budget.
 func mergeBoundedListenerObservations(retained, current []ListenerObservation) ([]ListenerObservation, evidenceTruncation) {
 	retained, truncated := boundListenerObservations(canonicalListenerObservations(retained))
 	merged := make(map[remoteListenerKey]ListenerObservation, MaxRetainedListenerObservations)
