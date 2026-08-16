@@ -8,13 +8,13 @@ User-configured OpenSSH behavior such as `ProxyCommand` intentionally executes w
 
 ## Local storage and IPC
 
-Configuration and runtime directories must be private to the current user. Configuration, logs, Unix sockets, lock files, and diagnostics reject unsafe ownership, permissions, symlinks, and parent directories. Windows named pipes use a current-user-only ACL. Startup fails closed when these guarantees cannot be established.
+Configuration and runtime directories must be private to the current user. Configuration, logs, Unix sockets, lock files, and diagnostics reject unsafe ownership, permissions, symlinks, and parent directories. A Windows build, if one exists, uses current-user-only ACLs on named pipes. Startup fails closed when these guarantees cannot be established.
 
 Manager IPC, the private SSH SOCKS endpoint, and every Local Endpoint bind only to local OS primitives or loopback; none listens on a non-loopback network interface.
 
 ## Process execution
 
-System SSH is launched by a platform-determined absolute path with an argument vector, never through a local shell. SSH aliases are bounded and cannot begin with `-`. The child environment retains only values needed for user configuration, agent access, locale, and askpass behavior. Authentication prompts pass through the ephemeral signed askpass helper and are never persisted or logged.
+System SSH is launched by a platform-determined absolute path with an argument vector, never through a local shell. SSH aliases are bounded and cannot begin with `-`. The child environment retains only values needed for user configuration, agent access, locale, and askpass behavior. Authentication prompts will pass through the ephemeral signed askpass helper (desktop phase; design in research/library-options.md) and are never persisted or logged.
 
 ## Remote scanner
 
@@ -25,3 +25,24 @@ Each frame, complete observation, queued fact set, collection count, string, arg
 ## Out of scope
 
 The product does not defend against compromise of the current OS user, malicious user-owned SSH configuration, a compromised system OpenSSH binary, or a compromised Development Host returning traffic from a service the user explicitly forwards. It minimizes the consequences by binding locally, storing no SSH credential, and keeping remote discovery unprivileged and ephemeral.
+
+## Implementation status
+
+The sections above state the full-product security posture. This map records which guarantees are enforced today and which land with later slices; it is the checklist that flips as surfaces land.
+
+Enforced today:
+
+- Every Local Endpoint binds only to loopback, and the SOCKS reservation binds 127.0.0.1 (proxy/endpoint.go listenOnLoopback; openssh/adapter.go reserveSOCKSAddress).
+- System SSH launches by absolute path with an argument vector, never through a shell (openssh/adapter.go New).
+- Host aliases are bounded (MaxHostAliasLength, core/domain.go) and validated as arguments, not script text.
+- The remote command is the fixed versioned scanner embedded at openssh/scanner_script.go, invoked through `sh -s`; the script text is never interpolated.
+- Bounded versioned frames with hex-encoded metadata keep observation stdout separate from diagnostic stderr (openssh/scanner.go, session.go); repeated invalid observations stop parsing but keep stdout drained.
+- Socket-to-endpoint relationships are validated before process evidence expands (core/forward_ownership.go).
+- Process Metadata is evidence-only; no credential is stored anywhere.
+
+Lands with later slices:
+
+- Askpass prompting: desktop phase (research/library-options.md:136).
+- Configuration/log/Unix-socket/lock-file ownership hardening and fail-closed startup: with the ADR-0010 persistence surfaces (config and state directories do not exist yet).
+- Manager IPC user-permission enforcement: ADR-0017's unstarted IPC half (the JSON-RPC adapter accepts a caller-provided connection; no socket or listener exists yet).
+- Log redaction ("never emitted unredacted in normal logs"): with the first log sink (research/library-options.md slog design).
