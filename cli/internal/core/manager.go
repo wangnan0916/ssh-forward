@@ -45,10 +45,17 @@ type manager struct {
 	workers sync.WaitGroup
 }
 
+// NewManager builds a Manager with no host and no connector: it exists for
+// wire-level tests (jsonrpc fixtures) and core tests that exercise command
+// plumbing without a host. Production assembly goes through
+// NewConfiguredManager via app.NewManager.
 func NewManager() Manager {
 	return newManager(managerOptions{})
 }
 
+// NewConfiguredManager is the production seam: it wires the host and the
+// host connector (the OpenSSH Adapter) into the Manager. app.NewManager is
+// its only production caller; tests inject through managerOptions instead.
 func NewConfiguredManager(host HostAlias, connector HostConnector) Manager {
 	return newManager(managerOptions{host: host, connector: connector})
 }
