@@ -111,6 +111,11 @@ func TestOpenEndpointReturnsConflictAfterLastValidPort(t *testing.T) {
 // Mirrors endpoint.go's fallbackPortRoom (ADR-0008); see the skip below.
 const fallbackRoom = 100
 
+// Mirrors freePort in the core package's tests: the same reserve-
+// 127.0.0.1:0-and-release idiom, kept as a declared cross-package copy per
+// the shellQuote policy (test-package isolation, identity stated in place).
+// This copy adds the fallbackRoom skip below; keep the two in step.
+// Production sibling: reserveSOCKSAddress (openssh/adapter.go).
 func availablePort(t *testing.T) uint16 {
 	t.Helper()
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")

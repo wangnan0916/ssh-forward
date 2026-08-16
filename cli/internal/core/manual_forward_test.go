@@ -362,6 +362,11 @@ func TestRemoveManualForwardReleasesLocalEndpoint(t *testing.T) {
 	}
 }
 
+// freePort mirrors availablePort in the proxy package's tests: the same
+// reserve-127.0.0.1:0-and-release idiom, kept as a declared cross-package
+// copy per the shellQuote policy (test-package isolation, identity stated
+// in place). The proxy copy adds the fallbackRoom skip; keep the two in
+// step. Production sibling: reserveSOCKSAddress (openssh/adapter.go).
 func freePort(t *testing.T) uint16 {
 	t.Helper()
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
