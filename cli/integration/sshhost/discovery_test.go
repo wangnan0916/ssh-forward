@@ -72,8 +72,7 @@ func TestAgentlessDiscoveryThroughDisposableDevelopmentHost(t *testing.T) {
 	previous := baselineRevision
 	for {
 		time.Sleep(2200 * time.Millisecond)
-		var repeated core.Snapshot
-		repeated, err = manager.Snapshot(context.Background())
+		repeated, err := manager.Snapshot(context.Background())
 		if err != nil {
 			t.Fatalf("Snapshot after repeated scan: %v", err)
 		}

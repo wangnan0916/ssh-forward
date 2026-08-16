@@ -142,16 +142,18 @@ printf '%%s|%%s|%%s\n' "$scanner_source" "$scan_status" "$current_listeners"
 
 func TestScannerRejectsDeclaredBudgetBeyondFrameLimits(t *testing.T) {
 	hexText := func(value string) string { return hex.EncodeToString([]byte(value)) }
-	over := func(parts ...string) string { return strings.Join(parts, "\t") }
-	for name, budget := range map[string]string{
-		"listeners": over(strconv.Itoa(MaxObservedListeners+1), strconv.Itoa(MaxObservedSockets), strconv.Itoa(MaxProcessRecords), strconv.Itoa(MaxObservationMetadataBytes)),
-		"sockets":   over(strconv.Itoa(MaxObservedListeners), strconv.Itoa(MaxObservedSockets+1), strconv.Itoa(MaxProcessRecords), strconv.Itoa(MaxObservationMetadataBytes)),
-		"processes": over(strconv.Itoa(MaxObservedListeners), strconv.Itoa(MaxObservedSockets), strconv.Itoa(MaxProcessRecords+1), strconv.Itoa(MaxObservationMetadataBytes)),
-		"metadata":  over(strconv.Itoa(MaxObservedListeners), strconv.Itoa(MaxObservedSockets), strconv.Itoa(MaxProcessRecords), strconv.Itoa(MaxObservationMetadataBytes+1)),
-		"zero":      over("0", strconv.Itoa(MaxObservedSockets), strconv.Itoa(MaxProcessRecords), strconv.Itoa(MaxObservationMetadataBytes)),
+	budget := func(listeners, sockets, records, metadata int) string {
+		return strings.Join([]string{strconv.Itoa(listeners), strconv.Itoa(sockets), strconv.Itoa(records), strconv.Itoa(metadata)}, "\t")
+	}
+	for name, frame := range map[string]string{
+		"listeners": budget(MaxObservedListeners+1, MaxObservedSockets, MaxProcessRecords, MaxObservationMetadataBytes),
+		"sockets":   budget(MaxObservedListeners, MaxObservedSockets+1, MaxProcessRecords, MaxObservationMetadataBytes),
+		"processes": budget(MaxObservedListeners, MaxObservedSockets, MaxProcessRecords+1, MaxObservationMetadataBytes),
+		"metadata":  budget(MaxObservedListeners, MaxObservedSockets, MaxProcessRecords, MaxObservationMetadataBytes+1),
+		"zero":      budget(0, MaxObservedSockets, MaxProcessRecords, MaxObservationMetadataBytes),
 	} {
 		t.Run(name, func(t *testing.T) {
-			input := fmt.Sprintf("SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t%s\nSF1\tE\t1\n", hexText("boot"), hexText("net"), budget)
+			input := fmt.Sprintf("SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t%s\nSF1\tE\t1\n", hexText("boot"), hexText("net"), frame)
 			var facts []core.SessionFact
 			scanObservationFrames(strings.NewReader(input), func(fact core.SessionFact) {
 				facts = append(facts, fact)

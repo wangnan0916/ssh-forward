@@ -59,7 +59,7 @@ func (c oneSessionConnector) Connect(context.Context, HostAlias) (hostSession, e
 }
 
 var (
-	fullObservationBudget = ObservationBudget{Listeners: 256, Sockets: 256, ProcessRecords: 512, MetadataBytes: 128 << 10}
+	fullObservationBudget = ObservationBudget{Listeners: MaxRetainedListenerObservations, Sockets: MaxRetainedSocketIdentities, ProcessRecords: MaxRetainedProcessRecords, MetadataBytes: MaxRetainedProcessMetadataBytes}
 	fullTestCapability    = DiscoveryCapability{RemoteListeners: CapabilityFull, SocketIdentity: CapabilityFull, ProcessMetadata: CapabilityFull}
 )
 
