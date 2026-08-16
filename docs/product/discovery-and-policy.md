@@ -1,10 +1,18 @@
 # Discovery and policy behavior
 
+## Implementation status
+
+This document describes the Discovery and Policy surface in two registers. Enforced today: the Local port allocation and Listener continuity sections below. Planned: the Connection baseline's policy application, Ask actions, Initial policy matchers, Continuous policy reconciliation, Service protocol and action, and Managed Forward cleanup land with slice 5 (Forwarding Policies, One-time Approval and Suppression, Ask state; design/implementation-sequence.md). Sections marked "(slice 5)" describe behavior that does not exist yet.
+
 ## Connection baseline
 
-After a Development Host connects, the first complete observation is the Discovery Baseline. Existing policies are applied immediately. Remote Listeners without a matching policy remain visible but do not produce prompts; only listeners first observed after the baseline enter the default `Ask` flow.
+After a Development Host connects, the first complete observation is the Discovery Baseline.
 
-## Ask actions
+Slice 5 adds policy application on top of the Baseline: existing policies are applied immediately; Remote Listeners without a matching policy remain visible but do not produce prompts, and only listeners first observed after the baseline enter the default `Ask` flow.
+
+## Ask actions (slice 5)
+
+Slice 5 adds the Ask flow. Its actions:
 
 - **Forward once** — create a Managed Forward through One-time Approval for the current Listener Lifetime.
 - **Always forward this port** — save a host-scoped `Auto-forward` policy for the remote port.
@@ -12,7 +20,7 @@ After a Development Host connects, the first complete observation is the Discove
 - **Ignore once** — create One-time Suppression for the current Listener Lifetime.
 - **Always ignore** — save a persistent `Ignore` policy.
 
-## Initial policy matchers
+## Initial policy matchers (slice 5)
 
 A policy may match a remote port or range, loopback/wildcard binding, Listener Process executable basename or full path, ancestor-process executable basename or full path, and a Listener Process working directory under a directory tree. Linux path matching is case-sensitive and path-component aware. Arbitrary full-command-line regular expressions are deferred.
 
@@ -22,22 +30,21 @@ If a Remote Listener has multiple attributable Listener Processes, automatic act
 
 ## Local port allocation
 
-A Forward first attempts to bind its Preferred Local Port. On address-in-use failure it atomically attempts each port from `remotePort + 1` through `remotePort + 100`, without a separate check-then-bind step. A policy with `requireSamePort: true` disables fallback. The Allocated Local Port remains stable for the current Listener Lifetime and is shown explicitly whenever it differs from the remote port. Exhausting the permitted range produces Local Port Conflict; the product never terminates the process occupying a candidate port.
-
+A Forward first attempts to bind its Preferred Local Port. On address-in-use failure it atomically attempts each port from `remotePort + 1` through `remotePort + 100`, without a separate check-then-bind step. The Allocated Local Port remains stable for the current Listener Lifetime and is shown explicitly whenever it differs from the remote port. Exhausting the permitted range produces Local Port Conflict; the product never terminates the process occupying a candidate port. Implemented: core/forward_ownership.go (ADR-0008). When slice 5 lands, a policy with `requireSamePort: true` disables the fallback.
 ## Listener continuity
 
-Listener Lifetime continuity is based on observed sockets rather than port number or PID alone. Hot reload that inherits an existing socket keeps the Lifetime. If every previously observed socket disappears and replacement sockets occupy the same port, a new Lifetime begins; One-time Approval and One-time Suppression do not carry into it. Absent listeners pass through a disappearance grace before the Lifetime ends: three observation cycles of tolerance plus the ending scan, i.e. four consecutive absences, about eight seconds at the scanner's two-second cadence.
+Listener Lifetime continuity is based on observed sockets rather than port number or PID alone. Hot reload that inherits an existing socket keeps the Lifetime. If every previously observed socket disappears and replacement sockets occupy the same port, a new Lifetime begins; One-time Approval and One-time Suppression do not carry into it. Absent listeners pass through a disappearance grace before the Lifetime ends: three observation cycles of tolerance plus the ending scan, i.e. four consecutive absences, about eight seconds at the scanner's two-second cadence. Implemented: Listener Lifetime verdicts on the wire (core/lifetime.go; listener_lifetimes in the Watch snapshot).
 
-## Continuous policy reconciliation
+## Continuous policy reconciliation (slice 5)
 
-Persistent Forwarding Policies are reevaluated on every valid observation. A determinate policy mismatch or change to `Ignore` removes its Managed Forward after two consecutive observations and five seconds. A saved change is previewed before commit, then reconciles immediately. One-time Approval remains valid for its Listener Lifetime despite Process Metadata changes, and Manual Forward is never reconciled by Policy.
+Slice 5 adds Policy reconciliation. Persistent Forwarding Policies are reevaluated on every valid observation. A determinate policy mismatch or change to `Ignore` removes its Managed Forward after two consecutive observations and five seconds. A saved change is previewed before commit, then reconciles immediately. One-time Approval remains valid for its Listener Lifetime despite Process Metadata changes, and Manual Forward is never reconciled by Policy.
 
 Missing Process Metadata is distinct from scanner failure. A new listener lacking required Policy Evidence enters `Ask`. An existing policy-managed Forward is retained briefly, then removed into Needs Attention after two successful observations and five seconds without the required evidence. SSH or scanner failure never counts toward that threshold.
 
-## Service protocol and action
+## Service protocol and action (slice 5)
 
 A Forwarding Policy separates its forwarding decision from post-forward behavior. `protocol` is `tcp`, `http`, or `https`; `onForward` is `none`, `notify`, or `openBrowser`. Defaults are `tcp` and `notify`. Browser opening is valid only for an explicitly declared HTTP/HTTPS service and uses the actual Allocated Local Port.
 
-## Disappearance and cleanup
+## Disappearance and cleanup (slice 5)
 
 A Managed Forward is removed only after two consecutive successful scans omit its Remote Listener and at least five seconds have elapsed. Connection loss and scanner failure do not count as disappearance. Reconnection obtains a complete observation before cleanup resumes.

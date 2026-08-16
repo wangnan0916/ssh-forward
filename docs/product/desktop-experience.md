@@ -1,5 +1,9 @@
 # Desktop experience
 
+## Implementation status
+
+All behavior in this document is planned. The menu-bar app, its compact panel, the Dashboard, the Policy editor, and notifications land with slices 6–7 (CLI surfaces first, then the desktop phase; design/implementation-sequence.md and cli-and-state.md). None of it exists in the current headless Go Manager. The prose below is the planned product specification, not a description of today's behavior.
+
 ## Interface surfaces
 
 At login the app presents only a menu-bar icon and does not remain in the Dock while idle. Its compact panel shows the selected host and connection state, counts and a short list of items needing attention, a compact Active Forward list, pause/reconnect controls, and actions to open the Dashboard, settings, or quit.
