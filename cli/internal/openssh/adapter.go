@@ -193,7 +193,7 @@ func approvedEnvironment() []string {
 }
 
 func validAlias(alias string) bool {
-	if len(alias) == 0 || len(alias) > 255 || alias[0] == '-' || !utf8.ValidString(alias) {
+	if len(alias) == 0 || len(alias) > core.MaxHostAliasLength || alias[0] == '-' || !utf8.ValidString(alias) {
 		return false
 	}
 	for _, character := range alias {

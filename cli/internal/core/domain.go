@@ -10,6 +10,12 @@ type ForwardID string
 
 type HostAlias string
 
+// MaxHostAliasLength is the maximum length of a HostAlias in bytes. Both
+// adapters enforce it — the wire adapter (jsonrpc) on command parameters and
+// the SSH adapter (openssh) before invoking ssh — so the bound lives with
+// the domain type and the adapters reference it.
+const MaxHostAliasLength = 255
+
 type AddressFamily string
 
 const (

@@ -7,6 +7,8 @@ import (
 
 	"github.com/creachadair/jrpc2"
 	"github.com/creachadair/jrpc2/channel"
+
+	"ssh-forward/cli/internal/core"
 )
 
 const (
@@ -18,7 +20,7 @@ const (
 	maxPendingCalls   = 64
 	maxHandlers       = 8
 	maxOperationID    = 128
-	maxHostAlias      = 255
+	maxHostAlias      = core.MaxHostAliasLength
 	maxForwardID      = 256
 	maxWatchID        = 64
 	maxSessionWatches = 8
@@ -283,7 +285,7 @@ func negotiateHello(frames channel.Channel) (negotiatedCapabilities, error) {
 
 	var params helloParams
 	if len(request.Params) == 0 || json.Unmarshal(request.Params, &params) != nil || !validHelloParams(params) {
-		return negotiatedCapabilities{}, rejectHandshake(frames, request.ID, jrpc2.InvalidParams, "invalid parameters", errorData{Kind: "invalid_parameters"})
+		return negotiatedCapabilities{}, rejectHandshakeError(frames, request.ID, errInvalidParameters)
 	}
 	if *params.Protocol.Major != protocolMajor {
 		return negotiatedCapabilities{}, rejectHandshake(frames, request.ID, jrpc2.Code(-32002), "incompatible protocol major", incompatibleProtocolData{
@@ -367,6 +369,14 @@ func rejectHandshake(frames channel.Channel, id json.RawMessage, code jrpc2.Code
 		return err
 	}
 	return errHandshakeRejected
+}
+
+// rejectHandshakeError rejects the handshake with a prebuilt wire error, so
+// the handshake path and the method path share one construction (the
+// invalid-parameters sentinel) instead of re-typing its code, message, and
+// kind literal.
+func rejectHandshakeError(frames channel.Channel, id json.RawMessage, err *jrpc2.Error) error {
+	return rejectHandshake(frames, id, err.Code, err.Message, err.Data)
 }
 
 func sendResult(frames channel.Channel, id json.RawMessage, result any) error {
