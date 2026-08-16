@@ -74,13 +74,13 @@ func (s *connectionSession) handleWatch(ctx context.Context, request *jrpc2.Requ
 	if err != nil {
 		s.releaseWatchSlot()
 		_ = stream.Close()
-		return nil, &jrpc2.Error{Code: jrpc2.InternalError, Message: "internal error"}
+		return nil, internalError()
 	}
 	watch, ok := s.registerWatch(stream)
 	if !ok {
 		s.releaseWatchSlot()
 		_ = stream.Close()
-		return nil, &jrpc2.Error{Code: jrpc2.InternalError, Message: "internal error"}
+		return nil, internalError()
 	}
 	// Record which request id this response introduces: onResponseSent then
 	// activates the Watch by looking up the already-decoded request id,

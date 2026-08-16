@@ -104,7 +104,7 @@ func handleExecute(ctx context.Context, request *jrpc2.Request, manager core.Man
 func marshalManagerError(err error) error {
 	var domainError *core.DomainError
 	if !errors.As(err, &domainError) {
-		return &jrpc2.Error{Code: jrpc2.InternalError, Message: "internal error"}
+		return internalError()
 	}
 	code := jrpc2.Code(jrpc2.InternalError)
 	message := "internal error"
@@ -130,7 +130,7 @@ func marshalManagerError(err error) error {
 	case core.ErrorWatchLimit:
 		return watchLimitError()
 	default:
-		return &jrpc2.Error{Code: jrpc2.InternalError, Message: "internal error"}
+		return internalError()
 	}
 	return (&jrpc2.Error{Code: code, Message: message}).WithData(errorData{
 		Kind:      string(domainError.Kind),
@@ -171,7 +171,7 @@ func handleSnapshot(ctx context.Context, request *jrpc2.Request, manager core.Ma
 	}
 	snapshot, err := manager.Snapshot(ctx)
 	if err != nil {
-		return nil, &jrpc2.Error{Code: jrpc2.InternalError, Message: "internal error"}
+		return nil, internalError()
 	}
 	return snapshotResult{Snapshot: marshalSnapshot(snapshot)}, nil
 }

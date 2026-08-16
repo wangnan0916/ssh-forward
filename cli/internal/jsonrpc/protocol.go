@@ -52,6 +52,14 @@ var (
 	errWatchLimit = watchLimitError()
 )
 
+// internalError is the single construction of the wire internal-error shape.
+// It deliberately carries no errorData Kind: it reports a server-side
+// condition rather than a domain rejection, so clients cannot match or
+// retry it against the domain vocabulary.
+func internalError() *jrpc2.Error {
+	return &jrpc2.Error{Code: jrpc2.InternalError, Message: "internal error"}
+}
+
 // watchLimitError is the single construction of the Watch-limit wire error.
 // Both limits produce it: the per-connection Watch slot cap enforced in the
 // session and the Manager's global Watch cap translated from core, so the
