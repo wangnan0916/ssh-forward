@@ -135,6 +135,14 @@ func (e *Endpoint) Close(ctx context.Context) error {
 	}
 }
 
+// accept serves one listener. Every Accept error is terminal by design:
+// the only shutdown is Close closing the listener, and a failed or refused
+// connection must not leave a half-accepted state. The Endpoint itself is
+// disposable — the Manager rebuilds it on demand — so there is no recovery
+// path here. workers.Add(1) runs after the connection is tracked in
+// connections; Close cancels the ctx before workers.Wait, so a proxy
+// goroutine the Wait may miss observes only the canceled ctx and exits
+// without touching the tracked set.
 func (e *Endpoint) accept(listener net.Listener) {
 	defer e.workers.Done()
 	for {
