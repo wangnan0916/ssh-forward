@@ -158,6 +158,17 @@ type removeForwardParams struct {
 	ForwardID   string `json:"forward_id"`
 }
 
+// listenerDecisionParams is shared by policy.approve and policy.suppress:
+// both target the Listener on (host, remote_port) and optionally pin the
+// family; an absent family matches the first Listener on the port.
+type listenerDecisionParams struct {
+	Kind        string `json:"kind"`
+	OperationID string `json:"operation_id"`
+	Host        string `json:"host"`
+	RemotePort  uint16 `json:"remote_port"`
+	Family      string `json:"family,omitempty"`
+}
+
 type outcomeResult struct {
 	Outcome wireOutcome `json:"outcome"`
 }
@@ -222,6 +233,7 @@ type wireHost struct {
 	Discovery            wireDiscovery             `json:"discovery"`
 	ListenerObservations []wireListenerObservation `json:"listener_observations"`
 	ListenerLifetimes    []wireListenerLifetime    `json:"listener_lifetimes,omitempty"`
+	AskListeners         []wireListenerAsk         `json:"ask_listeners,omitempty"`
 	Forwards             []wireForward             `json:"forwards"`
 }
 
@@ -249,10 +261,20 @@ type wireListenerObservation struct {
 }
 
 type wireListenerLifetime struct {
+	Family       string `json:"family"`
+	BindScope    string `json:"bind_scope"`
+	RemotePort   uint16 `json:"remote_port"`
+	Status       string `json:"status"`
+	PostBaseline bool   `json:"post_baseline,omitempty"`
+}
+
+// wireListenerAsk is one Remote Listener currently needing a user decision
+// (the Ask flow): first observed after the Discovery Baseline, governed by
+// no policy or One-time Suppression, and not matched automatically.
+type wireListenerAsk struct {
 	Family     string `json:"family"`
 	BindScope  string `json:"bind_scope"`
 	RemotePort uint16 `json:"remote_port"`
-	Status     string `json:"status"`
 }
 
 type wireProcessChain struct {

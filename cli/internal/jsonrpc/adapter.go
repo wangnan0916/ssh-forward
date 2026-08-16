@@ -91,6 +91,32 @@ func handleExecute(ctx context.Context, request *jrpc2.Request, manager core.Man
 			CommandID: core.CommandID(remove.OperationID),
 			ForwardID: core.ForwardID(remove.ForwardID),
 		}
+	case "policy.approve":
+		var approve listenerDecisionParams
+		if json.Unmarshal(params.Command, &approve) != nil || len(approve.OperationID) == 0 || len(approve.OperationID) > maxOperationID ||
+			len(approve.Host) == 0 || len(approve.Host) > maxHostAlias || approve.RemotePort == 0 ||
+			(approve.Family != "" && !core.ValidAddressFamily(core.AddressFamily(approve.Family))) {
+			return nil, errInvalidParameters
+		}
+		command = core.ApproveListener{
+			CommandID:  core.CommandID(approve.OperationID),
+			Host:       core.HostAlias(approve.Host),
+			RemotePort: approve.RemotePort,
+			Family:     core.AddressFamily(approve.Family),
+		}
+	case "policy.suppress":
+		var suppress listenerDecisionParams
+		if json.Unmarshal(params.Command, &suppress) != nil || len(suppress.OperationID) == 0 || len(suppress.OperationID) > maxOperationID ||
+			len(suppress.Host) == 0 || len(suppress.Host) > maxHostAlias || suppress.RemotePort == 0 ||
+			(suppress.Family != "" && !core.ValidAddressFamily(core.AddressFamily(suppress.Family))) {
+			return nil, errInvalidParameters
+		}
+		command = core.SuppressListener{
+			CommandID:  core.CommandID(suppress.OperationID),
+			Host:       core.HostAlias(suppress.Host),
+			RemotePort: suppress.RemotePort,
+			Family:     core.AddressFamily(suppress.Family),
+		}
 	default:
 		return nil, errInvalidParameters
 	}
@@ -124,6 +150,9 @@ func marshalManagerError(err error) error {
 	case core.ErrorForwardNotFound:
 		code = -32013
 		message = "Forward was not found"
+	case core.ErrorListenerNotFound:
+		code = -32016
+		message = "Listener was not found"
 	case core.ErrorManagerClosed:
 		code = -32014
 		message = "Manager is closed"
@@ -192,10 +221,11 @@ func marshalSnapshot(snapshot core.Snapshot) wireSnapshot {
 	lifetimes := make([]wireListenerLifetime, len(host.ListenerLifetimes))
 	for lifetimeIndex, lifetime := range host.ListenerLifetimes {
 		lifetimes[lifetimeIndex] = wireListenerLifetime{
-			Family:     string(lifetime.Family),
-			BindScope:  string(lifetime.BindScope),
-			RemotePort: lifetime.RemotePort,
-			Status:     string(lifetime.Status),
+			Family:       string(lifetime.Family),
+			BindScope:    string(lifetime.BindScope),
+			RemotePort:   lifetime.RemotePort,
+			Status:       string(lifetime.Status),
+			PostBaseline: lifetime.PostBaseline,
 		}
 	}
 	return wireSnapshot{
@@ -206,9 +236,22 @@ func marshalSnapshot(snapshot core.Snapshot) wireSnapshot {
 			Discovery:            marshalDiscovery(host.Discovery),
 			ListenerObservations: observations,
 			ListenerLifetimes:    lifetimes,
+			AskListeners:         marshalAskListeners(host.AskListeners),
 			Forwards:             forwards,
 		},
 	}
+}
+
+func marshalAskListeners(ask []core.ListenerAskSnapshot) []wireListenerAsk {
+	listeners := make([]wireListenerAsk, len(ask))
+	for index, listener := range ask {
+		listeners[index] = wireListenerAsk{
+			Family:     string(listener.Family),
+			BindScope:  string(listener.BindScope),
+			RemotePort: listener.RemotePort,
+		}
+	}
+	return listeners
 }
 
 func marshalDiscovery(discovery core.DiscoverySnapshot) wireDiscovery {

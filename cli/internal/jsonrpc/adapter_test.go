@@ -473,6 +473,102 @@ func TestServeReturnsCompleteManagerSnapshot(t *testing.T) {
 	assertJSONEqual(t, response, []byte(want))
 }
 
+func TestServeExecutesApproveListener(t *testing.T) {
+	wantCommand := core.ApproveListener{
+		CommandID:  core.CommandID("operation-3"),
+		Host:       core.HostAlias("development"),
+		RemotePort: 8080,
+		Family:     core.FamilyIPv4,
+	}
+	manager := &snapshotManager{
+		execute: func(_ context.Context, command core.Command) (core.Outcome, error) {
+			if !reflect.DeepEqual(command, wantCommand) {
+				return core.Outcome{}, fmt.Errorf("command = %#v, want %#v", command, wantCommand)
+			}
+			return core.Outcome{
+				Kind:     core.OutcomeApprovalRecorded,
+				Revision: 9,
+				Forward: core.ForwardSnapshot{
+					ID:                 core.ForwardID("managed:ipv4:loopback:8080"),
+					Kind:               core.ForwardManaged,
+					RemotePort:         8080,
+					RemoteFamily:       core.FamilyIPv4,
+					AllocatedLocalPort: 8080,
+					LocalFamilies:      []core.AddressFamily{core.FamilyIPv4},
+				},
+			}, nil
+		},
+	}
+	session := newTestSessionWithManager(t, manager)
+	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
+	response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.execute","params":{"command":{"kind":"policy.approve","operation_id":"operation-3","host":"development","remote_port":8080,"family":"ipv4"}}}`)
+	want := `{"jsonrpc":"2.0","id":"2","result":{"outcome":{"kind":"approval_recorded","revision":9,"forward":{"id":"managed:ipv4:loopback:8080","kind":"managed","remote_port":8080,"remote_family":"ipv4","allocated_local_port":8080,"local_families":["ipv4"]}}}}`
+	assertJSONEqual(t, response, []byte(want))
+}
+
+func TestServeExecutesSuppressListener(t *testing.T) {
+	wantCommand := core.SuppressListener{
+		CommandID:  core.CommandID("operation-4"),
+		Host:       core.HostAlias("development"),
+		RemotePort: 8080,
+	}
+	manager := &snapshotManager{
+		execute: func(_ context.Context, command core.Command) (core.Outcome, error) {
+			if !reflect.DeepEqual(command, wantCommand) {
+				return core.Outcome{}, fmt.Errorf("command = %#v, want %#v", command, wantCommand)
+			}
+			return core.Outcome{Kind: core.OutcomeSuppressionRecorded, Revision: 10}, nil
+		},
+	}
+	session := newTestSessionWithManager(t, manager)
+	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
+	response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.execute","params":{"command":{"kind":"policy.suppress","operation_id":"operation-4","host":"development","remote_port":8080}}}`)
+	want := `{"jsonrpc":"2.0","id":"2","result":{"outcome":{"kind":"suppression_recorded","revision":10,"forward":{"id":"","kind":"","remote_port":0,"remote_family":"","allocated_local_port":0,"local_families":[]}}}}`
+	assertJSONEqual(t, response, []byte(want))
+}
+
+func TestServeRejectsInvalidListenerDecisionParameters(t *testing.T) {
+	requests := []string{
+		`{"kind":"policy.approve","operation_id":"operation-3","host":"development","remote_port":0,"family":"ipv4"}`,
+		`{"kind":"policy.approve","operation_id":"operation-3","host":"development","remote_port":8080,"family":"unknown"}`,
+		`{"kind":"policy.approve","operation_id":"operation-3","host":"","remote_port":8080}`,
+		fmt.Sprintf(`{"kind":"policy.suppress","operation_id":"%s","host":"development","remote_port":8080}`, strings.Repeat("x", 129)),
+	}
+	for _, command := range requests {
+		session := newTestSession(t)
+		session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
+		response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.execute","params":{"command":`+command+`}}`)
+		want := `{"jsonrpc":"2.0","id":"2","error":{"code":-32602,"message":"invalid parameters","data":{"kind":"invalid_parameters","retryable":false}}}`
+		assertJSONEqual(t, response, []byte(want))
+	}
+}
+
+func TestServeMapsListenerNotFound(t *testing.T) {
+	manager := &snapshotManager{
+		execute: func(context.Context, core.Command) (core.Outcome, error) {
+			return core.Outcome{}, &core.DomainError{Kind: core.ErrorListenerNotFound}
+		},
+	}
+	session := newTestSessionWithManager(t, manager)
+	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
+	response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.execute","params":{"command":{"kind":"policy.approve","operation_id":"operation-3","host":"development","remote_port":9999}}}`)
+	want := `{"jsonrpc":"2.0","id":"2","error":{"code":-32016,"message":"Listener was not found","data":{"kind":"listener_not_found","retryable":false}}}`
+	assertJSONEqual(t, response, []byte(want))
+}
+
+func TestServeMarshalsAskListeners(t *testing.T) {
+	snapshot := discoveryFixtureSnapshot()
+	snapshot.Host.AskListeners = []core.ListenerAskSnapshot{
+		{Family: core.FamilyIPv6, BindScope: core.BindLoopback, RemotePort: 9090},
+	}
+	manager := &snapshotManager{snapshot: snapshot}
+	session := newTestSessionWithManager(t, manager)
+	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
+	response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.snapshot","params":{"scope":{"kind":"all"}}}`)
+	want := `{"jsonrpc":"2.0","id":"2","result":{"snapshot":{"revision":9,"host":{"alias":"development","connection":"connected","discovery":{"state":"degraded","capability":{"remote_listeners":"full","socket_identity":"full","process_metadata":"partial"},"baseline_established":true,"scanner_version":1,"scanner_checksum":"abc123","diagnostic":"process_metadata_partial"},"listener_observations":[{"family":"ipv4","bind_scope":"loopback","remote_port":8080,"socket_identities":["socket:one"],"process_chains":[{"processes":[{"pid":42,"executable":"/usr/bin/python3","working_directory":"/workspace","arguments":["python3","app.py"]}]}]}],"listener_lifetimes":[{"family":"ipv4","bind_scope":"loopback","remote_port":8080,"status":"continuous"}],"ask_listeners":[{"family":"ipv6","bind_scope":"loopback","remote_port":9090}],"forwards":[]}}}}`
+	assertJSONEqual(t, response, []byte(want))
+}
+
 func TestServeCompletesPipelinedHelloBeforeManagerRequest(t *testing.T) {
 	session := newTestSession(t)
 	hello := `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":["unused"]}}`
