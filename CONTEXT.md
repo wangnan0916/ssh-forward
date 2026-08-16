@@ -56,6 +56,10 @@ _Avoid_: Connection State, Forwarding Session State
 The observation evidence currently available for a Development Host, distinguishing Remote Listener visibility from socket and process attribution.
 _Avoid_: Discovery State, permission level
 
+**Capability Reason**:
+The explanation of why a Discovery Capability dimension is not full, distinguishing scanner-declared partiality from evidence the scanner saw as missing and from evidence core dropped at retention caps. It is translated once, by the host actor, into the Discovery Diagnostic shown on the wire.
+_Avoid_: Diagnostic, failure reason, partiality flag
+
 **Listener Observation**:
 A point-in-time snapshot of a Remote Listener and any processes observed holding its sockets. Process information may be absent, ambiguous, or change between observations.
 _Avoid_: Service record, stable process identity
