@@ -1,1 +1,1 @@
-{"jsonrpc":"2.0","method":"manager.snapshot","params":{"watch_id":"watch-1","snapshot":{"revision":4,"hosts":[]}}}
+{"jsonrpc":"2.0","method":"manager.snapshot","params":{"watch_id":"watch-1","snapshot":{"revision":4}}}

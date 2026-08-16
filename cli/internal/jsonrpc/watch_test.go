@@ -264,7 +264,7 @@ func TestSnapshotNotificationDoesNotReleaseRequestAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read Snapshot notification: %v", err)
 	}
-	want := `{"jsonrpc":"2.0","method":"manager.snapshot","params":{"watch_id":"watch-1","snapshot":{"revision":2,"hosts":[]}}}`
+	want := `{"jsonrpc":"2.0","method":"manager.snapshot","params":{"watch_id":"watch-1","snapshot":{"revision":2}}}`
 	assertJSONEqual(t, notification, []byte(want))
 	select {
 	case err := <-writeDone:
@@ -327,7 +327,7 @@ func TestServeBoundsActiveWatchesPerConnection(t *testing.T) {
 	for index := 2; index <= 8; index++ {
 		request := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"manager.watch","params":{"scope":{"kind":"all"}}}`, index+1)
 		response := session.exchange(t, request)
-		want := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"result":{"watch_id":"watch-%d","snapshot":{"revision":%d,"hosts":[]}}}`, index+1, index, index)
+		want := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"result":{"watch_id":"watch-%d","snapshot":{"revision":%d}}}`, index+1, index, index)
 		assertJSONEqual(t, response, []byte(want))
 	}
 	response := session.exchange(t, `{"jsonrpc":"2.0","id":"limit","method":"manager.watch","params":{"scope":{"kind":"all"}}}`)
@@ -336,7 +336,7 @@ func TestServeBoundsActiveWatchesPerConnection(t *testing.T) {
 
 	session.exchange(t, `{"jsonrpc":"2.0","id":"stop","method":"manager.unwatch","params":{"watch_id":"watch-1"}}`)
 	response = session.exchange(t, `{"jsonrpc":"2.0","id":"replacement","method":"manager.watch","params":{"scope":{"kind":"all"}}}`)
-	want = `{"jsonrpc":"2.0","id":"replacement","result":{"watch_id":"watch-9","snapshot":{"revision":9,"hosts":[]}}}`
+	want = `{"jsonrpc":"2.0","id":"replacement","result":{"watch_id":"watch-9","snapshot":{"revision":9}}}`
 	assertJSONEqual(t, response, []byte(want))
 }
 
@@ -388,7 +388,7 @@ func TestServeWatchResponsePrecedesSnapshotNotification(t *testing.T) {
 	assertJSONEqual(t, hello, []byte(wantHello))
 
 	response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.watch","params":{"scope":{"kind":"all"}}}`)
-	wantResponse := `{"jsonrpc":"2.0","id":"2","result":{"watch_id":"watch-1","snapshot":{"revision":3,"hosts":[]}}}`
+	wantResponse := `{"jsonrpc":"2.0","id":"2","result":{"watch_id":"watch-1","snapshot":{"revision":3}}}`
 	assertJSONEqual(t, response, []byte(wantResponse))
 
 	notification, err := session.reader.ReadBytes('\n')

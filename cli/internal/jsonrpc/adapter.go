@@ -179,7 +179,7 @@ func handleSnapshot(ctx context.Context, request *jrpc2.Request, manager core.Ma
 
 func marshalSnapshot(snapshot core.Snapshot) wireSnapshot {
 	if snapshot.Host == nil {
-		return wireSnapshot{Revision: uint64(snapshot.Revision), Hosts: []wireHost{}}
+		return wireSnapshot{Revision: uint64(snapshot.Revision)}
 	}
 	host := snapshot.Host
 	forwards := make([]wireForward, len(host.Forwards))
@@ -192,13 +192,13 @@ func marshalSnapshot(snapshot core.Snapshot) wireSnapshot {
 	}
 	return wireSnapshot{
 		Revision: uint64(snapshot.Revision),
-		Hosts: []wireHost{{
+		Host: &wireHost{
 			Alias:                string(host.Alias),
 			Connection:           string(host.Connection),
 			Discovery:            marshalDiscovery(host.Discovery),
 			ListenerObservations: observations,
 			Forwards:             forwards,
-		}},
+		},
 	}
 }
 

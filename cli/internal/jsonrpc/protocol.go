@@ -172,8 +172,8 @@ type resyncNotification struct {
 }
 
 type wireSnapshot struct {
-	Revision uint64     `json:"revision"`
-	Hosts    []wireHost `json:"hosts"`
+	Revision uint64    `json:"revision"`
+	Host     *wireHost `json:"host,omitempty"`
 }
 
 type wireHost struct {
