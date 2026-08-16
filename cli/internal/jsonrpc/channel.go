@@ -232,7 +232,7 @@ func (c *pendingChannel) Send(message []byte) error {
 	if err == nil && c.onResponse != nil {
 		c.onResponse(envelope)
 	}
-	return nil
+	return err
 }
 
 // decodeResponseEnvelope decodes a frame once and classifies it: a response
