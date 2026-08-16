@@ -197,12 +197,8 @@ func (m *manager) Execute(ctx context.Context, command Command) (Outcome, error)
 }
 
 func (m *manager) addManualForward(ctx context.Context, add AddManualForward) (Outcome, error) {
-	if outcome, replayed, err := m.beginCommand(ctx, add.CommandID, add); replayed || err != nil {
+	if outcome, settled, err := m.admitCommand(ctx, add.CommandID, add, add.Host); settled {
 		return outcome, err
-	}
-	if add.Host != m.host || m.host == "" {
-		m.failCommandAndRelease(add.CommandID)
-		return Outcome{}, &DomainError{Kind: ErrorUnknownHost}
 	}
 	remote, err := manualTarget(add.Family, add.RemotePort)
 	if err != nil {
@@ -332,12 +328,8 @@ func (m *manager) completeRemoval(remove RemoveForward, forward ForwardSnapshot)
 // intent needs no hysteresis). If the listener already has a Managed
 // Forward, only the approval is recorded.
 func (m *manager) approveListener(ctx context.Context, approve ApproveListener) (Outcome, error) {
-	if outcome, replayed, err := m.beginCommand(ctx, approve.CommandID, approve); replayed || err != nil {
+	if outcome, settled, err := m.admitCommand(ctx, approve.CommandID, approve, approve.Host); settled {
 		return outcome, err
-	}
-	if approve.Host != m.host || m.host == "" {
-		m.failCommandAndRelease(approve.CommandID)
-		return Outcome{}, &DomainError{Kind: ErrorUnknownHost}
 	}
 	m.mu.Lock()
 	if m.closed {
@@ -353,10 +345,7 @@ func (m *manager) approveListener(ctx context.Context, approve ApproveListener) 
 	}
 	m.reconciler.approvals[key] = struct{}{}
 	if m.forwards.hasManagedForListener(key) {
-		m.publishLocked()
-		m.mu.Unlock()
-		m.completeCommand(approve.CommandID, approve, Outcome{Kind: OutcomeApprovalRecorded, Revision: m.revision})
-		return Outcome{Kind: OutcomeApprovalRecorded, Revision: m.revision}, nil
+		return m.completeDecisionLocked(approve.CommandID, approve, Outcome{Kind: OutcomeApprovalRecorded, Revision: m.revision}), nil
 	}
 	m.mu.Unlock()
 
@@ -385,10 +374,7 @@ func (m *manager) approveListener(ctx context.Context, approve ApproveListener) 
 		// first: the approval's intent is already served, so the outcome
 		// is the approval record — not a command conflict.
 		_ = owner.Close(context.Background())
-		m.publishLocked()
-		m.mu.Unlock()
-		m.completeCommand(approve.CommandID, approve, Outcome{Kind: OutcomeApprovalRecorded, Revision: m.revision})
-		return Outcome{Kind: OutcomeApprovalRecorded, Revision: m.revision}, nil
+		return m.completeDecisionLocked(approve.CommandID, approve, Outcome{Kind: OutcomeApprovalRecorded, Revision: m.revision}), nil
 	}
 	m.publishLocked()
 	outcome := Outcome{Kind: OutcomeApprovalRecorded, Revision: m.revision, Forward: cloneForward(forward)}
@@ -400,12 +386,8 @@ func (m *manager) approveListener(ctx context.Context, approve ApproveListener) 
 // SuppressListener records a One-time Suppression for the current Listener
 // Lifetime: the listener leaves the Ask list until the lifetime ends.
 func (m *manager) suppressListener(ctx context.Context, suppress SuppressListener) (Outcome, error) {
-	if outcome, replayed, err := m.beginCommand(ctx, suppress.CommandID, suppress); replayed || err != nil {
+	if outcome, settled, err := m.admitCommand(ctx, suppress.CommandID, suppress, suppress.Host); settled {
 		return outcome, err
-	}
-	if suppress.Host != m.host || m.host == "" {
-		m.failCommandAndRelease(suppress.CommandID)
-		return Outcome{}, &DomainError{Kind: ErrorUnknownHost}
 	}
 	m.mu.Lock()
 	if m.closed {
@@ -420,11 +402,33 @@ func (m *manager) suppressListener(ctx context.Context, suppress SuppressListene
 		return Outcome{}, &DomainError{Kind: ErrorListenerNotFound}
 	}
 	m.reconciler.suppressions[key] = struct{}{}
+	return m.completeDecisionLocked(suppress.CommandID, suppress, Outcome{Kind: OutcomeSuppressionRecorded, Revision: m.revision}), nil
+}
+
+// admitCommand runs the shared admission for the resource commands: the
+// replay check and the host guard. It reports whether the command was
+// already settled — a replayed answer from the journal or a failed
+// admission — and the caller must return (outcome, err) unchanged in that
+// case.
+func (m *manager) admitCommand(ctx context.Context, id CommandID, command Command, host HostAlias) (Outcome, bool, error) {
+	if outcome, replayed, err := m.beginCommand(ctx, id, command); replayed || err != nil {
+		return outcome, true, err
+	}
+	if host != m.host || m.host == "" {
+		m.failCommandAndRelease(id)
+		return Outcome{}, true, &DomainError{Kind: ErrorUnknownHost}
+	}
+	return Outcome{}, false, nil
+}
+
+// completeDecisionLocked publishes the mirror, releases the Manager lock,
+// and completes the journal record for a recorded One-time decision. The
+// caller must hold the Manager lock.
+func (m *manager) completeDecisionLocked(id CommandID, command Command, outcome Outcome) Outcome {
 	m.publishLocked()
-	outcome := Outcome{Kind: OutcomeSuppressionRecorded, Revision: m.revision}
 	m.mu.Unlock()
-	m.completeCommand(suppress.CommandID, suppress, outcome)
-	return outcome, nil
+	m.completeCommand(id, command, outcome)
+	return outcome
 }
 
 // findListenerLocked locates the Listener the commands target: an exact
