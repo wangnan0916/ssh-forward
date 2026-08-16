@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"strconv"
@@ -205,20 +206,9 @@ func TestManualForwardRetainsEndpointAcrossSessionReplacement(t *testing.T) {
 // points — assert the new count, do not weaken to monotone progression.
 func waitForConnectionState(t *testing.T, manager Manager, state ConnectionState, revision Revision) Snapshot {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for {
-		snapshot, err := manager.Snapshot(context.Background())
-		if err != nil {
-			t.Fatalf("Snapshot: %v", err)
-		}
-		if snapshot.Host.Connection == state && snapshot.Revision == revision {
-			return snapshot
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("Snapshot = %#v, want connection %q at revision %d", snapshot, state, revision)
-		}
-		time.Sleep(time.Millisecond)
-	}
+	return waitForSnapshot(t, manager, fmt.Sprintf("want connection %q at revision %d", state, revision), func(snapshot Snapshot) bool {
+		return snapshot.Host != nil && snapshot.Host.Connection == state && snapshot.Revision == revision
+	})
 }
 
 // countingSuspendConnector records every connection attempt and fails each
