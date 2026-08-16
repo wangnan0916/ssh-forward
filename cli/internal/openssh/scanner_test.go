@@ -159,7 +159,10 @@ listener.close()
 	if err != nil {
 		t.Fatalf("read streamed scanner: %v", err)
 	}
-	if !strings.Contains(string(scanner), "SSH_FORWARD_SCANNER_VERSION=1") || !strings.Contains(string(scanner), "/proc/net/tcp") {
+	// The streamed script must be the fixed v1 /proc scanner: the SF1 frame
+	// emission (the wire version, see scanner.sh header) and the /proc
+	// listener path.
+	if !strings.Contains(string(scanner), `printf 'SF1\tB\t`) || !strings.Contains(string(scanner), "/proc/net/tcp") {
 		t.Fatalf("streamed scanner is not the fixed v1 /proc scanner: %q", scanner)
 	}
 

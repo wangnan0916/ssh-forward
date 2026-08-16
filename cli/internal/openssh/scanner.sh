@@ -1,12 +1,14 @@
 # Individual discovery failures must not end the shared SSH/SOCKS process.
 # Every expansion below has a default and fallible probes degrade their output.
-SSH_FORWARD_SCANNER_VERSION=1
 # Wire frames on stdout, one per line, tab-separated (field 0 is the literal
-# "SF1", field 1 the frame type). This header is the single schema statement
-# for the frame layout; the parser in scanner.go ((*scannerParser).accept)
-# consumes exactly this, so extend both sides together. The boot frame's
-# checksum is computed over this file at embed time, so a layout change here
-# is always visible there.
+# "SF1", field 1 the frame type). "SF1" is the protocol version on the wire;
+# it is the same version as scannerVersion in scanner_script.go, which the
+# parser stamps into every ObservationSet — bump both together when the
+# layout changes. This header is the single schema statement for the frame
+# layout; the parser in scanner.go ((*scannerParser).accept) consumes exactly
+# this, so extend both sides together. The boot frame's checksum is computed
+# over this file at embed time, so a layout change here is always visible
+# there.
 #   B  boot frame, 12 fields:
 #       2 sequence, 3 boot_hex, 4 network_hex (hex, up to
 #       identity_text_hex_limit chars each), 5 listener_capability,
