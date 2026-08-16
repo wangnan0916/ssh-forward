@@ -1,5 +1,9 @@
 # CLI and state contract
 
+## Status
+
+The command surface and state layout below are the **planned product contract** and land with the CLI slice (see implementation-sequence.md); no CLI binary exists yet. Today the Manager is consumed over the IPC wire by the integration tests, and `app.NewManager` in the Go module is the prepared seam where the CLI entry point will land. `--json` output is a contract commitment, not yet an implementation.
+
 ## New command contract
 
 The Go CLI is designed independently for this product and has no command, output, file, socket, or runtime-compatibility obligation to the pre-existing shell utility. Its command surface follows the product domain:
@@ -35,7 +39,7 @@ The manager watches external JSONC changes with debounce. A valid change is prev
 
 ## Manager ownership
 
-Only one new-product manager runs per user. Desktop starts its signed bundled core by absolute bundle path; standalone CLI starts its own installed executable rather than searching `$PATH` for a helper. Compatible clients reuse the running manager. An incompatible client reports the required restart or upgrade and never terminates an unknown manager automatically.
+Only one new-product manager runs per user. Desktop starts its signed bundled core by absolute bundle path; the planned standalone CLI starts its own installed executable rather than searching `$PATH` for a helper. Compatible clients reuse the running manager. An incompatible client reports the required restart or upgrade and never terminates an unknown manager automatically.
 
 ## Development isolation
 
