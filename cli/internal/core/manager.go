@@ -308,6 +308,11 @@ func ValidAddressFamily(family AddressFamily) bool {
 	}
 }
 
+// manualTarget is the authoritative defense for a Manual Forward's target:
+// the IPC Adapter pre-checks RemotePort == 0 and the family as wire-invalid
+// parameters, and this same port-zero and family rule is re-enforced here so
+// the command path cannot construct an invalid loopback target regardless of
+// adapter.
 func manualTarget(family AddressFamily, port uint16) (netip.AddrPort, error) {
 	if port == 0 || !ValidAddressFamily(family) {
 		return netip.AddrPort{}, &DomainError{Kind: ErrorInvalidCommand}
