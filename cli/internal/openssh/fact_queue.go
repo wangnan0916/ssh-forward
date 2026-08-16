@@ -18,6 +18,13 @@ const maxQueuedSessionFacts = 8
 // delay baseline establishment past a queue overflow. Every later set may be
 // replaced by newer evidence.
 //
+// Proportionality: a real scanner session emits at most two facts per
+// connection (one ObservationSet, one terminal change), so with a cap of 8
+// the overflow branches below are unreachable today. They exist to keep the
+// Baseline guarantee if a future producer outpaces the consumer; they are
+// defensive depth, deliberately untested because the constitution tests only
+// reachable behavior.
+//
 // The consumer surface is next: one call that blocks until a fact is
 // available or the queue is drained and closed, so the blocking protocol
 // (wakeup channel, closed interpretation) lives here, not in the Session.

@@ -155,6 +155,11 @@ func (a *Adapter) Start(ctx context.Context, alias string) (*Session, error) {
 	return session, nil
 }
 
+// reserveSOCKSAddress reserves an ephemeral 127.0.0.1 port for the SOCKS
+// listener. Production sibling of the test-only freePort/availablePort pair
+// (core and proxy test packages) that uses the same reserve-and-release
+// idiom; unlike them it runs in the product path, so it is not a helper to
+// share — keep the three bodies deliberately in step.
 func reserveSOCKSAddress() (netip.AddrPort, error) {
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
