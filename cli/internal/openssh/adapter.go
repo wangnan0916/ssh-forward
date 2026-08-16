@@ -77,11 +77,11 @@ func (a *Adapter) Connect(ctx context.Context, host core.HostAlias) (core.HostSe
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	var connectionError *ConnectionError
-	if !errors.As(err, &connectionError) {
-		return nil, &core.SessionError{Disposition: core.SessionRetry, Reason: core.SessionReasonTransport}
+	var sessionError *core.SessionError
+	if errors.As(err, &sessionError) {
+		return nil, sessionError
 	}
-	return nil, sessionErrorForExit(connectionError.Kind)
+	return nil, &core.SessionError{Disposition: core.SessionRetry, Reason: core.SessionReasonTransport}
 }
 
 func (a *Adapter) ValidateAlias(ctx context.Context, alias string) error {
@@ -172,7 +172,7 @@ func (s *Session) waitUntilReady(ctx context.Context, address netip.AddrPort, ti
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-s.done:
-			return &ConnectionError{Kind: s.ExitKind()}
+			return sessionErrorForExit(s.exitedKind())
 		case <-deadline.C:
 			return errors.New("OpenSSH SOCKS readiness timed out")
 		case <-retry.C:

@@ -231,12 +231,12 @@ func TestStartClassifiesAuthenticationFailure(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	_, err = adapter.Start(context.Background(), "development")
-	var connectionError *openssh.ConnectionError
-	if !errors.As(err, &connectionError) {
-		t.Fatalf("Start error = %v, want ConnectionError", err)
+	var sessionError *core.SessionError
+	if !errors.As(err, &sessionError) {
+		t.Fatalf("Start error = %v, want SessionError", err)
 	}
-	if connectionError.Kind != openssh.ExitAuthentication {
-		t.Fatalf("ConnectionError kind = %q, want authentication", connectionError.Kind)
+	if sessionError.Disposition != core.SessionSuspend || sessionError.Reason != core.SessionReasonAuthentication {
+		t.Fatalf("Start error = %#v, want suspend with authentication reason", sessionError)
 	}
 }
 
@@ -256,9 +256,10 @@ sys.exit(255)
 		t.Fatalf("New: %v", err)
 	}
 	_, err = adapter.Start(context.Background(), "development")
-	var connectionError *openssh.ConnectionError
-	if !errors.As(err, &connectionError) || connectionError.Kind != openssh.ExitAuthentication {
-		t.Fatalf("Start error = %v, want authentication ConnectionError", err)
+	var sessionError *core.SessionError
+	if !errors.As(err, &sessionError) || sessionError.Disposition != core.SessionSuspend ||
+		sessionError.Reason != core.SessionReasonAuthentication {
+		t.Fatalf("Start error = %v, want suspend with authentication reason", err)
 	}
 }
 

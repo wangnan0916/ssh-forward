@@ -14,24 +14,16 @@ import (
 	"ssh-forward/cli/internal/proxy"
 )
 
-type ExitKind string
+type exitKind string
 
 const (
-	ExitCancelled      ExitKind = "cancelled"
-	ExitTransient      ExitKind = "transient"
-	ExitAuthentication ExitKind = "authentication"
-	ExitHostKey        ExitKind = "host_key"
+	exitCancelled      exitKind = "cancelled"
+	exitTransient      exitKind = "transient"
+	exitAuthentication exitKind = "authentication"
+	exitHostKey        exitKind = "host_key"
 )
 
 var errInvalidSessionTarget = errors.New("OpenSSH Forwarding Session target must be remote loopback")
-
-type ConnectionError struct {
-	Kind ExitKind
-}
-
-func (e *ConnectionError) Error() string {
-	return "OpenSSH connection failed: " + string(e.Kind)
-}
 
 type Session struct {
 	command     *exec.Cmd
@@ -43,7 +35,7 @@ type Session struct {
 	closing     atomic.Bool
 
 	exitMu   sync.Mutex
-	exitKind ExitKind
+	exitKind exitKind
 
 	closeOnce sync.Once
 }
@@ -114,7 +106,7 @@ func (s *Session) wait() {
 	close(s.done)
 }
 
-func (s *Session) ExitKind() ExitKind {
+func (s *Session) exitedKind() exitKind {
 	<-s.done
 	s.exitMu.Lock()
 	defer s.exitMu.Unlock()
@@ -122,39 +114,40 @@ func (s *Session) ExitKind() ExitKind {
 }
 
 func (s *Session) terminalError() error {
-	return sessionErrorForExit(s.ExitKind())
+	return sessionErrorForExit(s.exitedKind())
 }
 
-// sessionErrorForExit is the single translation from an OpenSSH exit class to
-// the SessionError core consumes; both session-end and connect-time paths use it.
-func sessionErrorForExit(kind ExitKind) *core.SessionError {
+// sessionErrorForExit is the single translation from an OpenSSH exit class
+// to the SessionError core consumes; both session-end and connect-time paths
+// use it, so the exit taxonomy never leaks out of this package.
+func sessionErrorForExit(kind exitKind) *core.SessionError {
 	switch kind {
-	case ExitCancelled:
+	case exitCancelled:
 		return &core.SessionError{Disposition: core.SessionClosed, Reason: core.SessionReasonClosed}
-	case ExitAuthentication:
+	case exitAuthentication:
 		return &core.SessionError{Disposition: core.SessionSuspend, Reason: core.SessionReasonAuthentication}
-	case ExitHostKey:
+	case exitHostKey:
 		return &core.SessionError{Disposition: core.SessionSuspend, Reason: core.SessionReasonHostKey}
 	default:
 		return &core.SessionError{Disposition: core.SessionRetry, Reason: core.SessionReasonTransport}
 	}
 }
 
-func classifyExit(err error, stderr string, cancelled bool) ExitKind {
+func classifyExit(err error, stderr string, cancelled bool) exitKind {
 	if cancelled {
-		return ExitCancelled
+		return exitCancelled
 	}
 	if err != nil {
 		message := strings.ToLower(stderr)
 		if strings.Contains(message, "permission denied") || strings.Contains(message, "too many authentication failures") ||
 			strings.Contains(message, "no supported authentication methods") {
-			return ExitAuthentication
+			return exitAuthentication
 		}
 		if strings.Contains(message, "host key verification failed") || strings.Contains(message, "remote host identification has changed") {
-			return ExitHostKey
+			return exitHostKey
 		}
 	}
-	return ExitTransient
+	return exitTransient
 }
 
 type boundedBuffer struct {
