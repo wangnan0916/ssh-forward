@@ -204,11 +204,14 @@ func (s *connectionSession) runWatch(watch *connectionWatch) {
 	}
 }
 
+// sendResyncRequired ends the Watch with a resync notification. The payload
+// is bounded (watch id plus a literal reason), so it always fits the frame
+// limit and needs no size gate; if the write itself fails, the connection is
+// broken and the client reconnects for a fresh complete Snapshot, as the
+// protocol doc promises.
 func (s *connectionSession) sendResyncRequired(watch *connectionWatch, reason string) {
 	params := resyncNotification{WatchID: watch.id, Reason: reason}
-	if notificationFits("manager.resync_required", params) {
-		s.sendWatchNotification(watch, "manager.resync_required", params)
-	}
+	s.sendWatchNotification(watch, "manager.resync_required", params)
 }
 
 // Keep a Watch's delivery and stop acknowledgement in one order: unwatch may
