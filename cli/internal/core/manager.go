@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+// managerOptions is the Manager's single configuration surface — and a test
+// seam: every field except host has an injected default, and the core tests
+// replace them to script time, concurrency, and failure. Do not wire these
+// in production code paths outside newManager. publishHost is the strongest
+// knob: when it blocks, the Manager state lock blocks, and any goroutine
+// waiting on it (including the actor) stalls — tests use it as a deliberate
+// freeze window, production must never.
 type managerOptions struct {
 	host             HostAlias
 	connector        hostConnector
@@ -78,14 +85,12 @@ func newManager(options managerOptions) *manager {
 		publishHost = options.publishHost
 	}
 	m.actor = newHostActor(hostActorOptions{
-		host:       options.host,
-		connector:  options.connector,
-		dialer:     dialer,
-		publish:    publishHost,
-		retryDelay: retryDelay,
-		retryWait:  retryWait,
-		ctx:        ctx,
-	})
+		host:      options.host,
+		connector: options.connector,
+		dialer:    dialer,
+		publish:   publishHost,
+		ctx:       ctx,
+	}, retryDelay, retryWait)
 	m.snapshot = m.buildSnapshotLocked()
 	return m
 }

@@ -13,17 +13,17 @@ import (
 	"ssh-forward/cli/internal/proxy"
 )
 
-// The actor publishes the published host shape directly (Forwards are filled
-// in by the Manager at publication time), so the Manager's copy and the
-// Snapshot never diverge by construction.
+// hostActorOptions carries the actor's run-time assembly. The reconnect
+// policy (retryDelay/retryWait) is intentionally absent: it is configured
+// through managerOptions (the Manager's single configuration surface) and
+// handed to newHostActor as constructor arguments, so the pair cannot be
+// configured inconsistently between the two structs.
 type hostActorOptions struct {
-	host       HostAlias
-	connector  hostConnector
-	dialer     *currentDialer
-	publish    func(HostSnapshot)
-	retryDelay func(int) time.Duration
-	retryWait  func(context.Context, time.Duration) bool
-	ctx        context.Context
+	host      HostAlias
+	connector hostConnector
+	dialer    *currentDialer
+	publish   func(HostSnapshot)
+	ctx       context.Context
 }
 
 // hostActor owns one Development Host's Forwarding Session, Discovery State,
@@ -51,14 +51,14 @@ type hostActor struct {
 	done          chan struct{}
 }
 
-func newHostActor(options hostActorOptions) *hostActor {
+func newHostActor(options hostActorOptions, retryDelay func(int) time.Duration, retryWait func(context.Context, time.Duration) bool) *hostActor {
 	return &hostActor{
 		host:       options.host,
 		connector:  options.connector,
 		dialer:     options.dialer,
 		publish:    options.publish,
-		retryDelay: options.retryDelay,
-		retryWait:  options.retryWait,
+		retryDelay: retryDelay,
+		retryWait:  retryWait,
 		ctx:        options.ctx,
 		state:      emptyHostSnapshot(options.host),
 		tracker:    newLifetimeTracker(defaultListenerGraceCycles),
