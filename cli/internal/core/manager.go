@@ -142,7 +142,8 @@ func emptyHostSnapshot(host HostAlias) HostSnapshot {
 	}
 }
 
-// publishHostState is the actor's publication path into the Manager's mirror:// it replaces the mirror wholesale and publishes. beginConnectionLocked is the
+// publishHostState is the actor's publication path into the Manager's mirror:
+// it replaces the mirror wholesale and publishes. beginConnectionLocked is the
 // command path's declaration — it patches the mirror to Connecting under the
 // Manager lock and lets the caller publish once with the command outcome, so
 // the transition is visible in the same revision as the command result. Both

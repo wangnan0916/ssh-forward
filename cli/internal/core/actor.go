@@ -32,10 +32,10 @@ type hostActorOptions struct {
 }
 
 // hostActor owns one Development Host's Forwarding Session, Discovery State,
-// and reconnect scheduling. It is the per-host seam where Listener Lifetime
-// and Policy reconciliation will run: observation ingestion happens here,
-// outside the Manager state lock, and blocking socket work can be scheduled
-// from the ingestion path without holding either state lock.
+// and reconnect scheduling. It is the per-host seam that feeds Listener
+// Lifetime tracking and Policy reconciliation: observation ingestion happens
+// here, outside the Manager state lock, and blocking socket work can be
+// scheduled from the ingestion path without holding either state lock.
 type hostActor struct {
 	host       HostAlias
 	connector  hostConnector

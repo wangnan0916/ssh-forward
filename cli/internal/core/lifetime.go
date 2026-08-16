@@ -13,7 +13,7 @@ import (
 //
 // The tracker classifies one observation generation per call; grace is counted
 // in observation cycles so verdicts are deterministic and clock-free. Policy
-// reconciliation (ADR-0015) will consume these verdicts to reconcile Managed
+// reconciliation (ADR-0015) consumes these verdicts to reconcile Managed
 // Forward lifetimes and One-time Approvals.
 type LifetimeStatus string
 
