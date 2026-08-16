@@ -195,20 +195,14 @@ func (m *manager) addManualForward(ctx context.Context, add AddManualForward) (O
 	m.mu.Lock()
 	if m.closed || ctx.Err() != nil {
 		closed := m.closed
-		m.failCommandLocked(add.CommandID)
-		m.mu.Unlock()
-		m.workers.Done()
-		closeOwnedForward(owner)
+		m.failCommandLockedAndReleaseForward(add.CommandID, owner)
 		if closed {
 			return Outcome{}, &DomainError{Kind: ErrorManagerClosed, Retryable: true}
 		}
 		return Outcome{}, ctx.Err()
 	}
 	if !m.forwards.add(owner) {
-		m.failCommandLocked(add.CommandID)
-		m.mu.Unlock()
-		m.workers.Done()
-		closeOwnedForward(owner)
+		m.failCommandLockedAndReleaseForward(add.CommandID, owner)
 		return Outcome{}, &DomainError{Kind: ErrorCommandIDConflict}
 	}
 	m.beginConnectionLocked()
@@ -276,16 +270,14 @@ func (m *manager) reserveRemoval(ctx context.Context, remove RemoveForward) (own
 			return owner, cloneForward(forward), nil
 		case removalInProgress:
 			pending := m.pending[operationID]
-			m.mu.Unlock()
 			if pending == nil {
+				m.mu.Unlock()
 				return nil, ForwardSnapshot{}, &DomainError{Kind: ErrorForwardNotFound}
 			}
-			select {
-			case <-ctx.Done():
-				return nil, ForwardSnapshot{}, ctx.Err()
-			case <-pending.done:
-				continue
+			if err := m.waitForPendingCommand(ctx, pending); err != nil {
+				return nil, ForwardSnapshot{}, err
 			}
+			continue
 		default:
 			m.mu.Unlock()
 			return nil, ForwardSnapshot{}, &DomainError{Kind: ErrorForwardNotFound}

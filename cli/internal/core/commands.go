@@ -41,14 +41,10 @@ func (m *manager) beginCommand(ctx context.Context, id CommandID, command Comman
 				m.mu.Unlock()
 				return Outcome{}, true, &DomainError{Kind: ErrorCommandIDConflict}
 			}
-			done := pending.done
-			m.mu.Unlock()
-			select {
-			case <-ctx.Done():
-				return Outcome{}, false, ctx.Err()
-			case <-done:
-				continue
+			if err := m.waitForPendingCommand(ctx, pending); err != nil {
+				return Outcome{}, false, err
 			}
+			continue
 		}
 		m.pending[id] = &pendingCommand{command: command, done: make(chan struct{})}
 		m.workers.Add(1)
@@ -88,6 +84,35 @@ func (m *manager) completeCommand(id CommandID, command Command, outcome Outcome
 func (m *manager) failCommandAndRelease(id CommandID) {
 	m.failCommand(id)
 	m.workers.Done()
+}
+
+// failCommandLockedAndReleaseForward rejects an admitted command whose owned
+// Forward must be closed, in the one required order: fail under the Manager
+// lock (the caller holds it), release the worker slot, then close the
+// Forward outside the lock. The caller must not touch the Manager after the
+// call. This is the only forward-owning error path, so the release ordering
+// is stated once instead of at each site.
+func (m *manager) failCommandLockedAndReleaseForward(id CommandID, owner ownedForward) {
+	m.failCommandLocked(id)
+	m.mu.Unlock()
+	m.workers.Done()
+	closeOwnedForward(owner)
+}
+
+// waitForPendingCommand blocks until the given pending command completes or
+// ctx is done. The caller holds the Manager lock and must not touch the
+// Manager after the call; both beginCommand's same-operation retry and
+// reserveRemoval's in-progress removal wait use it, so the wait-and-retry
+// loop is stated once.
+func (m *manager) waitForPendingCommand(ctx context.Context, pending *pendingCommand) error {
+	done := pending.done
+	m.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-done:
+		return nil
+	}
 }
 
 // maxCommandRecords bounds the command journal: each completed command is
