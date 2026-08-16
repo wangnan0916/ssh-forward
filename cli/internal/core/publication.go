@@ -40,48 +40,11 @@ func (m *manager) buildSnapshotLocked() Snapshot {
 	}
 	host := m.hostSnapshot
 	host.Forwards = m.forwards.snapshots()
-	host.AskListeners = m.askListenersLocked()
+	host.AskListeners = m.reconciler.askListeners(host)
 	return Snapshot{
 		Revision: m.revision,
 		Host:     &host,
 	}
-}
-
-// askListenersLocked derives the Ask list from the current mirror: Listeners
-// first observed after the Discovery Baseline, not suppressed, and whose
-// policy evaluation yields Ask (no policy matched, or the matched policy
-// could not act automatically). It is derived state, not stored state, so
-// it can never drift from the observation generation it describes.
-func (m *manager) askListenersLocked() []ListenerAskSnapshot {
-	if !m.hostSnapshot.Discovery.BaselineEstablished {
-		return nil
-	}
-	postBaseline := make(map[remoteListenerKey]bool, len(m.hostSnapshot.ListenerLifetimes))
-	for _, verdict := range m.hostSnapshot.ListenerLifetimes {
-		postBaseline[remoteListenerKey{family: verdict.Family, scope: verdict.BindScope, port: verdict.RemotePort}] = verdict.PostBaseline
-	}
-	ask := make([]ListenerAskSnapshot, 0)
-	for _, observation := range m.hostSnapshot.ListenerObservations {
-		key := listenerKey(observation)
-		if !postBaseline[key] {
-			continue
-		}
-		if _, suppressed := m.suppressions[key]; suppressed {
-			continue
-		}
-		if _, approved := m.approvals[key]; approved {
-			continue
-		}
-		if evaluatePolicies(m.policyCache, observation).Action != PolicyAsk {
-			continue
-		}
-		ask = append(ask, ListenerAskSnapshot{
-			Family:     observation.Family,
-			BindScope:  observation.BindScope,
-			RemotePort: observation.RemotePort,
-		})
-	}
-	return ask
 }
 
 func (m *manager) publishLocked() {

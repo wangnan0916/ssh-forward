@@ -125,21 +125,29 @@ func (t *forwardTable) removeDirect(id ForwardID) (ownedForward, bool) {
 	return entry.owner, true
 }
 
-// hasManagedForListener reports whether a Managed Forward already serves the
-// given listener key. The worker uses it to keep at most one Managed
-// Forward per Listener; the approve command uses it to record an approval
-// without duplicating a forward an auto policy already created.
-func (t *forwardTable) hasManagedForListener(key remoteListenerKey, observation ListenerObservation) bool {
+// managedKeysLocked reports the listener keys currently served by Managed
+// Forwards, in one pass over the table. It is the single implementation of
+// the "at most one Managed Forward per Listener" predicate.
+func (t *forwardTable) managedKeysLocked() map[remoteListenerKey]struct{} {
+	keys := make(map[remoteListenerKey]struct{}, len(t.entries))
 	for _, entry := range t.entries {
 		projection := entry.owner.Projection()
 		if projection.Kind != ForwardManaged {
 			continue
 		}
-		if managedKey, known := managedForwardKey(projection.ID); known && managedKey == key {
-			return true
+		if managedKey, known := managedForwardKey(projection.ID); known {
+			keys[managedKey] = struct{}{}
 		}
 	}
-	return false
+	return keys
+}
+
+// hasManagedForListener reports whether a Managed Forward already serves
+// the given listener key; the approve command uses it to record an
+// approval without duplicating a forward an auto policy already created.
+func (t *forwardTable) hasManagedForListener(key remoteListenerKey) bool {
+	_, found := t.managedKeysLocked()[key]
+	return found
 }
 
 type removalReservationState uint8

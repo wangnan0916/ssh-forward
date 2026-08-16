@@ -49,14 +49,7 @@ type manager struct {
 	commandOrder     []CommandID
 	pending          map[CommandID]*pendingCommand
 
-	policyCache  []ForwardingPolicy
-	policySource func() []ForwardingPolicy
-	now          func() time.Time
-	approvals    map[remoteListenerKey]struct{}
-	suppressions map[remoteListenerKey]struct{}
-	reconcile    chan struct{}
-	createState  map[remoteListenerKey]int
-	removalState map[ForwardID]*managedRemoval
+	reconciler *reconciler
 
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -114,18 +107,11 @@ func newManager(options managerOptions) *manager {
 		commands:         make(map[CommandID]commandRecord),
 		commandOrder:     make([]CommandID, 0, maxCommandRecords),
 		pending:          make(map[CommandID]*pendingCommand),
-		policySource:     policySource,
-		now:              now,
-		approvals:        make(map[remoteListenerKey]struct{}),
-		suppressions:     make(map[remoteListenerKey]struct{}),
-		reconcile:        make(chan struct{}, 8),
-		createState:      make(map[remoteListenerKey]int),
-		removalState:     make(map[ForwardID]*managedRemoval),
+		reconciler:       newReconciler(policySource, now),
 		hostSnapshot:     emptyHostSnapshot(options.host),
 		ctx:              ctx,
 		cancel:           cancel,
 	}
-	m.policyCache = policySource()
 	m.workers.Add(1)
 	go m.reconcileLoop()
 	publishHost := m.publishHostState
@@ -137,7 +123,7 @@ func newManager(options managerOptions) *manager {
 		connector:     options.connector,
 		dialer:        dialer,
 		publish:       publishHost,
-		onObservation: m.notifyReconcile,
+		onObservation: m.reconciler.notify,
 		ctx:           ctx,
 	}, retryDelay, retryWait)
 	m.snapshot = m.buildSnapshotLocked()
@@ -156,8 +142,7 @@ func emptyHostSnapshot(host HostAlias) HostSnapshot {
 	}
 }
 
-// publishHostState is the actor's publication path into the Manager's mirror:
-// it replaces the mirror wholesale and publishes. beginConnectionLocked is the
+// publishHostState is the actor's publication path into the Manager's mirror:// it replaces the mirror wholesale and publishes. beginConnectionLocked is the
 // command path's declaration — it patches the mirror to Connecting under the
 // Manager lock and lets the caller publish once with the command outcome, so
 // the transition is visible in the same revision as the command result. Both
@@ -193,18 +178,6 @@ func (m *manager) publishHostState(state HostSnapshot) {
 	}
 	m.hostSnapshot = state
 	m.publishLocked()
-}
-
-// notifyReconcile wakes the reconciliation worker after the actor applied a
-// new observation generation. The worker reads the mirror outside the
-// Manager lock, so a non-blocking signal is all this may do; the channel is
-// buffered because the signal must not be lost while the worker is busy
-// with a previous generation.
-func (m *manager) notifyReconcile() {
-	select {
-	case m.reconcile <- struct{}{}:
-	default:
-	}
 }
 
 func (m *manager) Execute(ctx context.Context, command Command) (Outcome, error) {
@@ -377,8 +350,8 @@ func (m *manager) approveListener(ctx context.Context, approve ApproveListener) 
 		m.failCommandAndRelease(approve.CommandID)
 		return Outcome{}, &DomainError{Kind: ErrorListenerNotFound}
 	}
-	m.approvals[key] = struct{}{}
-	if m.forwards.hasManagedForListener(key, observation) {
+	m.reconciler.approvals[key] = struct{}{}
+	if m.forwards.hasManagedForListener(key) {
 		m.publishLocked()
 		m.mu.Unlock()
 		m.completeCommand(approve.CommandID, approve, Outcome{Kind: OutcomeApprovalRecorded, Revision: m.revision})
@@ -399,7 +372,7 @@ func (m *manager) approveListener(ctx context.Context, approve ApproveListener) 
 	})
 	if err != nil {
 		m.mu.Lock()
-		delete(m.approvals, key)
+		delete(m.reconciler.approvals, key)
 		m.mu.Unlock()
 		m.failCommandAndRelease(approve.CommandID)
 		return Outcome{}, err
@@ -450,7 +423,7 @@ func (m *manager) suppressListener(ctx context.Context, suppress SuppressListene
 		m.failCommandAndRelease(suppress.CommandID)
 		return Outcome{}, &DomainError{Kind: ErrorListenerNotFound}
 	}
-	m.suppressions[key] = struct{}{}
+	m.reconciler.suppressions[key] = struct{}{}
 	m.publishLocked()
 	outcome := Outcome{Kind: OutcomeSuppressionRecorded, Revision: m.revision}
 	m.mu.Unlock()
