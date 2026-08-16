@@ -21,6 +21,10 @@ if [ "${#run_prefix}" -gt 32 ]; then
     exit 2
 fi
 run_id=$run_prefix-$random_id
+if [ "${#run_id}" -gt 57 ]; then
+    printf 'composed integration run ID is too long: %s\n' "$run_id" >&2
+    exit 2
+fi
 export SSH_FORWARD_TEST_RUN_ID=$run_id
 set -a
 . "$root/scripts/internal/harness.env"
