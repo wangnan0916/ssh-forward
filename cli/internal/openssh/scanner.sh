@@ -1,6 +1,18 @@
 # Individual discovery failures must not end the shared SSH/SOCKS process.
 # Every expansion below has a default and fallible probes degrade their output.
 SSH_FORWARD_SCANNER_VERSION=1
+# Wire frames on stdout, one per line, tab-separated (field 0 is the literal
+# "SF1", field 1 the frame type):
+#   B  boot frame, 12 fields: 2 sequence, 3 boot_hex, 4 network_hex,
+#      5 listener_capability, 6 socket_capability, 7 process_capability,
+#      8 listener_limit, 9 socket_record_limit, 10 process_record_limit,
+#      11 metadata_bytes_limit
+#   L  listener record: 2 sequence, 3 listener_record text (tab-embedded)
+#   P  process record: 2 sequence, 3 process_record text (tab-embedded)
+#   E  end frame: 2 sequence
+# The parser in scanner.go (parseScannerFrame) consumes exactly this layout;
+# extend both sides together. The boot frame's checksum is computed over
+# this file at embed time, so a layout change here is always visible there.
 interval=2
 # scan cadence in seconds; core counts Listener Lifetime grace in scan
 # cycles (default 3 cycles), so the effective grace is about 6s at this value

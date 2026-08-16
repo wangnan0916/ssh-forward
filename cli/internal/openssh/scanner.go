@@ -161,6 +161,9 @@ func isObservationBegin(line string) bool {
 	return len(fields) >= 2 && fields[1] == "B"
 }
 
+// accept consumes one wire frame line. The frame layout is the contract
+// documented at the top of scanner.sh (the embedded script); this parser is
+// its consuming side, and the two must be extended together.
 func (p *scannerParser) accept(line string) (core.SessionFact, bool, error) {
 	if !utf8.ValidString(line) || len(line) == 0 {
 		return nil, false, errInvalidScannerFrame
