@@ -56,6 +56,22 @@ type DiscoveryCapability struct {
 	ProcessMetadata CapabilityAvailability
 }
 
+// CapabilityReason explains why a Discovery Capability dimension is not
+// full. The evidence producers attach it to an ObservationSet (the scanner
+// parser: scanner-declared or recomputed from frames; core: retention-cap
+// truncation), and the actor translates it to the user-visible wire
+// Diagnostic through its single table. Empty means there is no partiality
+// to explain (the capability is full, or a failure path owns the
+// Diagnostic).
+type CapabilityReason string
+
+const (
+	CapabilityReasonNone              CapabilityReason = ""
+	CapabilityReasonScannerReported   CapabilityReason = "scanner_reported"
+	CapabilityReasonEvidenceMissing   CapabilityReason = "evidence_missing"
+	CapabilityReasonEvidenceTruncated CapabilityReason = "evidence_truncated"
+)
+
 type DiscoverySnapshot struct {
 	State               DiscoveryState
 	Capability          DiscoveryCapability

@@ -124,6 +124,103 @@ func TestPartialObservationMergeKeepsFixedEvidenceBounds(t *testing.T) {
 	}
 }
 
+func TestManagerReportsEvidenceTruncationDiagnostic(t *testing.T) {
+	session := newScriptedDiscoverySession()
+	ready := make(chan struct{})
+	close(ready)
+	connector := &sequenceConnector{
+		sessions: []hostSession{session},
+		releases: []<-chan struct{}{ready},
+		started:  make(chan int, 1),
+	}
+	owner := &scriptedOwnedForward{closeStart: make(chan struct{}), closeDone: make(chan struct{})}
+	manager := newManager(managerOptions{
+		host:       HostAlias("development"),
+		connector:  connector,
+		retryDelay: func(int) time.Duration { return 0 },
+		retryWait: func(ctx context.Context, _ time.Duration) bool {
+			return ctx.Err() == nil
+		},
+		forwardAllocator: scriptedForwardAllocator{
+			requests: make(chan forwardSpec, 1),
+			owner:    owner,
+		},
+	})
+	t.Cleanup(func() {
+		owner.release()
+		_ = manager.Close(context.Background())
+	})
+	if _, err := manager.Execute(context.Background(), AddManualForward{
+		CommandID:  CommandID("operation-add"),
+		Host:       HostAlias("development"),
+		RemotePort: 8080,
+		Family:     FamilyAuto,
+	}); err != nil {
+		t.Fatalf("add Manual Forward: %v", err)
+	}
+	waitForDiscoveryState(t, manager, DiscoveryStarting)
+	observations := make([]ListenerObservation, MaxRetainedListenerObservations+1)
+	for index := range observations {
+		observations[index] = ListenerObservation{
+			Family:     FamilyIPv4,
+			BindScope:  BindLoopback,
+			RemotePort: uint16(1000 + index),
+		}
+	}
+	session.facts <- ObservationSet{Sequence: 1, Capability: fullTestCapability, Observations: observations, Budget: fullObservationBudget}
+	diagnostic := waitForDiscoveryDiagnostic(t, manager, "evidence_truncated")
+	if got := diagnostic.Host.Discovery.State; got != DiscoveryDegraded {
+		t.Fatalf("truncated discovery state = %q, want degraded", got)
+	}
+}
+
+func TestManagerRejectsUnknownCapabilityReason(t *testing.T) {
+	session := newScriptedDiscoverySession()
+	ready := make(chan struct{})
+	close(ready)
+	connector := &sequenceConnector{
+		sessions: []hostSession{session},
+		releases: []<-chan struct{}{ready},
+		started:  make(chan int, 1),
+	}
+	owner := &scriptedOwnedForward{closeStart: make(chan struct{}), closeDone: make(chan struct{})}
+	manager := newManager(managerOptions{
+		host:       HostAlias("development"),
+		connector:  connector,
+		retryDelay: func(int) time.Duration { return 0 },
+		retryWait: func(ctx context.Context, _ time.Duration) bool {
+			return ctx.Err() == nil
+		},
+		forwardAllocator: scriptedForwardAllocator{
+			requests: make(chan forwardSpec, 1),
+			owner:    owner,
+		},
+	})
+	t.Cleanup(func() {
+		owner.release()
+		_ = manager.Close(context.Background())
+	})
+	if _, err := manager.Execute(context.Background(), AddManualForward{
+		CommandID:  CommandID("operation-add"),
+		Host:       HostAlias("development"),
+		RemotePort: 8080,
+		Family:     FamilyAuto,
+	}); err != nil {
+		t.Fatalf("add Manual Forward: %v", err)
+	}
+	waitForDiscoveryState(t, manager, DiscoveryStarting)
+	session.facts <- ObservationSet{
+		Sequence:         1,
+		Capability:       fullTestCapability,
+		Budget:           fullObservationBudget,
+		CapabilityReason: CapabilityReason("made_up_reason"),
+	}
+	failed := waitForDiscoveryState(t, manager, DiscoveryFailed)
+	if got := failed.Host.Discovery.Diagnostic; got != "invalid_session_fact" {
+		t.Fatalf("unknown capability reason diagnostic = %q, want invalid_session_fact", got)
+	}
+}
+
 func TestManagerRetainsObservationsUntilReconnectGetsCompleteReplacement(t *testing.T) {
 	first := newScriptedDiscoverySession()
 	second := newScriptedDiscoverySession()
@@ -444,6 +541,24 @@ func newDiscoveryManager(t *testing.T) (*manager, *scriptedDiscoverySession) {
 	manager.actor.startIfNeeded()
 	waitForDiscoveryState(t, manager, DiscoveryStarting)
 	return manager, session
+}
+
+func waitForDiscoveryDiagnostic(t *testing.T, manager Manager, diagnostic string) Snapshot {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		snapshot, err := manager.Snapshot(context.Background())
+		if err != nil {
+			t.Fatalf("Snapshot: %v", err)
+		}
+		if snapshot.Host != nil && snapshot.Host.Discovery.Diagnostic == diagnostic {
+			return snapshot
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Discovery Diagnostic did not become %q; last Snapshot: %#v", diagnostic, snapshot)
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func waitForDiscoveryBaseline(t *testing.T, manager Manager, established bool) Snapshot {

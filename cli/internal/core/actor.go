@@ -208,24 +208,32 @@ func (a *hostActor) applyObservationSet(set ObservationSet) {
 	// Re-validation gate — the authority on what reaches the mirror. The
 	// scanner's parser is a cheap stream-local filter; a misbehaving adapter
 	// (stale sequence, bad capability, unknown budget) is rejected here.
-	if set.Sequence == 0 || set.Sequence <= a.lastObservationSequence || !validDiscoveryCapability(set.Capability) || !validObservationBudget(set.Budget) {
+	if set.Sequence == 0 || set.Sequence <= a.lastObservationSequence || !validDiscoveryCapability(set.Capability) || !validObservationBudget(set.Budget) || !validCapabilityReason(set.CapabilityReason) {
 		a.failDiscoveryLocked(ReasonSessionInvalid)
 		return
 	}
 	gapped := set.Sequence != a.lastObservationSequence+1
 	a.lastObservationSequence = set.Sequence
 	capability := set.Capability
+	reason := set.CapabilityReason
 	observations, truncated := boundListenerObservations(canonicalListenerObservations(set.Observations))
 	degradeTruncatedCapability(&capability, truncated)
+	if truncated.listeners || truncated.sockets || truncated.processes {
+		reason = CapabilityReasonEvidenceTruncated
+	}
 	complete := capability.RemoteListeners == CapabilityFull
 	if !complete {
 		observations, truncated = mergeBoundedListenerObservations(a.state.ListenerObservations, observations)
 		degradeTruncatedCapability(&capability, truncated)
+		if truncated.listeners || truncated.sockets || truncated.processes {
+			reason = CapabilityReasonEvidenceTruncated
+		}
 	}
 	discovery := DiscoverySnapshot{
 		State:               discoveryStateForCapability(capability),
 		Capability:          capability,
 		BaselineEstablished: complete || a.state.Discovery.BaselineEstablished,
+		Diagnostic:          capabilityDiagnostic(capability, reason),
 		ScannerVersion:      set.ScannerVersion,
 		// ScannerChecksum is evidence metadata: the scanner parser stamps
 		// each ObservationSet with the embedded script's digest, so clients

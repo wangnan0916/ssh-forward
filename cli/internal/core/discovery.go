@@ -56,6 +56,39 @@ func validCapabilityAvailability(capability CapabilityAvailability) bool {
 	}
 }
 
+// validCapabilityReason accepts the known partiality explanations plus the
+// empty default, so the actor's re-validation gate rejects a misbehaving
+// adapter that reports a reason core cannot translate.
+func validCapabilityReason(reason CapabilityReason) bool {
+	switch reason {
+	case CapabilityReasonNone, CapabilityReasonScannerReported, CapabilityReasonEvidenceMissing, CapabilityReasonEvidenceTruncated:
+		return true
+	default:
+		return false
+	}
+}
+
+// capabilityDiagnostic is the single translation from capability partiality
+// to the user-visible wire Diagnostic. The discovery-failure paths own their
+// own diagnostics; this table covers the healthy-but-partial states only,
+// so a client can distinguish "the source cannot see the evidence" from
+// "evidence was dropped after ingestion".
+func capabilityDiagnostic(capability DiscoveryCapability, reason CapabilityReason) string {
+	if capability.RemoteListeners == CapabilityFull && capability.SocketIdentity == CapabilityFull && capability.ProcessMetadata == CapabilityFull {
+		return ""
+	}
+	switch reason {
+	case CapabilityReasonEvidenceTruncated:
+		return "evidence_truncated"
+	case CapabilityReasonEvidenceMissing:
+		return "process_metadata_unavailable"
+	case CapabilityReasonScannerReported:
+		return "scanner_reported_partial"
+	default:
+		return ""
+	}
+}
+
 // validObservationBudget requires the adapter's declared evidence budget to be
 // present and within core's retention caps, so every full scan the adapter
 // promises fits within what core retains.

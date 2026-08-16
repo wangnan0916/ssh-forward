@@ -28,6 +28,47 @@ func TestScannerRequiresCanonicalDecimalIdentities(t *testing.T) {
 	}
 }
 
+func TestScannerAttachesPartialityReason(t *testing.T) {
+	hexText := func(value string) string { return hex.EncodeToString([]byte(value)) }
+	// Scanner-declared partiality: the boot frame itself reports process
+	// capability partial, and the process evidence is complete.
+	var declared strings.Builder
+	fmt.Fprintf(&declared, "SF1\tB\t1\t%s\t%s\tfull\tfull\tpartial\t%d\t%d\t%d\t%d\n", hexText("boot"), hexText("net"), MaxObservedListeners, MaxObservedSockets, MaxProcessRecords, MaxObservationMetadataBytes)
+	fmt.Fprintf(&declared, "SF1\tL\t1\tipv4\tloopback\t8080\t42\n")
+	fmt.Fprintf(&declared, "SF1\tP\t1\t42\t7\t0\t7\t%s\t%s\t%s\n", hexText("/bin/server"), hexText("/workspace"), hexText("server\x00"))
+	declared.WriteString("SF1\tE\t1\n")
+	var declaredSet core.ObservationSet
+	scanObservationFrames(strings.NewReader(declared.String()), func(fact core.SessionFact) {
+		if set, ok := fact.(core.ObservationSet); ok {
+			declaredSet = set
+		}
+	})
+	if declaredSet.Capability.ProcessMetadata != core.CapabilityPartial {
+		t.Fatalf("declared capability = %#v, want partial process metadata", declaredSet.Capability)
+	}
+	if declaredSet.CapabilityReason != core.CapabilityReasonScannerReported {
+		t.Fatalf("CapabilityReason = %q, want scanner_reported", declaredSet.CapabilityReason)
+	}
+
+	// Parser-recomputed partiality: the boot frame declares full, but the
+	// chain is missing depth 0, so the parser degrades the capability from
+	// evidence it saw itself.
+	var recomputed strings.Builder
+	fmt.Fprintf(&recomputed, "SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t%d\t%d\t%d\t%d\n", hexText("boot"), hexText("net"), MaxObservedListeners, MaxObservedSockets, MaxProcessRecords, MaxObservationMetadataBytes)
+	fmt.Fprintf(&recomputed, "SF1\tL\t1\tipv4\tloopback\t8080\t42\n")
+	fmt.Fprintf(&recomputed, "SF1\tP\t1\t42\t7\t1\t7\t%s\t%s\t%s\n", hexText("/bin/server"), hexText("/workspace"), hexText("server\x00"))
+	recomputed.WriteString("SF1\tE\t1\n")
+	var recomputedSet core.ObservationSet
+	scanObservationFrames(strings.NewReader(recomputed.String()), func(fact core.SessionFact) {
+		if set, ok := fact.(core.ObservationSet); ok {
+			recomputedSet = set
+		}
+	})
+	if recomputedSet.CapabilityReason != core.CapabilityReasonEvidenceMissing {
+		t.Fatalf("CapabilityReason = %q, want evidence_missing", recomputedSet.CapabilityReason)
+	}
+}
+
 func TestScannerRejectsProcessEvidenceExpansionAcrossListenerEndpoints(t *testing.T) {
 	hexText := func(value string) string { return hex.EncodeToString([]byte(value)) }
 	var input strings.Builder

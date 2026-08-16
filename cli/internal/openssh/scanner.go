@@ -79,6 +79,10 @@ type scannerParser struct {
 	processes      map[string]map[int]map[int]core.ProcessMetadata
 	processCount   int
 	metadataSize   int
+	// degradedEvidence records that the parser itself downgraded a
+	// capability from what the scanner declared, so end() can distinguish
+	// "scanner reported partial" from "the parser saw incomplete evidence".
+	degradedEvidence bool
 }
 
 type scannerListener struct {
@@ -328,6 +332,7 @@ func (p *scannerParser) process(fields []string) error {
 	}
 	if !executableAvailable || !workingDirectoryAvailable || !argumentsAvailable {
 		p.capability.ProcessMetadata = core.CapabilityPartial
+		p.degradedEvidence = true
 	}
 	p.metadataSize += recordSize
 	owners := p.processes[inode]
@@ -381,13 +386,22 @@ func (p *scannerParser) end(fields []string) (core.ObservationSet, error) {
 	for _, observation := range observations {
 		items = append(items, *observation)
 	}
+	reason := core.CapabilityReasonNone
+	if p.degradedEvidence {
+		reason = core.CapabilityReasonEvidenceMissing
+	} else if p.capability.RemoteListeners != core.CapabilityFull ||
+		p.capability.SocketIdentity != core.CapabilityFull ||
+		p.capability.ProcessMetadata != core.CapabilityFull {
+		reason = core.CapabilityReasonScannerReported
+	}
 	set := core.ObservationSet{
-		Sequence:        p.sequence,
-		ScannerVersion:  scannerVersion,
-		ScannerChecksum: embeddedScannerChecksum,
-		Capability:      p.capability,
-		Budget:          p.budget,
-		Observations:    items,
+		Sequence:         p.sequence,
+		ScannerVersion:   scannerVersion,
+		ScannerChecksum:  embeddedScannerChecksum,
+		Capability:       p.capability,
+		CapabilityReason: reason,
+		Budget:           p.budget,
+		Observations:     items,
 	}
 	p.lastSequence = p.sequence
 	p.abort()
@@ -398,11 +412,13 @@ func (p *scannerParser) processChains(inode string) []core.ProcessChain {
 	owners := p.processes[inode]
 	if len(owners) == 0 && p.capability.ProcessMetadata == core.CapabilityFull {
 		p.capability.ProcessMetadata = core.CapabilityPartial
+		p.degradedEvidence = true
 	}
 	chains := make([]core.ProcessChain, 0, len(owners))
 	for _, records := range owners {
 		if _, found := records[0]; !found {
 			p.capability.ProcessMetadata = core.CapabilityPartial
+			p.degradedEvidence = true
 			continue
 		}
 		chain := core.ProcessChain{Processes: make([]core.ProcessMetadata, 0, len(records))}
@@ -415,6 +431,7 @@ func (p *scannerParser) processChains(inode string) []core.ProcessChain {
 		}
 		if len(chain.Processes) != len(records) {
 			p.capability.ProcessMetadata = core.CapabilityPartial
+			p.degradedEvidence = true
 		}
 		chains = append(chains, chain)
 	}

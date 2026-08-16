@@ -24,12 +24,13 @@ type SessionFact interface {
 }
 
 type ObservationSet struct {
-	Sequence        uint64
-	ScannerVersion  int
-	ScannerChecksum string
-	Capability      DiscoveryCapability
-	Budget          ObservationBudget
-	Observations    []ListenerObservation
+	Sequence         uint64
+	ScannerVersion   int
+	ScannerChecksum  string
+	Capability       DiscoveryCapability
+	CapabilityReason CapabilityReason
+	Budget           ObservationBudget
+	Observations     []ListenerObservation
 }
 
 func (ObservationSet) isSessionFact() {}
