@@ -1,0 +1,41 @@
+name: integration
+
+# The disposable-Development-Host topology is the same here as on a
+# developer's Mac: a real macOS runner hosts the product binary and system
+# ssh, Docker (via colima) hosts the one-shot Ubuntu Development Host
+# container, and the suite must leave Docker spotless afterwards.
+#
+# Runs on every push to main and on manual dispatch.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  integration:
+    runs-on: macos-15 # Apple Silicon, matching the local machine
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: cli/go.mod
+
+      - name: Start colima (Docker Engine 28+ for loopback port isolation)
+        run: |
+          brew install colima docker >/dev/null
+          colima start --cpu 3 --memory 4 --disk 20
+          docker version --format 'server={{.Server.Version}}'
+
+      - name: Unit and integration suites (disposable containers)
+        run: ./scripts/test-integration
+
+      - name: Verify Docker is spotless afterwards
+        run: |
+          containers=$(docker ps -a --format '{{.Names}}' | grep -c ssh-forward || true)
+          images=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -c ssh-forward || true)
+          networks=$(docker network ls --format '{{.Name}}' | grep -c ssh-forward || true)
+          echo "leftovers: containers=$containers images=$images networks=$networks"
+          test "$containers" = 0 && test "$images" = 0 && test "$networks" = 0
