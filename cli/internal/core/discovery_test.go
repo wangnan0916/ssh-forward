@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"reflect"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"ssh-forward/cli/internal/proxy"
 )
 
@@ -87,8 +87,8 @@ func TestPartialObservationMergeKeepsFixedEvidenceBounds(t *testing.T) {
 	}
 	retained := makeListeners(1000, MaxRetainedListenerObservations)
 	withLowerCurrent, _ := mergeBoundedListenerObservations(retained, makeListeners(1, 1))
-	if !reflect.DeepEqual(withLowerCurrent, retained) {
-		t.Fatal("partial merge evicted retained Listener Observation for a newly observed lower-sorting key")
+	if diff := cmp.Diff(withLowerCurrent, retained); diff != "" {
+		t.Fatalf("partial merge evicted retained Listener Observation for a newly observed lower-sorting key (-got +want):\n%s", diff)
 	}
 
 	makeEvidence := func(first int) ListenerObservation {
@@ -284,8 +284,8 @@ func TestManagerRetainsObservationsUntilReconnectGetsCompleteReplacement(t *test
 	waitForDiscoveryBaseline(t, manager, true)
 	first.terminal <- &SessionError{Disposition: SessionRetry, Reason: SessionReasonTransport}
 	starting := waitForDiscoveryState(t, manager, DiscoveryStarting)
-	if got := starting.Host.ListenerObservations; !reflect.DeepEqual(got, []ListenerObservation{observation}) {
-		t.Fatalf("reconnect discarded retained observations: %#v", got)
+	if got := starting.Host.ListenerObservations; !cmp.Equal(got, []ListenerObservation{observation}) {
+		t.Fatalf("reconnect discarded retained observations (-got +want):\n%s", cmp.Diff(got, []ListenerObservation{observation}))
 	}
 	partial := DiscoveryCapability{
 		RemoteListeners: CapabilityPartial,
@@ -297,8 +297,8 @@ func TestManagerRetainsObservationsUntilReconnectGetsCompleteReplacement(t *test
 	if degraded.Host.Discovery.BaselineEstablished {
 		t.Fatalf("partial reconnect established baseline: %#v", degraded.Host.Discovery)
 	}
-	if got := degraded.Host.ListenerObservations; !reflect.DeepEqual(got, []ListenerObservation{observation}) {
-		t.Fatalf("partial reconnect replaced retained observations: %#v", got)
+	if got := degraded.Host.ListenerObservations; !cmp.Equal(got, []ListenerObservation{observation}) {
+		t.Fatalf("partial reconnect replaced retained observations (-got +want):\n%s", cmp.Diff(got, []ListenerObservation{observation}))
 	}
 }
 
@@ -346,8 +346,8 @@ func TestManagerPublishesDiscoveryBaselineAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initial Next: %v", err)
 	}
-	if !reflect.DeepEqual(initial, starting) {
-		t.Fatalf("Watch initial = %#v, want starting Snapshot %#v", initial, starting)
+	if diff := cmp.Diff(initial, starting); diff != "" {
+		t.Fatalf("Watch initial Snapshot mismatch (-got +want):\n%s", diff)
 	}
 
 	capability := DiscoveryCapability{
@@ -382,11 +382,11 @@ func TestManagerPublishesDiscoveryBaselineAtomically(t *testing.T) {
 	if baseline.Revision != starting.Revision+1 {
 		t.Fatalf("baseline revision = %d, want %d", baseline.Revision, starting.Revision+1)
 	}
-	if got := baseline.Host.Discovery; got.State != DiscoveryDegraded || !got.BaselineEstablished || !reflect.DeepEqual(got.Capability, capability) {
+	if got := baseline.Host.Discovery; got.State != DiscoveryDegraded || !got.BaselineEstablished || !cmp.Equal(got.Capability, capability) {
 		t.Fatalf("Discovery = %#v, want atomic degraded baseline with %#v", got, capability)
 	}
-	if got := baseline.Host.ListenerObservations; !reflect.DeepEqual(got, []ListenerObservation{observation}) {
-		t.Fatalf("Listener Observations = %#v, want %#v", got, []ListenerObservation{observation})
+	if got := baseline.Host.ListenerObservations; !cmp.Equal(got, []ListenerObservation{observation}) {
+		t.Fatalf("Listener Observations mismatch (-got +want):\n%s", cmp.Diff(got, []ListenerObservation{observation}))
 	}
 	baseline.Host.ListenerObservations[0].Processes[0].Processes[0].Arguments[0] = "mutated"
 	immutable, err := manager.Snapshot(context.Background())
@@ -417,11 +417,11 @@ func TestManagerPublishesDiscoveryBaselineAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("partial Next: %v", err)
 	}
-	if got := partial.Host.Discovery; got.State != DiscoveryDegraded || !got.BaselineEstablished || !reflect.DeepEqual(got.Capability, partialCapability) {
+	if got := partial.Host.Discovery; got.State != DiscoveryDegraded || !got.BaselineEstablished || !cmp.Equal(got.Capability, partialCapability) {
 		t.Fatalf("partial Discovery = %#v, want degraded retained baseline with %#v", got, partialCapability)
 	}
 	merged := partial.Host.ListenerObservations
-	if len(merged) != 1 || !reflect.DeepEqual(merged[0].SocketIdentities, []SocketIdentity{SocketIdentity("socket:new"), SocketIdentity("socket:test")}) || len(merged[0].Processes) != 2 {
+	if len(merged) != 1 || !cmp.Equal(merged[0].SocketIdentities, []SocketIdentity{SocketIdentity("socket:new"), SocketIdentity("socket:test")}) || len(merged[0].Processes) != 2 {
 		t.Fatalf("partial observation did not merge retained and current evidence: %#v", merged)
 	}
 
@@ -560,7 +560,7 @@ func waitForDiscoveryBaseline(t *testing.T, manager Manager, established bool) S
 func waitForDiscoveryCapability(t *testing.T, manager Manager, capability DiscoveryCapability) Snapshot {
 	t.Helper()
 	return waitForSnapshot(t, manager, fmt.Sprintf("Discovery Capability did not become %#v", capability), func(snapshot Snapshot) bool {
-		return snapshot.Host != nil && reflect.DeepEqual(snapshot.Host.Discovery.Capability, capability)
+		return snapshot.Host != nil && cmp.Equal(snapshot.Host.Discovery.Capability, capability)
 	})
 }
 

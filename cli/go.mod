@@ -2,7 +2,10 @@ module ssh-forward/cli
 
 go 1.26.6
 
-require github.com/creachadair/jrpc2 v1.3.5
+require (
+	github.com/creachadair/jrpc2 v1.3.5
+	github.com/google/go-cmp v0.7.0
+)
 
 require (
 	github.com/creachadair/mds v0.26.1 // indirect
