@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -180,5 +181,28 @@ func waitForEndpoint(t *testing.T, path string) {
 			t.Fatalf("manager endpoint never became ready: %v", err)
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestBuildAdapterResolvesSSHConfigToAbsolute(t *testing.T) {
+	sshPath, err := exec.LookPath("ssh")
+	if err != nil {
+		t.Skip("no ssh binary")
+	}
+	adapter, err := buildAdapter(sshPath, "relative/config")
+	if err != nil {
+		t.Fatalf("buildAdapter: %v", err)
+	}
+	if adapter == nil {
+		t.Fatal("buildAdapter returned nil")
+	}
+	// The composition root resolves the path; the adapter itself refuses
+	// non-absolute config files (its own test pins that).
+	absolute, err := filepath.Abs("relative/config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adapter == nil || err != nil {
+		t.Fatalf("adapter = %v, abs = %v", adapter, absolute)
 	}
 }

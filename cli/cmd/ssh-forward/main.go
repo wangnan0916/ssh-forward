@@ -42,17 +42,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	host := flags.String("host", "", "Development Host SSH alias (defaults to config.jsonc's default_host)")
 	policies := flags.String("policies", defaultPoliciesPath(), "path to policies.jsonc")
+	sshConfig := flags.String("ssh-config", "", "SSH client config file (default: the user's ~/.ssh/config)")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
 	rest := flags.Args()
 	if len(rest) == 0 {
-		fmt.Fprintln(stderr, "usage: ssh-forward [--host ALIAS] [--policies PATH] COMMAND ...")
+		fmt.Fprintln(stderr, "usage: ssh-forward [--host ALIAS] [--policies PATH] [--ssh-config PATH] COMMAND ...")
 		fmt.Fprintln(stderr, "commands: manager serve, status, watch, forward add|remove, listener approve|suppress, policy list")
 		return 2
 	}
 	if rest[0] == "manager" {
-		return runManager(ctx, rest[1:], *host, *policies, stdout, stderr)
+		return runManager(ctx, rest[1:], *host, *policies, *sshConfig, stdout, stderr)
 	}
 
 	// Singleton mode (ADR-0016): when the per-user manager runs, every
@@ -99,7 +100,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "ssh-forward: cannot find the OpenSSH client: %v\n", err)
 		return 1
 	}
-	adapter, err := openssh.New(openssh.Options{Executable: sshPath})
+	adapter, err := buildAdapter(sshPath, *sshConfig)
 	if err != nil {
 		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
 		return 1
@@ -153,6 +154,20 @@ func defaultPoliciesPath() string { return filepath.Join(configDir(), "policies.
 
 func defaultConfigPath() string { return filepath.Join(configDir(), "config.jsonc") }
 
+// buildAdapter constructs the OpenSSH adapter, requiring an absolute
+// config path when one is given (the adapter refuses relative ones).
+func buildAdapter(sshPath, sshConfig string) (*openssh.Adapter, error) {
+	options := openssh.Options{Executable: sshPath}
+	if sshConfig != "" {
+		absolute, err := filepath.Abs(sshConfig)
+		if err != nil {
+			return nil, err
+		}
+		options.ConfigFile = absolute
+	}
+	return openssh.New(options)
+}
+
 // endpointPath is the per-user manager singleton's Unix socket
 // (ADR-0016), next to the configuration files.
 func endpointPath() string { return filepath.Join(configDir(), "manager.sock") }
@@ -160,7 +175,7 @@ func endpointPath() string { return filepath.Join(configDir(), "manager.sock") }
 // runManager executes the manager command family: serve keeps the per-user
 // singleton alive until interrupted, owning the Manager and answering
 // compatible CLI and desktop clients over the socket.
-func runManager(ctx context.Context, rest []string, hostFlag, policies string, stdout, stderr io.Writer) int {
+func runManager(ctx context.Context, rest []string, hostFlag, policies, sshConfig string, stdout, stderr io.Writer) int {
 	if len(rest) != 1 || rest[0] != "serve" {
 		fmt.Fprintln(stderr, "usage: ssh-forward manager serve")
 		return 2
@@ -179,7 +194,7 @@ func runManager(ctx context.Context, rest []string, hostFlag, policies string, s
 		fmt.Fprintf(stderr, "ssh-forward: cannot find the OpenSSH client: %v\n", err)
 		return 1
 	}
-	adapter, err := openssh.New(openssh.Options{Executable: sshPath})
+	adapter, err := buildAdapter(sshPath, sshConfig)
 	if err != nil {
 		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
 		return 1
