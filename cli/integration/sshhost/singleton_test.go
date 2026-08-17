@@ -12,17 +12,16 @@ import (
 	"testing"
 	"time"
 
-	"ssh-forward/cli/internal/app"
-	"ssh-forward/cli/internal/core"
-	"ssh-forward/cli/internal/ipc"
-	"ssh-forward/cli/internal/openssh"
+	"github.com/wangnan0916/ssh-forward/cli/internal/app"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/ipc"
+	"github.com/wangnan0916/ssh-forward/cli/internal/openssh"
 )
 
 // TestSingletonManagerThroughDisposableDevelopmentHost pins ADR-0016 end
 // to end over a real Development Host: the singleton (ipc.Serve) owns one
-// Manager, and every operation below is a socket client call — manual
-// forward allocation, snapshot visibility, connection state, removal, a
-// second serve refusal, and a watch stream.
+// Manager, and every operation below is a socket client call — snapshot
+// visibility, connection state, a second serve refusal, and a watch stream.
 func TestSingletonManagerThroughDisposableDevelopmentHost(t *testing.T) {
 	adapter, err := openssh.New(openssh.Options{
 		Executable:   "/usr/bin/ssh",
@@ -54,37 +53,10 @@ func TestSingletonManagerThroughDisposableDevelopmentHost(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = client.Close(context.Background()) })
 
-	// 1. A Manual Forward through the singleton: the allocation happens in
-	// the serve process and stays there.
-	outcome, err := client.Execute(context.Background(), core.AddManualForward{
-		CommandID:  "e2e-manual",
-		Host:       core.HostAlias(testHostAlias()),
-		RemotePort: fixturePortV4(),
-		Family:     core.FamilyAuto,
-	})
-	if err != nil {
-		t.Fatalf("add Manual Forward through the singleton: %v", err)
-	}
-	if outcome.Kind != core.OutcomeForwardAdded || outcome.Forward.AllocatedLocalPort == 0 ||
-		outcome.Forward.RemotePort != fixturePortV4() {
-		t.Fatalf("add outcome = %+v, want forward_added on port %d", outcome, fixturePortV4())
-	}
-
-	// 2. The client's snapshot follows the singleton's state: connected,
-	// with the forward visible.
-	waitForSnapshot(t, client, "singleton connects and shows the forward", func(snapshot core.Snapshot) bool {
-		if snapshot.Host == nil || snapshot.Host.Connection != core.ConnectionConnected {
-			return false
-		}
-		for _, forward := range snapshot.Host.Forwards {
-			if forward.ID == outcome.Forward.ID && forward.AllocatedLocalPort == outcome.Forward.AllocatedLocalPort {
-				return true
-			}
-		}
-		return false
+	waitForSnapshot(t, client, "singleton connects", func(snapshot core.Snapshot) bool {
+		return snapshot.Host != nil && snapshot.Host.Connection == core.ConnectionConnected
 	})
 
-	// 3. Watch through the singleton streams the same state.
 	stream, err := client.Watch(context.Background())
 	if err != nil {
 		t.Fatalf("Watch through the singleton: %v", err)
@@ -98,19 +70,6 @@ func TestSingletonManagerThroughDisposableDevelopmentHost(t *testing.T) {
 		t.Fatalf("watch initial = %#v, want the connected singleton state", initial)
 	}
 
-	// 4. Removal through the singleton finds and tears down the forward.
-	removed, err := client.Execute(context.Background(), core.RemoveForward{
-		CommandID: "e2e-remove",
-		ForwardID: outcome.Forward.ID,
-	})
-	if err != nil {
-		t.Fatalf("remove through the singleton: %v", err)
-	}
-	if removed.Kind != core.OutcomeForwardRemoved || removed.Forward.ID != outcome.Forward.ID {
-		t.Fatalf("remove outcome = %+v, want forward_removed for %s", removed, outcome.Forward.ID)
-	}
-
-	// 5. The singleton is one: a second serve is refused while it runs.
 	second := app.NewManager(core.HostAlias(testHostAlias()), adapter)
 	defer func() { _ = second.Close(context.Background()) }()
 	if err := ipc.Serve(context.Background(), endpoint, second); !errors.Is(err, ipc.ErrAlreadyRunning) {

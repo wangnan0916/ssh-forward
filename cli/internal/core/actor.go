@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"ssh-forward/cli/internal/proxy"
+	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
 )
 
 // hostActorOptions carries the actor's run-time assembly. The reconnect
@@ -74,8 +74,7 @@ func newHostActor(options hostActorOptions, retryDelay func(int) time.Duration, 
 }
 
 // startIfNeeded launches the connect loop unless it is already running or
-// the Manager is shutting down. It is idempotent and re-arms after the loop
-// ends, so a later command can retry a terminally failed session. The
+// the Manager is shutting down. It is idempotent. The
 // Manager has already published the Connecting transition synchronously
 // under its own lock (beginConnectionLocked, gated on this method's armed()
 // projection), so startIfNeeded publishes nothing itself; the loop
@@ -255,7 +254,7 @@ func (a *hostActor) applyObservationSet(set ObservationSet) {
 	// publication, so lifetime progression and publish suppression coexist.
 	verdicts := a.tracker.advance(observations)
 	// The first complete observation establishes the Discovery Baseline;
-	// Listeners first observed from then on enter the Ask flow. The mark
+	// later listeners are classified against it. The mark
 	// comes after advance so the baseline generation's own Listeners stay
 	// pre-baseline; the mark itself is idempotent.
 	if complete && !a.state.Discovery.BaselineEstablished {
@@ -379,8 +378,7 @@ func waitForRetry(ctx context.Context, delay time.Duration) bool {
 // sessionDisposition collapses SessionSuspend and SessionClosed into one
 // non-retry terminal: both end the connect loop, and reconnect policy does
 // not yet distinguish "user must fix authentication" from "session shut
-// down". Policy reconciliation (slice 5) will need the distinction for
-// Ask-state waits and will consume the disposition directly.
+// down".
 func sessionDisposition(err error) SessionDisposition {
 	if errors.Is(err, context.Canceled) {
 		return SessionClosed

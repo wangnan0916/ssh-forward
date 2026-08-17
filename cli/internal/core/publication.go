@@ -12,8 +12,8 @@ const maxManagerWatches = 128
 // IPC protocol ("Manager-required resync"): a SnapshotStream may end with it
 // when core can no longer deliver a consistent sequence to the watcher.
 // Core has no producer today — the jsonrpc Adapter only emits resync itself
-// for oversized Snapshots — but persistence replay (slice 5) is expected to
-// consume this channel, so it stays wired end to end.
+// for oversized Snapshots — but the error stays wired so a later durable
+// journal can consume it without changing the Adapter.
 var (
 	ErrSnapshotStreamClosed   = errors.New("snapshot stream is closed")
 	ErrConcurrentSnapshotNext = errors.New("another SnapshotStream.Next call is active")
@@ -40,7 +40,6 @@ func (m *manager) buildSnapshotLocked() Snapshot {
 	}
 	host := m.hostSnapshot
 	host.Forwards = m.forwards.snapshots()
-	host.AskListeners = m.reconciler.askListeners(host)
 	return Snapshot{
 		Revision: m.revision,
 		Host:     &host,
@@ -66,9 +65,6 @@ func cloneSnapshot(snapshot Snapshot) Snapshot {
 	}
 	if snapshot.Host.ListenerLifetimes != nil {
 		host.ListenerLifetimes = append([]ListenerLifetimeSnapshot(nil), snapshot.Host.ListenerLifetimes...)
-	}
-	if snapshot.Host.AskListeners != nil {
-		host.AskListeners = append([]ListenerAskSnapshot(nil), snapshot.Host.AskListeners...)
 	}
 	if snapshot.Host.Forwards != nil {
 		host.Forwards = make([]ForwardSnapshot, len(snapshot.Host.Forwards))

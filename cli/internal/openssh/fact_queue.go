@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 const maxQueuedSessionFacts = 8

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 // The real Development Host is slower than the core suite's one-second

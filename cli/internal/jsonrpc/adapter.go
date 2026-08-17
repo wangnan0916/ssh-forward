@@ -11,7 +11,7 @@ import (
 	"github.com/creachadair/jrpc2/channel"
 	"github.com/creachadair/jrpc2/handler"
 
-	"ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 func Serve(ctx context.Context, conn net.Conn, manager core.Manager) error {
@@ -35,9 +35,6 @@ func Serve(ctx context.Context, conn net.Conn, manager core.Manager) error {
 	pending.onResponse = session.onResponseSent
 	defer session.close()
 	methods := handler.Map{
-		methodExecute: func(ctx context.Context, request *jrpc2.Request) (any, error) {
-			return handleExecute(ctx, request, manager)
-		},
 		methodSnapshot: func(ctx context.Context, request *jrpc2.Request) (any, error) {
 			return handleSnapshot(ctx, request, manager)
 		},
@@ -57,153 +54,26 @@ func Serve(ctx context.Context, conn net.Conn, manager core.Manager) error {
 	return normalizeServeError(server.Wait())
 }
 
-func handleExecute(ctx context.Context, request *jrpc2.Request, manager core.Manager) (any, error) {
-	var params executeParams
-	if paramsText := request.ParamString(); paramsText == "" || json.Unmarshal([]byte(paramsText), &params) != nil || len(params.Command) == 0 {
-		return nil, errInvalidParameters
-	}
-	var header commandHeader
-	if json.Unmarshal(params.Command, &header) != nil {
-		return nil, errInvalidParameters
-	}
-	// Each decode function is the one validation home for its method kind:
-	// unmarshal plus the shared field rules. nil means invalid parameters —
-	// a single rejection site for every kind, including unknown ones.
-	var command core.Command
-	switch header.Kind {
-	case "manual_forward.add":
-		command = decodeAddManualForward(params.Command)
-	case "manual_forward.remove":
-		command = decodeRemoveForward(params.Command)
-	case "policy.approve":
-		command = decodeDecision(params.Command, func(decision listenerDecisionParams) core.Command {
-			return core.ApproveListener{
-				CommandID:  core.CommandID(decision.OperationID),
-				Host:       core.HostAlias(decision.Host),
-				RemotePort: decision.RemotePort,
-				Family:     core.AddressFamily(decision.Family),
-			}
-		})
-	case "policy.suppress":
-		command = decodeDecision(params.Command, func(decision listenerDecisionParams) core.Command {
-			return core.SuppressListener{
-				CommandID:  core.CommandID(decision.OperationID),
-				Host:       core.HostAlias(decision.Host),
-				RemotePort: decision.RemotePort,
-				Family:     core.AddressFamily(decision.Family),
-			}
-		})
-	}
-	if command == nil {
-		return nil, errInvalidParameters
-	}
-	outcome, err := manager.Execute(ctx, command)
-	if err != nil {
-		return nil, marshalManagerError(err)
-	}
-	return outcomeResult{Outcome: marshalOutcome(outcome)}, nil
-}
-
-// decodeAddManualForward builds the core command for a validated
-// manual_forward.add payload, or nil when any field rule fails. Family is
-// required here: a Manual Forward always names its target address family.
-func decodeAddManualForward(data []byte) core.Command {
-	var add addManualForwardParams
-	if json.Unmarshal(data, &add) != nil || len(add.OperationID) == 0 || len(add.OperationID) > maxOperationID ||
-		len(add.Host) == 0 || len(add.Host) > maxHostAlias || add.RemotePort == 0 ||
-		!core.ValidAddressFamily(core.AddressFamily(add.Family)) {
-		return nil
-	}
-	return core.AddManualForward{
-		CommandID:  core.CommandID(add.OperationID),
-		Host:       core.HostAlias(add.Host),
-		RemotePort: add.RemotePort,
-		Family:     core.AddressFamily(add.Family),
-	}
-}
-
-// decodeRemoveForward builds the core command for a validated
-// manual_forward.remove payload, or nil when any field rule fails.
-func decodeRemoveForward(data []byte) core.Command {
-	var remove removeForwardParams
-	if json.Unmarshal(data, &remove) != nil || len(remove.OperationID) == 0 || len(remove.OperationID) > maxOperationID ||
-		len(remove.ForwardID) == 0 || len(remove.ForwardID) > maxForwardID {
-		return nil
-	}
-	return core.RemoveForward{
-		CommandID: core.CommandID(remove.OperationID),
-		ForwardID: core.ForwardID(remove.ForwardID),
-	}
-}
-
-// decodeDecision validates one listener-decision payload — the shared shape
-// of policy.approve and policy.suppress — and builds the core command
-// through build, or returns nil when any field rule fails. Family is
-// optional for decisions: an absent family matches the first Listener on
-// the port.
-func decodeDecision(data []byte, build func(listenerDecisionParams) core.Command) core.Command {
-	var decision listenerDecisionParams
-	if json.Unmarshal(data, &decision) != nil ||
-		len(decision.OperationID) == 0 || len(decision.OperationID) > maxOperationID ||
-		len(decision.Host) == 0 || len(decision.Host) > maxHostAlias || decision.RemotePort == 0 ||
-		(decision.Family != "" && !core.ValidAddressFamily(core.AddressFamily(decision.Family))) {
-		return nil
-	}
-	return build(decision)
-}
-
 func marshalManagerError(err error) error {
 	var domainError *core.DomainError
 	if !errors.As(err, &domainError) {
 		return internalError()
 	}
-	code := jrpc2.Code(jrpc2.InternalError)
-	message := "internal error"
 	switch domainError.Kind {
-	case core.ErrorInvalidCommand:
-		code = jrpc2.InvalidParams
-		message = "invalid parameters"
-	case core.ErrorUnknownHost:
-		code = -32010
-		message = "unknown Development Host"
-	case core.ErrorCommandIDConflict:
-		code = -32011
-		message = "operation ID conflicts with an earlier command"
 	case core.ErrorLocalPortConflict:
-		code = -32012
-		message = "no permitted Local Endpoint port is available"
-	case core.ErrorForwardNotFound:
-		code = -32013
-		message = "Forward was not found"
-	case core.ErrorListenerNotFound:
-		code = -32016
-		message = "Listener was not found"
+		return (&jrpc2.Error{
+			Code:    -32012,
+			Message: "no permitted Local Endpoint port is available",
+		}).WithData(errorData{Kind: string(domainError.Kind), Retryable: domainError.Retryable})
 	case core.ErrorManagerClosed:
-		code = -32014
-		message = "Manager is closed"
+		return (&jrpc2.Error{
+			Code:    -32014,
+			Message: "Manager is closed",
+		}).WithData(errorData{Kind: string(domainError.Kind), Retryable: domainError.Retryable})
 	case core.ErrorWatchLimit:
 		return watchLimitError()
 	default:
 		return internalError()
-	}
-	return (&jrpc2.Error{Code: code, Message: message}).WithData(errorData{
-		Kind:      string(domainError.Kind),
-		Retryable: domainError.Retryable,
-	})
-}
-
-// MarshalOutcome encodes an Outcome in the wire shape (the sibling of
-// MarshalSnapshot): CLI --json outcomes and the IPC protocol stay one
-// contract for script and desktop clients.
-func MarshalOutcome(outcome core.Outcome) ([]byte, error) {
-	return json.Marshal(marshalOutcome(outcome))
-}
-
-func marshalOutcome(outcome core.Outcome) wireOutcome {
-	return wireOutcome{
-		Kind:     string(outcome.Kind),
-		Revision: uint64(outcome.Revision),
-		Forward:  marshalForward(outcome.Forward),
 	}
 }
 
@@ -275,22 +145,9 @@ func marshalSnapshot(snapshot core.Snapshot) wireSnapshot {
 			Discovery:            marshalDiscovery(host.Discovery),
 			ListenerObservations: observations,
 			ListenerLifetimes:    lifetimes,
-			AskListeners:         marshalAskListeners(host.AskListeners),
 			Forwards:             forwards,
 		},
 	}
-}
-
-func marshalAskListeners(ask []core.ListenerAskSnapshot) []wireListenerAsk {
-	listeners := make([]wireListenerAsk, len(ask))
-	for index, listener := range ask {
-		listeners[index] = wireListenerAsk{
-			Family:     string(listener.Family),
-			BindScope:  string(listener.BindScope),
-			RemotePort: listener.RemotePort,
-		}
-	}
-	return listeners
 }
 
 func marshalDiscovery(discovery core.DiscoverySnapshot) wireDiscovery {

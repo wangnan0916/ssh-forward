@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"ssh-forward/cli/internal/core"
-	"ssh-forward/cli/internal/proxy"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
 )
 
 type exitKind string

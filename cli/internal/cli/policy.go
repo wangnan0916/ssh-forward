@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"os"
 
-	"ssh-forward/cli/internal/app"
-	"ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/app"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 func (a *App) runPolicyList(jsonOutput bool) error {
@@ -15,13 +17,16 @@ func (a *App) runPolicyList(jsonOutput bool) error {
 	var err error
 	if a.PolicyReader != nil {
 		policies, err = a.PolicyReader.Read()
-		if err != nil {
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			fmt.Fprintf(a.Stderr, "warning: %v; showing the last valid policies\n", err)
 		}
 	} else {
 		policies, err = app.LoadPolicies(a.PoliciesPath)
-		if err != nil {
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			policies = nil
 		}
 	}
 	if jsonOutput {

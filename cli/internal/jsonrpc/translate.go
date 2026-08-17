@@ -2,51 +2,9 @@ package jsonrpc
 
 import (
 	"encoding/json"
-	"fmt"
 
-	"ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
-
-// MarshalCommand encodes a Manager command in the wire shape — the mirror
-// of the per-kind decoders: an ipc client sends exactly what the adapter's
-// decode functions accept, so the wire contract has one definition per
-// command kind.
-func MarshalCommand(command core.Command) ([]byte, error) {
-	switch command := command.(type) {
-	case core.AddManualForward:
-		return json.Marshal(addManualForwardParams{
-			Kind:        "manual_forward.add",
-			OperationID: string(command.CommandID),
-			Host:        string(command.Host),
-			RemotePort:  command.RemotePort,
-			Family:      string(command.Family),
-		})
-	case core.RemoveForward:
-		return json.Marshal(removeForwardParams{
-			Kind:        "manual_forward.remove",
-			OperationID: string(command.CommandID),
-			ForwardID:   string(command.ForwardID),
-		})
-	case core.ApproveListener:
-		return json.Marshal(listenerDecisionParams{
-			Kind:        "policy.approve",
-			OperationID: string(command.CommandID),
-			Host:        string(command.Host),
-			RemotePort:  command.RemotePort,
-			Family:      string(command.Family),
-		})
-	case core.SuppressListener:
-		return json.Marshal(listenerDecisionParams{
-			Kind:        "policy.suppress",
-			OperationID: string(command.CommandID),
-			Host:        string(command.Host),
-			RemotePort:  command.RemotePort,
-			Family:      string(command.Family),
-		})
-	default:
-		return nil, fmt.Errorf("unknown command kind %T", command)
-	}
-}
 
 // UnmarshalSnapshot decodes a wire Snapshot back into the domain shape —
 // the mirror of MarshalSnapshot, serving the ipc client's Snapshot and
@@ -71,7 +29,6 @@ func translateSnapshot(wire wireSnapshot) (core.Snapshot, error) {
 		Discovery:            translateDiscovery(host.Discovery),
 		ListenerObservations: make([]core.ListenerObservation, 0, len(host.ListenerObservations)),
 		ListenerLifetimes:    make([]core.ListenerLifetimeSnapshot, 0, len(host.ListenerLifetimes)),
-		AskListeners:         make([]core.ListenerAskSnapshot, 0, len(host.AskListeners)),
 		Forwards:             make([]core.ForwardSnapshot, 0, len(host.Forwards)),
 	}
 	for _, observation := range host.ListenerObservations {
@@ -84,13 +41,6 @@ func translateSnapshot(wire wireSnapshot) (core.Snapshot, error) {
 			RemotePort:   lifetime.RemotePort,
 			Status:       core.LifetimeStatus(lifetime.Status),
 			PostBaseline: lifetime.PostBaseline,
-		})
-	}
-	for _, ask := range host.AskListeners {
-		translated.AskListeners = append(translated.AskListeners, core.ListenerAskSnapshot{
-			Family:     core.AddressFamily(ask.Family),
-			BindScope:  core.ListenerBindScope(ask.BindScope),
-			RemotePort: ask.RemotePort,
 		})
 	}
 	for _, forward := range host.Forwards {
@@ -140,24 +90,6 @@ func translateObservation(wire wireListenerObservation) core.ListenerObservation
 		SocketIdentities: identities,
 		Processes:        chains,
 	}
-}
-
-// UnmarshalOutcome decodes a wire Outcome back into the domain shape —
-// the mirror of marshalOutcome, serving the ipc client's Execute path.
-func UnmarshalOutcome(data []byte) (core.Outcome, error) {
-	var wire wireOutcome
-	if err := json.Unmarshal(data, &wire); err != nil {
-		return core.Outcome{}, err
-	}
-	outcome := core.Outcome{Kind: core.OutcomeKind(wire.Kind), Revision: core.Revision(wire.Revision)}
-	if wire.Forward.ID != "" {
-		forward, err := translateForward(wire.Forward)
-		if err != nil {
-			return core.Outcome{}, err
-		}
-		outcome.Forward = forward
-	}
-	return outcome, nil
 }
 
 func translateForward(wire wireForward) (core.ForwardSnapshot, error) {

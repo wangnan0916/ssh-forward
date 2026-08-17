@@ -1,48 +1,142 @@
 # ssh-forward
 
-A private, greenfield remote-development localhost bridge.
+Discover ports on a Linux development host and use them on localhost through your existing OpenSSH setup. Same port locally when it is free.
 
-`ssh-forward` discovers eligible TCP listeners on a Linux Development Host, explains their process context, applies explicit forwarding policies, and makes them available on the user's Local Machine. It is editor-independent and uses system OpenSSH rather than implementing SSH or storing credentials.
+[![CI](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml/badge.svg)](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+The first public release is the **CLI**. Next is a TUI (after the CLI is ready), then a macOS menu-bar app (after the TUI is ready). Neither later surface is in this repository yet.
+
+This is not a general SSH tunnel, credential, key, or host-profile manager. Authentication stays with system OpenSSH and `~/.ssh/config`.
+
+## Why
+
+- **Remember a port.** `add 5173` auto-forwards that remote port when a service is listening. When nothing is listening, it does not occupy a local port. The rule survives manager and SSH restarts.
+- **Remember a project.** `add --dir /home/dev/src/app` auto-forwards listeners whose process working directory is in that tree on the Development Host (not a path on your Mac).
+- **System OpenSSH.** The product launches the platform `ssh` binary. It does not embed SSH, store passwords, or replace your SSH config.
+
+## Install
+
+Needs a system OpenSSH client.
+
+```bash
+brew install --HEAD wangnan0916/ssh-forward/ssh-forward
+```
+
+Or with [Go](https://go.dev/dl/) 1.26 or newer:
+
+```bash
+go install github.com/wangnan0916/ssh-forward/cli/cmd/ssh-forward@main
+```
+
+```bash
+git clone https://github.com/wangnan0916/ssh-forward.git
+cd ssh-forward/cli
+go build -o ssh-forward ./cmd/ssh-forward
+```
+
+## Quick start
+
+The Development Host is an SSH alias from your client config (`~/.ssh/config`).
+
+```bash
+ssh-forward default my-dev
+ssh-forward add 5173
+ssh-forward status
+# open http://127.0.0.1:5173
+ssh-forward remove 5173
+```
+
+Or remember everything in one project directory on the host:
+
+```bash
+ssh-forward add --dir /home/dev/src/my-app
+ssh-forward remove --dir /home/dev/src/my-app
+```
+
+`status` starts a per-user manager in the background. Later commands talk to that singleton over a user-only Unix socket. Use `ssh-forward manager serve` to run it in the foreground.
+
+## How it compares
+
+| | `ssh -L` | VS Code Ports | ssh-forward |
+|---|---|---|---|
+| Discovers remote listeners | no | yes (VS Code Server) | yes (agentless) |
+| Policy | none | `remote.portsAttributes` | `add` / `remove` → `policies.jsonc` |
+| SSH implementation | system OpenSSH | VS Code Remote-SSH | system OpenSSH |
+| Credentials | your SSH config | your SSH config | your SSH config |
+| Arbitrary tunnels | yes | limited | no (remote loopback ports only) |
+
+## Commands
+
+```text
+ssh-forward add 5173                  # remember a remote port
+ssh-forward add --dir /home/dev/app   # remember a Development Host directory
+ssh-forward remove 5173
+ssh-forward remove --dir /home/dev/app
+ssh-forward default <alias>           # pin the default Development Host
+ssh-forward status [--json]
+ssh-forward watch [--json]            # stream snapshots (JSONL with --json)
+ssh-forward policy list [--json]
+ssh-forward host list [--json]        # hosts from the SSH client config
+ssh-forward manager serve             # run the singleton in the foreground
+```
+
+`status` shows the host, connection, active forwards, and any new remote ports. Process details are in `--json`.
+
+`--host` overrides the default host. `--ssh-config PATH` points at an explicit SSH client config. `SSH_FORWARD_CONFIG_DIR` overrides the product config directory.
+
+## Forwarding policies
+
+`add` and `remove` write `policies.jsonc`. The manager hot-reloads it about every two seconds. You can still edit the file by hand for more specific matchers.
+
+```jsonc
+{
+  "schema_version": 1,
+  "policies": [
+    {
+      "id": "port-5173",
+      "priority": 10,
+      "action": "auto_forward",
+      "conditions": [
+        { "remote_ports": { "from": 5173, "to": 5173 } }
+      ]
+    },
+    {
+      "id": "dir-/home/dev/src/my-app",
+      "priority": 10,
+      "action": "auto_forward",
+      "conditions": [
+        { "working_directory_tree": "/home/dev/src/my-app" }
+      ]
+    }
+  ]
+}
+```
+
+Locations:
+
+- macOS: `~/Library/Application Support/ssh-forward/`
+- Linux: `$XDG_CONFIG_HOME/ssh-forward/` (or `~/.config/ssh-forward/`)
 
 ## Status
 
-The repository contains the accepted product and architecture baseline. The transport spike and the first four vertical slices are complete. The Go Manager runs a fixed agentless scanner through one system-OpenSSH Forwarding Session, publishes complete Discovery and Manual Forward Snapshots, and exposes bounded capability-negotiated JSON-RPC Watch streams. Go-owned dual-stack Local Endpoints, SOCKS cancellation, TCP half-close, reconnect retention, scanner fallback/evidence handling, per-listener Listener Lifetime verdicts on the wire, and disposable IPv4/IPv6 integration are covered. Policy reconciliation (Forwarding Policies, One-time Approval and Suppression, Ask state) is next. The pre-existing shell utility is unrelated and is intentionally not reused, migrated, controlled, or uninstalled.
+Public **alpha** (`0.1.0-alpha.1`). The CLI covers discovery, remembered Auto-forward for ports and directories, reconnect, and JSON-RPC to a per-user manager.
 
-The private MVP targets one Apple Silicon Mac running macOS Tahoe and one Linux Development Host.
+Not in this release:
 
-## Design
+- TUI
+- macOS menu-bar app and Dashboard
+- comment-preserving policy writes
+- login monitoring and idle manager exit
+- HTTP/HTTPS “open in browser” actions
+- Windows as a Local Machine
+- more than one Development Host in a single manager process
 
-- [Domain language](./CONTEXT.md)
-- [Implementation sequence](./docs/design/implementation-sequence.md)
-- [Core Manager Interface](./docs/design/core-interface.md)
-- [JSON-RPC protocol](./docs/design/ipc-protocol.md)
-- [Testing strategy](./docs/design/testing-strategy.md)
-- [Transport spike verdict](./docs/design/transport-spike-verdict.md)
-- [ADRs](./docs/adr/)
+## Security
 
-### Product
+Local Endpoints bind only to loopback. System `ssh` is launched by absolute path with an argument vector, never through a shell. The remote scanner is a fixed script; host aliases and process metadata never modify it. No SSH credential is stored.
 
-- [Private MVP](./docs/product/mvp.md)
-- [Connection lifecycle](./docs/product/connection-lifecycle.md)
-- [Remote discovery](./docs/product/remote-discovery.md)
-- [Discovery and policy behavior](./docs/product/discovery-and-policy.md)
-- [Diagnostics and recovery](./docs/product/diagnostics-and-recovery.md)
-- [Performance budget](./docs/product/performance-budget.md)
-- [CLI and state](./docs/product/cli-and-state.md)
-- [Desktop experience](./docs/product/desktop-experience.md)
-- [Platform support](./docs/product/platform-support.md)
-- [Repository and releases](./docs/product/repository-and-releases.md)
-
-### Research
-
-- [Library options](./docs/research/library-options.md)
-- [IPC library options](./docs/research/ipc-library-options.md)
-- [Codinn Tunnel competitive analysis](./docs/research/codinn-tunnel-competitive-analysis.md)
-- [VS Code port forwarding](./docs/research/vscode-port-forwarding.md)
-
-### Security
-
-- [Threat model](./docs/security/threat-model.md)
+See [SECURITY.md](SECURITY.md) to report a vulnerability and [docs/security/threat-model.md](docs/security/threat-model.md) for the model.
 
 ## Development
 
@@ -60,8 +154,20 @@ Real Linux/OpenSSH integration tests use only the disposable container harness a
 ./scripts/test-integration
 ```
 
-The integration harness requires Docker Engine 28 or newer through a local Unix socket. Local development and Linux CI run the same command and pinned Ubuntu test image.
+The integration harness requires Docker Engine 28 or newer through a local Unix socket.
 
-## Product boundary
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development path, test seams, and pull-request expectations.
 
-This is not a general SSH tunnel, credential, key, or host-profile manager. Its center is agentless listener discovery, explainable `Auto-forward` / `Ask` / `Ignore` policy, and lifecycle-aware local forwarding.
+## Design
+
+- [Domain language](./CONTEXT.md)
+- [Implementation sequence](./docs/design/implementation-sequence.md)
+- [Core Manager Interface](./docs/design/core-interface.md)
+- [JSON-RPC protocol](./docs/design/ipc-protocol.md)
+- [CLI and state](./docs/product/cli-and-state.md)
+- [ADRs](./docs/adr/)
+- [Threat model](./docs/security/threat-model.md)
+
+## License
+
+[MIT](LICENSE)

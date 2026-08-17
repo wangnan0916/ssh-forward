@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"ssh-forward/cli/internal/core"
-	"ssh-forward/cli/internal/openssh"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/openssh"
 
 	"github.com/google/go-cmp/cmp"
 )

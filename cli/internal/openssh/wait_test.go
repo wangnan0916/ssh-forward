@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"errors"
-	"ssh-forward/cli/internal/core"
-	"ssh-forward/cli/internal/openssh"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/openssh"
 )
 
 func TestSessionWaitBoundsInheritedDiagnosticPipe(t *testing.T) {

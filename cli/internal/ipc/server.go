@@ -11,8 +11,8 @@ import (
 	"os"
 	"time"
 
-	"ssh-forward/cli/internal/core"
-	managerjsonrpc "ssh-forward/cli/internal/jsonrpc"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	managerjsonrpc "github.com/wangnan0916/ssh-forward/cli/internal/jsonrpc"
 )
 
 // ErrAlreadyRunning reports that a live manager already owns the endpoint.

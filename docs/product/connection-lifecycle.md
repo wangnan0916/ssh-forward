@@ -12,7 +12,7 @@ Each Development Host has a **Monitor at Login** setting, enabled initially for 
 
 ## Reconnection
 
-When an SSH transport disconnects, existing Local Endpoints remain allocated so other processes cannot claim their ports, but new client connections fail promptly rather than queueing indefinitely. In-flight proxy connections receive EOF or reset promptly; a bounded post-half-close drain prevents a client that ignores upstream EOF from retaining a proxy goroutine indefinitely. Reconnection uses exponential backoff with jitter through injectable clock/random behavior. Authentication and host-key failures are classified from bounded OpenSSH diagnostics and suspend automatic retries until the user acts. Listener Lifetime verdicts freeze while no observations arrive (the tracker advances only on ObservationSets, core/actor.go) and resume with the first valid observation after reconnect, partial or degraded included; whether a session outage counts toward a Listener's disappearance grace is an open slice-5 decision (design/implementation-sequence.md).
+When an SSH transport disconnects, existing Local Endpoints remain allocated so other processes cannot claim their ports, but new client connections fail promptly rather than queueing indefinitely. In-flight proxy connections receive EOF or reset promptly; a bounded post-half-close drain prevents a client that ignores upstream EOF from retaining a proxy goroutine indefinitely. Reconnection uses exponential backoff with jitter through injectable clock/random behavior. Authentication and host-key failures are classified from bounded OpenSSH diagnostics and suspend automatic retries until the user acts. Listener Lifetime verdicts freeze while no observations arrive (the tracker advances only on ObservationSets, core/actor.go) and resume with the first valid observation after reconnect, partial or degraded included. A session outage does not count toward disappearance grace; reconnection obtains a complete observation before cleanup resumes (slice 5, design/implementation-sequence.md).
 
 ## Browser actions
 
@@ -32,7 +32,6 @@ Enforced today:
 
 Lands with later slices:
 
-- Launch at Login, Monitor at Login, on-demand manager start, and the five-idle-minute exit: desktop and CLI phases (no desktop app and no idle-exit logic exist yet).
+- Launch at Login, Monitor at Login, and the five-idle-minute exit: desktop phase (the CLI auto-spawns a manager that currently does not idle-exit).
 - `SMAppService.mainApp` registration and manager-as-login-item placement: desktop phase.
-- Whether a session outage counts toward a Listener's disappearance grace: slice 5, recorded at design/implementation-sequence.md.
-- Browser actions and their Forwarding Policy declaration: slice 5 (policy surfaces, docs/product/discovery-and-policy.md).
+- Browser actions and their Forwarding Policy declaration: desktop policy surfaces (docs/product/discovery-and-policy.md).

@@ -3,7 +3,7 @@ package core
 import (
 	"context"
 
-	"ssh-forward/cli/internal/proxy"
+	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
 )
 
 // HostSession and HostConnector form the true-external transport seam composed

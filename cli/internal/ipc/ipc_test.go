@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 // shortTempDir makes a real short Unix socket path: t.TempDir() nests under
@@ -76,21 +76,6 @@ func TestDialHelloAndSnapshot(t *testing.T) {
 	}
 	if snapshot.Revision != 0 || snapshot.Host != nil {
 		t.Fatalf("snapshot = %#v, want the fresh-manager shape (revision 0, no host)", snapshot)
-	}
-}
-
-func TestDialExecuteMapsDomainErrors(t *testing.T) {
-	path, _ := servingManager(t)
-	client, err := Dial(context.Background(), path)
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
-	}
-	_, err = client.Execute(context.Background(), core.AddManualForward{
-		CommandID: "op-1", Host: "development", RemotePort: 8080, Family: core.FamilyIPv4,
-	})
-	var domainError *core.DomainError
-	if err == nil || !errors.As(err, &domainError) || domainError.Kind != core.ErrorUnknownHost {
-		t.Fatalf("Execute err = %v, want ErrorUnknownHost", err)
 	}
 }
 

@@ -1,15 +1,14 @@
 package cli
 
 import (
-	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
-	"time"
 
-	"ssh-forward/cli/internal/core"
-	"ssh-forward/cli/internal/jsonrpc"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/jsonrpc"
 )
 
 func (a *App) writeStatusHuman(snapshot core.Snapshot) error {
@@ -22,8 +21,6 @@ func (a *App) writeStatusHuman(snapshot core.Snapshot) error {
 		fmt.Fprintf(&builder, "  diagnostic: %s\n", host.Discovery.Diagnostic)
 	}
 
-	// Forwards first: the things this user's own commands created are
-	// what status is for.
 	if len(host.Forwards) != 0 {
 		builder.WriteString("Forwards:\n")
 		for _, forward := range host.Forwards {
@@ -32,18 +29,33 @@ func (a *App) writeStatusHuman(snapshot core.Snapshot) error {
 		}
 	}
 
-	// Listeners stay out of the human view: the user asked for the active
-	// forwards, not a port dump. Only listeners needing a decision get a
-	// one-line heads-up — that is the Ask flow's only surface.
-	if len(host.AskListeners) != 0 {
-		ports := make([]string, 0, len(host.AskListeners))
-		for _, candidate := range host.AskListeners {
-			ports = append(ports, fmt.Sprintf("%d", candidate.RemotePort))
-		}
-		fmt.Fprintf(&builder, "Listeners needing a decision: %s (approve or suppress them)\n", strings.Join(ports, ", "))
+	if ports := newRemotePorts(host); len(ports) != 0 {
+		fmt.Fprintf(&builder, "New remote ports: %s (ssh-forward add PORT)\n", strings.Join(ports, ", "))
 	}
 	_, err := io.WriteString(a.Stdout, builder.String())
 	return err
+}
+
+// newRemotePorts lists observed remote ports that have no Active Forward,
+// in observation order, once each.
+func newRemotePorts(host *core.HostSnapshot) []string {
+	forwarded := make(map[uint16]struct{}, len(host.Forwards))
+	for _, forward := range host.Forwards {
+		forwarded[forward.RemotePort] = struct{}{}
+	}
+	seen := make(map[uint16]struct{})
+	ports := make([]string, 0)
+	for _, observation := range host.ListenerObservations {
+		if _, ok := forwarded[observation.RemotePort]; ok {
+			continue
+		}
+		if _, ok := seen[observation.RemotePort]; ok {
+			continue
+		}
+		seen[observation.RemotePort] = struct{}{}
+		ports = append(ports, strconv.Itoa(int(observation.RemotePort)))
+	}
+	return ports
 }
 
 func (a *App) writeSnapshotJSON(snapshot core.Snapshot) error {
@@ -55,20 +67,41 @@ func (a *App) writeSnapshotJSON(snapshot core.Snapshot) error {
 	return nil
 }
 
-// existingManualForward reports an active Manual Forward on the remote
-// port: add is idempotent, so repeating "add 5173" never creates a second
-// forward (the local port would silently shift — surprising).
-func (a *App) existingManualForward(ctx context.Context, port uint16) (core.ForwardSnapshot, bool) {
-	snapshot, err := a.Manager.Snapshot(ctx)
-	if err != nil || snapshot.Host == nil {
-		return core.ForwardSnapshot{}, false
-	}
-	for _, forward := range snapshot.Host.Forwards {
-		if forward.RemotePort == port && forward.Kind == core.ForwardManual {
-			return forward, true
+func (a *App) writeRemember(jsonOutput, adding, changed bool, port uint16, dir string) error {
+	if jsonOutput {
+		payload := map[string]any{}
+		if adding {
+			payload["added"] = changed
+		} else {
+			payload["removed"] = changed
 		}
+		if dir != "" {
+			payload["directory"] = dir
+		} else {
+			payload["port"] = port
+		}
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(a.Stdout, string(encoded))
+		return nil
 	}
-	return core.ForwardSnapshot{}, false
+	switch {
+	case dir != "" && adding && changed:
+		fmt.Fprintf(a.Stdout, "added directory %s\n", dir)
+	case dir != "" && adding:
+		fmt.Fprintf(a.Stdout, "already added directory %s\n", dir)
+	case dir != "" && changed:
+		fmt.Fprintf(a.Stdout, "removed directory %s\n", dir)
+	case adding && changed:
+		fmt.Fprintf(a.Stdout, "added port %d\n", port)
+	case adding:
+		fmt.Fprintf(a.Stdout, "already added port %d\n", port)
+	default:
+		fmt.Fprintf(a.Stdout, "removed port %d\n", port)
+	}
+	return nil
 }
 
 // parsePort reports whether the argument is a plain port number.
@@ -78,76 +111,4 @@ func parsePort(text string) (uint16, bool) {
 		return 0, false
 	}
 	return uint16(port), true
-}
-
-// removeByPort tears down every Manual Forward on the remote port — the
-// forwards this user's own add commands created. A port served only by a
-// Managed Forward names the policy (or the ID) instead, so reconciliation
-// cannot be fought by accident.
-func (a *App) removeByPort(ctx context.Context, port uint16, jsonOutput bool) error {
-	snapshot, err := a.Manager.Snapshot(ctx)
-	if err != nil {
-		return err
-	}
-	var manualIDs []core.ForwardID
-	var managedID string
-	if snapshot.Host != nil {
-		for _, forward := range snapshot.Host.Forwards {
-			if forward.RemotePort != port {
-				continue
-			}
-			if forward.Kind == core.ForwardManual {
-				manualIDs = append(manualIDs, forward.ID)
-			} else if managedID == "" {
-				managedID = string(forward.ID)
-			}
-		}
-	}
-	if len(manualIDs) == 0 {
-		if managedID != "" {
-			return fmt.Errorf("port %d is served by the managed forward %s; remove it by ID or change the policy", port, managedID)
-		}
-		return fmt.Errorf("no forward on port %d", port)
-	}
-	for _, id := range manualIDs {
-		outcome, err := a.Manager.Execute(ctx, core.RemoveForward{
-			CommandID: core.CommandID(operationIDOrRandom("")),
-			ForwardID: id,
-		})
-		if err != nil {
-			return err
-		}
-		if err := a.writeOutcome(outcome, jsonOutput); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (a *App) writeOutcome(outcome core.Outcome, jsonOutput bool) error {
-	if jsonOutput {
-		encoded, err := jsonrpc.MarshalOutcome(outcome)
-		if err != nil {
-			return err
-		}
-		fmt.Fprintln(a.Stdout, string(encoded))
-		return nil
-	}
-	if outcome.Forward.ID != "" {
-		fmt.Fprintf(a.Stdout, "%s: %s → %s:%d (local %d)\n",
-			outcome.Kind, outcome.Forward.ID, outcome.Forward.RemoteFamily, outcome.Forward.RemotePort, outcome.Forward.AllocatedLocalPort)
-	} else {
-		fmt.Fprintf(a.Stdout, "%s\n", outcome.Kind)
-	}
-	return nil
-}
-
-// operationIDOrRandom supplies a unique operation ID when the caller did
-// not provide a stable one: commands are deduplicated by operation ID, so
-// a fresh value per invocation keeps retries distinct.
-func operationIDOrRandom(provided string) string {
-	if provided != "" {
-		return provided
-	}
-	return fmt.Sprintf("cli-%d", time.Now().UnixNano())
 }

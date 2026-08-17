@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 // fakeStream replays a fixed snapshot sequence and then parks until the

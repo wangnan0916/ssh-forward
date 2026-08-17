@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"ssh-forward/cli/internal/app"
+	"github.com/wangnan0916/ssh-forward/cli/internal/app"
 )
 
 // run() with no host or no command must fail before any Manager is built,
@@ -48,7 +48,7 @@ func TestRunDefaultHostFromConfig(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("status with default host exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "Host: development — disconnected") {
+	if !strings.Contains(stdout.String(), "Host: development") {
 		t.Fatalf("status output = %q, want the config default host", stdout.String())
 	}
 }
@@ -83,9 +83,8 @@ func TestRunRequiresCommand(t *testing.T) {
 	}
 }
 
-// TestRunStatusWithoutConnection builds the Manager but only reads its
-// Snapshot: the actor connects lazily on the first command, so a status
-// read never dials the Development Host.
+// TestRunStatusWithoutHostConfig builds the Manager and reads its Snapshot.
+// Connection starts at construction, so this only pins the configured host.
 func TestRunStatusWithoutConnection(t *testing.T) {
 	isolateUserEnv(t)
 	var stdout, stderr bytes.Buffer
@@ -95,11 +94,8 @@ func TestRunStatusWithoutConnection(t *testing.T) {
 		t.Fatalf("status exit code = %d, stderr = %s", code, stderr.String())
 	}
 	output := stdout.String()
-	if !strings.Contains(output, "Host: development — disconnected") {
+	if !strings.Contains(output, "Host: development") {
 		t.Fatalf("status output = %q", output)
-	}
-	if !strings.Contains(output, "Discovery: stopped") {
-		t.Fatalf("status output missing discovery state: %q", output)
 	}
 }
 
@@ -183,7 +179,7 @@ func TestRunManagerSingletonServesClients(t *testing.T) {
 	if code := run(context.Background(), []string{"--policies", policies, "status"}, &bytes.Buffer{}, &stdout, io.Discard); code != 0 {
 		t.Fatalf("client status exit code = %d, output = %s", code, stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "Host: development — disconnected") {
+	if !strings.Contains(stdout.String(), "Host: development") {
 		t.Fatalf("client status output = %q, want the singleton's host", stdout.String())
 	}
 
@@ -258,7 +254,7 @@ func TestRunVersion(t *testing.T) {
 	if code := run(context.Background(), []string{"--version"}, &bytes.Buffer{}, &stdout, io.Discard); code != 0 {
 		t.Fatalf("--version exit code = %d", code)
 	}
-	if !strings.Contains(stdout.String(), "ssh-forward 0.1.0") {
+	if !strings.Contains(stdout.String(), "ssh-forward 0.1.0-alpha.1") {
 		t.Fatalf("--version output = %q", stdout.String())
 	}
 }
@@ -274,13 +270,32 @@ func TestRunHelp(t *testing.T) {
 	}
 }
 
+func TestRunAddRemembersPortWithoutHost(t *testing.T) {
+	isolateUserEnv(t)
+	policies := filepath.Join(t.TempDir(), "policies.jsonc")
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), []string{"--policies", policies, "add", "5173"}, &bytes.Buffer{}, &stdout, &stderr); code != 0 {
+		t.Fatalf("add exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if stdout.String() != "added port 5173\n" {
+		t.Fatalf("add output = %q", stdout.String())
+	}
+	loaded, err := app.LoadPolicies(policies)
+	if err != nil {
+		t.Fatalf("LoadPolicies: %v", err)
+	}
+	if len(loaded) != 1 || loaded[0].ID != "port-5173" {
+		t.Fatalf("policies = %#v, want port-5173", loaded)
+	}
+}
+
 func TestRunCommandHelp(t *testing.T) {
 	isolateUserEnv(t)
 	var stdout, stderr bytes.Buffer
 	if code := run(context.Background(), []string{"add", "--help"}, &bytes.Buffer{}, &stdout, &stderr); code != 0 {
 		t.Fatalf("add --help exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "forward one remote port") {
+	if !strings.Contains(stdout.String(), "remember a remote port") {
 		t.Fatalf("add --help output = %q", stdout.String())
 	}
 }
@@ -299,7 +314,7 @@ func TestRunAutospawnsTheSingleton(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("status with autospawn exit code = %d, output = %s", code, stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "Host: development — disconnected") {
+	if !strings.Contains(stdout.String(), "Host: development") {
 		t.Fatalf("status output = %q, want the spawned singleton's host", stdout.String())
 	}
 
@@ -321,7 +336,7 @@ func TestRunAutospawnsTheSingleton(t *testing.T) {
 	if code := run(context.Background(), []string{"status"}, &bytes.Buffer{}, &second, io.Discard); code != 0 {
 		t.Fatalf("second status exit code = %d", code)
 	}
-	if !strings.Contains(second.String(), "Host: development — disconnected") {
+	if !strings.Contains(second.String(), "Host: development") {
 		t.Fatalf("second status output = %q", second.String())
 	}
 

@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"ssh-forward/cli/internal/app"
-	"ssh-forward/cli/internal/core"
-	"ssh-forward/cli/internal/openssh"
+	"github.com/wangnan0916/ssh-forward/cli/internal/app"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/openssh"
 )
 
 func TestAgentlessDiscoveryThroughDisposableDevelopmentHost(t *testing.T) {
@@ -30,14 +30,6 @@ func TestAgentlessDiscoveryThroughDisposableDevelopmentHost(t *testing.T) {
 			t.Errorf("close Manager: %v", err)
 		}
 	})
-	if _, err := manager.Execute(context.Background(), core.AddManualForward{
-		CommandID:  core.CommandID("discovery-trigger"),
-		Host:       core.HostAlias(testHostAlias()),
-		RemotePort: fixturePortV4(),
-		Family:     core.FamilyIPv4,
-	}); err != nil {
-		t.Fatalf("start Forwarding Session: %v", err)
-	}
 
 	snapshot := waitForBaseline(t, manager)
 	host := snapshot.Host

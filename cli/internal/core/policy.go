@@ -7,12 +7,12 @@ import (
 )
 
 // PolicyAction is the decision a Forwarding Policy yields for a Listener
-// Observation: forward it, ask the user, or ignore it.
+// Observation: forward it, or ignore it. Unmatched listeners are not
+// forwarded.
 type PolicyAction string
 
 const (
 	PolicyAutoForward PolicyAction = "auto_forward"
-	PolicyAsk         PolicyAction = "ask"
 	PolicyIgnore      PolicyAction = "ignore"
 )
 
@@ -36,7 +36,7 @@ type PolicyCondition struct {
 
 // ForwardingPolicy is a saved, prioritized rule. Policies are evaluated by
 // explicit priority, highest first; the first policy whose conditions all
-// match decides. No matching policy defaults to Ask.
+// match decides. No matching policy leaves the listener unforwarded.
 type ForwardingPolicy struct {
 	ID         string
 	Priority   int
@@ -45,7 +45,7 @@ type ForwardingPolicy struct {
 }
 
 // PolicyVerdict is the outcome of evaluating policies against one Listener
-// Observation. PolicyID is empty when no policy matched (the default Ask).
+// Observation. PolicyID is empty when no policy matched.
 type PolicyVerdict struct {
 	Action   PolicyAction
 	PolicyID string
@@ -53,12 +53,10 @@ type PolicyVerdict struct {
 
 // evaluatePolicies applies the policy set to one observation. When a
 // Listener has multiple attributable Listener Processes (one per Process
-// Chain's direct holder), an automatic action requires every attributable
-// process to produce a consistent result; otherwise the verdict is Ask for
-// that policy, which still stops evaluation (first match owns the
-// listener). Ports and bind scope are chain-independent and match with or
-// without process evidence; executable, ancestor, and working-directory
-// conditions need their evidence.
+// Chain's direct holder), every chain must match the same policy; otherwise
+// the policy does not match. Ports and bind scope are chain-independent
+// and match with or without process evidence; executable, ancestor, and
+// working-directory conditions need their evidence.
 // sortPolicies is the single construction of the evaluation order: a
 // priority-descending copy of the policy set. The reconciliation path sorts
 // once per generation and evaluates every observation against the result;
@@ -85,7 +83,7 @@ func evaluateOrdered(policies []ForwardingPolicy, observation ListenerObservatio
 			return verdict
 		}
 	}
-	return PolicyVerdict{Action: PolicyAsk}
+	return PolicyVerdict{}
 }
 
 func evaluatePolicy(policy ForwardingPolicy, observation ListenerObservation) (PolicyVerdict, bool) {
@@ -93,22 +91,13 @@ func evaluatePolicy(policy ForwardingPolicy, observation ListenerObservation) (P
 		// No process evidence: only chain-independent conditions can match.
 		return evaluatePolicyForProcess(policy, observation, ProcessChain{})
 	}
-	var consistent *PolicyAction
 	for _, chain := range observation.Processes {
-		verdict, matched := evaluatePolicyForProcess(policy, observation, chain)
+		_, matched := evaluatePolicyForProcess(policy, observation, chain)
 		if !matched {
 			return PolicyVerdict{}, false
 		}
-		if consistent == nil {
-			action := verdict.Action
-			consistent = &action
-		} else if *consistent != verdict.Action {
-			// Attributable processes disagree: this policy cannot act
-			// automatically, and it owns the listener — the result is Ask.
-			return PolicyVerdict{Action: PolicyAsk, PolicyID: policy.ID}, true
-		}
 	}
-	return PolicyVerdict{Action: *consistent, PolicyID: policy.ID}, true
+	return PolicyVerdict{Action: policy.Action, PolicyID: policy.ID}, true
 }
 
 func evaluatePolicyForProcess(policy ForwardingPolicy, observation ListenerObservation, chain ProcessChain) (PolicyVerdict, bool) {

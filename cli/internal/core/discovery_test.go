@@ -10,7 +10,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"ssh-forward/cli/internal/proxy"
+	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -136,8 +136,7 @@ func TestManagerReportsEvidenceTruncationDiagnostic(t *testing.T) {
 			releases: []<-chan struct{}{ready},
 			started:  make(chan int, 1),
 		}
-		owner := &scriptedOwnedForward{closeStart: make(chan struct{}), closeDone: make(chan struct{})}
-		manager, closeManager := newBubbleForwardingManager(t, connector, owner)
+		manager, closeManager := newBubbleForwardingManager(t, connector)
 		defer closeManager()
 
 		observations := make([]ListenerObservation, MaxRetainedListenerObservations+1)
@@ -173,8 +172,7 @@ func TestManagerRejectsUnknownCapabilityReason(t *testing.T) {
 			releases: []<-chan struct{}{ready},
 			started:  make(chan int, 1),
 		}
-		owner := &scriptedOwnedForward{closeStart: make(chan struct{}), closeDone: make(chan struct{})}
-		manager, closeManager := newBubbleForwardingManager(t, connector, owner)
+		manager, closeManager := newBubbleForwardingManager(t, connector)
 		defer closeManager()
 
 		session.facts <- ObservationSet{
@@ -208,19 +206,7 @@ func TestManagerRetainsObservationsUntilReconnectGetsCompleteReplacement(t *test
 			releases: []<-chan struct{}{ready, ready},
 			started:  make(chan int, 2),
 		}
-		owner := &scriptedOwnedForward{
-			projection: ForwardSnapshot{
-				ID:                 ForwardID("manual:operation-add"),
-				Kind:               ForwardManual,
-				RemotePort:         8080,
-				RemoteFamily:       FamilyIPv4,
-				AllocatedLocalPort: 8087,
-				LocalFamilies:      []AddressFamily{FamilyIPv4, FamilyIPv6},
-			},
-			closeStart: make(chan struct{}),
-			closeDone:  make(chan struct{}),
-		}
-		manager, closeManager := newBubbleForwardingManager(t, connector, owner)
+		manager, closeManager := newBubbleForwardingManager(t, connector)
 		defer closeManager()
 
 		observation := ListenerObservation{
@@ -279,40 +265,15 @@ func TestManagerRetainsObservationsUntilReconnectGetsCompleteReplacement(t *test
 func TestManagerPublishesDiscoveryBaselineAtomically(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		session := newScriptedDiscoverySession()
-		owner := &scriptedOwnedForward{
-			projection: ForwardSnapshot{
-				ID:                 ForwardID("manual:operation-add"),
-				Kind:               ForwardManual,
-				RemotePort:         8080,
-				RemoteFamily:       FamilyIPv4,
-				AllocatedLocalPort: 8087,
-				LocalFamilies:      []AddressFamily{FamilyIPv4, FamilyIPv6},
-			},
-			closeStart: make(chan struct{}),
-			closeDone:  make(chan struct{}),
-		}
 		manager := newManager(managerOptions{
 			host:      HostAlias("development"),
 			connector: oneSessionConnector{session: session},
-			forwardAllocator: scriptedForwardAllocator{
-				requests: make(chan forwardSpec, 1),
-				owner:    owner,
-			},
 		})
 		defer func() {
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
-			owner.release()
 			_ = manager.Close(ctx)
 		}()
-		if _, err := manager.Execute(t.Context(), AddManualForward{
-			CommandID:  CommandID("operation-add"),
-			Host:       HostAlias("development"),
-			RemotePort: 8080,
-			Family:     FamilyAuto,
-		}); err != nil {
-			t.Fatalf("add Manual Forward: %v", err)
-		}
 		synctest.Wait()
 		starting, err := manager.Snapshot(t.Context())
 		if err != nil {
@@ -608,11 +569,9 @@ func newBubbleDiscoveryManager(t *testing.T) (*manager, *scriptedDiscoverySessio
 	return manager, session, closeManager
 }
 
-// newBubbleForwardingManager builds a scripted Manager with a Manual Forward
-// already added inside a synctest bubble, settling until the actor publishes
-// DiscoveryStarting. The returned closeManager must run before the bubble
-// test function returns.
-func newBubbleForwardingManager(t *testing.T, connector *sequenceConnector, owner *scriptedOwnedForward) (*manager, func()) {
+// newBubbleForwardingManager builds a scripted Manager inside a synctest
+// bubble, settling until the actor publishes DiscoveryStarting.
+func newBubbleForwardingManager(t *testing.T, connector *sequenceConnector) (*manager, func()) {
 	t.Helper()
 	manager := newManager(managerOptions{
 		host:       HostAlias("development"),
@@ -621,19 +580,7 @@ func newBubbleForwardingManager(t *testing.T, connector *sequenceConnector, owne
 		retryWait: func(ctx context.Context, _ time.Duration) bool {
 			return ctx.Err() == nil
 		},
-		forwardAllocator: scriptedForwardAllocator{
-			requests: make(chan forwardSpec, 1),
-			owner:    owner,
-		},
 	})
-	if _, err := manager.Execute(t.Context(), AddManualForward{
-		CommandID:  CommandID("operation-add"),
-		Host:       HostAlias("development"),
-		RemotePort: 8080,
-		Family:     FamilyAuto,
-	}); err != nil {
-		t.Fatalf("add Manual Forward: %v", err)
-	}
 	synctest.Wait()
 	snapshot, err := manager.Snapshot(t.Context())
 	if err != nil {
@@ -645,7 +592,6 @@ func newBubbleForwardingManager(t *testing.T, connector *sequenceConnector, owne
 	closeManager := func() {
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 		defer cancel()
-		owner.release()
 		_ = manager.Close(ctx)
 	}
 	return manager, closeManager

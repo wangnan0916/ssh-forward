@@ -7,8 +7,6 @@ import (
 
 	"github.com/creachadair/jrpc2"
 	"github.com/creachadair/jrpc2/channel"
-
-	"ssh-forward/cli/internal/core"
 )
 
 const (
@@ -18,7 +16,6 @@ const (
 	// Wire method and notification names. Request-method keys (the handler
 	// map in Serve) and notification-method names (the Watch fan-out) are
 	// the same wire strings; named here so the two roles cannot drift.
-	methodExecute        = "manager.execute"
 	methodSnapshot       = "manager.snapshot"
 	methodWatch          = "manager.watch"
 	methodUnwatch        = "manager.unwatch"
@@ -28,9 +25,6 @@ const (
 	maxCapabilitySize    = 128
 	maxPendingCalls      = 64
 	maxHandlers          = 8
-	maxOperationID       = 128
-	maxHostAlias         = core.MaxHostAliasLength
-	maxForwardID         = 256
 	maxWatchID           = 64
 	maxSessionWatches    = 8
 
@@ -136,49 +130,6 @@ func (c negotiatedCapabilities) wireValues() []string {
 	return capabilities
 }
 
-type executeParams struct {
-	Command json.RawMessage `json:"command"`
-}
-
-type commandHeader struct {
-	Kind string `json:"kind"`
-}
-
-type addManualForwardParams struct {
-	Kind        string `json:"kind"`
-	OperationID string `json:"operation_id"`
-	Host        string `json:"host"`
-	RemotePort  uint16 `json:"remote_port"`
-	Family      string `json:"family"`
-}
-
-type removeForwardParams struct {
-	Kind        string `json:"kind"`
-	OperationID string `json:"operation_id"`
-	ForwardID   string `json:"forward_id"`
-}
-
-// listenerDecisionParams is shared by policy.approve and policy.suppress:
-// both target the Listener on (host, remote_port) and optionally pin the
-// family; an absent family matches the first Listener on the port.
-type listenerDecisionParams struct {
-	Kind        string `json:"kind"`
-	OperationID string `json:"operation_id"`
-	Host        string `json:"host"`
-	RemotePort  uint16 `json:"remote_port"`
-	Family      string `json:"family,omitempty"`
-}
-
-type outcomeResult struct {
-	Outcome wireOutcome `json:"outcome"`
-}
-
-type wireOutcome struct {
-	Kind     string      `json:"kind"`
-	Revision uint64      `json:"revision"`
-	Forward  wireForward `json:"forward"`
-}
-
 type wireForward struct {
 	ID                 string   `json:"id"`
 	Kind               string   `json:"kind"`
@@ -233,7 +184,6 @@ type wireHost struct {
 	Discovery            wireDiscovery             `json:"discovery"`
 	ListenerObservations []wireListenerObservation `json:"listener_observations"`
 	ListenerLifetimes    []wireListenerLifetime    `json:"listener_lifetimes,omitempty"`
-	AskListeners         []wireListenerAsk         `json:"ask_listeners,omitempty"`
 	Forwards             []wireForward             `json:"forwards"`
 }
 
@@ -266,15 +216,6 @@ type wireListenerLifetime struct {
 	RemotePort   uint16 `json:"remote_port"`
 	Status       string `json:"status"`
 	PostBaseline bool   `json:"post_baseline,omitempty"`
-}
-
-// wireListenerAsk is one Remote Listener currently needing a user decision
-// (the Ask flow): first observed after the Discovery Baseline, governed by
-// no policy or One-time Suppression, and not matched automatically.
-type wireListenerAsk struct {
-	Family     string `json:"family"`
-	BindScope  string `json:"bind_scope"`
-	RemotePort uint16 `json:"remote_port"`
 }
 
 type wireProcessChain struct {

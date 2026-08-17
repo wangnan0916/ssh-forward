@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"ssh-forward/cli/internal/app"
-	"ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/app"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 // ErrNeedCommand is returned when the user ran the root with no
@@ -101,7 +101,7 @@ func needsManager(cmd *cobra.Command) bool {
 	}
 	for current := cmd; current != nil; current = current.Parent() {
 		switch current.Name() {
-		case "host", "default", "manager", "help":
+		case "host", "default", "manager", "help", "add", "remove", "policy":
 			return false
 		}
 	}

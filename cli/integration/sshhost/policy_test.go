@@ -10,15 +10,15 @@ import (
 	"testing"
 	"time"
 
-	"ssh-forward/cli/internal/app"
-	"ssh-forward/cli/internal/core"
-	"ssh-forward/cli/internal/openssh"
+	"github.com/wangnan0916/ssh-forward/cli/internal/app"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/openssh"
 )
 
 // TestPolicyReconciliationThroughDisposableDevelopmentHost pins the
 // composition-root wiring end to end (slice 5): a file-backed policy source
 // through app.NewManager must reconcile the disposable host's fixture
-// listener into a Managed Forward, and Ignore must suppress the Ask list.
+// listener into a Managed Forward.
 func TestPolicyReconciliationThroughDisposableDevelopmentHost(t *testing.T) {
 	policiesPath := filepath.Join(t.TempDir(), "policies.jsonc")
 	writePolicySource(t, policiesPath, fmt.Sprintf(`{
@@ -44,29 +44,16 @@ func TestPolicyReconciliationThroughDisposableDevelopmentHost(t *testing.T) {
 			t.Errorf("close Manager: %v", err)
 		}
 	})
-	if _, err := manager.Execute(context.Background(), core.AddManualForward{
-		CommandID:  core.CommandID("policy-trigger"),
-		Host:       core.HostAlias(testHostAlias()),
-		RemotePort: fixturePortV4(),
-		Family:     core.FamilyIPv4,
-	}); err != nil {
-		t.Fatalf("start Forwarding Session: %v", err)
-	}
 	baseline := waitForBaseline(t, manager)
 
-	// The fixture listener reconciles into a Managed Forward after two
-	// observation generations, without any user command.
 	snapshot := waitForPolicyManagedForward(t, manager, fixturePortV4())
 	if baseline.Revision >= snapshot.Revision {
 		t.Fatalf("Managed Forward appeared without a revision advance")
 	}
-	if len(snapshot.Host.AskListeners) != 0 {
-		t.Fatalf("auto-forwarded listener still asks: %+v", snapshot.Host.AskListeners)
-	}
 }
 
 // TestPolicyIgnoreThroughDisposableDevelopmentHost pins the Ignore action:
-// a governed listener never asks and never forwards.
+// a governed listener is observed and never forwarded.
 func TestPolicyIgnoreThroughDisposableDevelopmentHost(t *testing.T) {
 	policiesPath := filepath.Join(t.TempDir(), "policies.jsonc")
 	writePolicySource(t, policiesPath, fmt.Sprintf(`{
@@ -92,17 +79,9 @@ func TestPolicyIgnoreThroughDisposableDevelopmentHost(t *testing.T) {
 			t.Errorf("close Manager: %v", err)
 		}
 	})
-	if _, err := manager.Execute(context.Background(), core.AddManualForward{
-		CommandID:  core.CommandID("ignore-trigger"),
-		Host:       core.HostAlias(testHostAlias()),
-		RemotePort: fixturePortV4(),
-		Family:     core.FamilyIPv4,
-	}); err != nil {
-		t.Fatalf("start Forwarding Session: %v", err)
-	}
 	waitForBaseline(t, manager)
 
-	waitForSnapshot(t, manager, "ignored listener settles", func(snapshot core.Snapshot) bool {
+	first := waitForSnapshot(t, manager, "ignored listener settles", func(snapshot core.Snapshot) bool {
 		if snapshot.Host == nil {
 			return false
 		}
@@ -113,17 +92,8 @@ func TestPolicyIgnoreThroughDisposableDevelopmentHost(t *testing.T) {
 		}
 		return false
 	})
-	// Two more generations settle the reconciliation verdict.
-	waitForSnapshot(t, manager, "ignore verdict settles", func(snapshot core.Snapshot) bool {
-		if snapshot.Host == nil {
-			return false
-		}
-		for _, listener := range snapshot.Host.AskListeners {
-			if listener.RemotePort == fixturePortV4() {
-				return false
-			}
-		}
-		return true
+	waitForSnapshot(t, manager, "second generation after ignore", func(snapshot core.Snapshot) bool {
+		return snapshot.Revision > first.Revision
 	})
 	snapshot, err := manager.Snapshot(context.Background())
 	if err != nil {

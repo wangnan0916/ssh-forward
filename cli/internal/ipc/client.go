@@ -10,8 +10,8 @@ import (
 	"net"
 	"sync"
 
-	"ssh-forward/cli/internal/core"
-	managerjsonrpc "ssh-forward/cli/internal/jsonrpc"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	managerjsonrpc "github.com/wangnan0916/ssh-forward/cli/internal/jsonrpc"
 )
 
 // maxFrameBytes mirrors the server's bound: any line longer than this ends
@@ -43,8 +43,8 @@ func Dial(ctx context.Context, path string) (core.Manager, error) {
 	return client, nil
 }
 
-// managerClient implements core.Manager over the IPC wire: Execute and
-// Snapshot are request/response calls correlated by ID, Watch subscribes
+// managerClient implements core.Manager over the IPC wire: Snapshot is a
+// request/response call correlated by ID, Watch subscribes
 // to server notifications, and Close tears the connection down.
 //
 // The read loop runs in one goroutine and dispatches every frame: matching
@@ -254,30 +254,6 @@ func (c *managerClient) failAll(err error) {
 		stream.fail(err)
 		delete(c.watches, id)
 	}
-}
-
-// Execute implements core.Manager over the wire.
-func (c *managerClient) Execute(ctx context.Context, command core.Command) (core.Outcome, error) {
-	wireCommand, err := managerjsonrpc.MarshalCommand(command)
-	if err != nil {
-		return core.Outcome{}, err
-	}
-	params := map[string]json.RawMessage{"command": wireCommand}
-	encoded, err := json.Marshal(params)
-	if err != nil {
-		return core.Outcome{}, err
-	}
-	result, err := c.call(ctx, "manager.execute", encoded, c.newID())
-	if err != nil {
-		return core.Outcome{}, err
-	}
-	var wrapped struct {
-		Outcome json.RawMessage `json:"outcome"`
-	}
-	if err := json.Unmarshal(result, &wrapped); err != nil {
-		return core.Outcome{}, fmt.Errorf("execute result: %w", err)
-	}
-	return managerjsonrpc.UnmarshalOutcome(wrapped.Outcome)
 }
 
 // Snapshot implements core.Manager over the wire.

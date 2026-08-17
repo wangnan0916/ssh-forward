@@ -2,18 +2,19 @@
 
 ## Status
 
-The command surface below is implemented (slice 6, implementation-sequence.md): `cli/cmd/ssh-forward/` builds the CLI binary, which runs the headless Manager in-process and exposes the domain command surface with wire-shaped `--json` output. The state layout (configuration locations, `policies.jsonc`, `config.jsonc`) is the **planned product contract** and lands progressively with the CLI and desktop slices; today the Manager reads `policies.jsonc` (with `SSH_FORWARD_CONFIG_DIR` override) and the integration tests consume the Manager over the IPC wire. `app.NewManager` in the Go module is the composition seam where the CLI entry point and the desktop core both land.
+The command surface below is implemented (slice 6, implementation-sequence.md): `cli/cmd/ssh-forward/` builds the CLI binary. `status` / `watch` auto-spawn a per-user manager and then run as its JSON-RPC client; `SSH_FORWARD_NO_AUTOSPAWN=1` keeps the in-process fallback for scripts and tests. `add` and `remove` write `policies.jsonc` and do not require a manager or Development Host. The Manager reads `policies.jsonc` (hot-reloaded) and `config.jsonc`'s `default_host`. `SSH_FORWARD_CONFIG_DIR` overrides the product config directory. `app.NewManager` is the composition seam where the CLI, a later TUI, and a later desktop core all land.
+
+Still planned: comment-preserving HuJSON patches, idle manager exit, Monitor at Login, and revisioned configuration writes.
 
 ## New command contract
 
-The Go CLI is designed independently for this product and has no command, output, file, socket, or runtime-compatibility obligation to the pre-existing shell utility. Its command surface follows the product domain:
+The Go CLI is designed independently for this product and has no command, output, file, socket, or runtime-compatibility obligation to any similarly named tool. Its command surface follows the product domain:
 
 ```text
-ssh-forward add 5173                  # forward one remote port
-ssh-forward remove 8000               # tear down by port (the natural counterpart of add)
-ssh-forward remove manual:cli-xxx     # or by explicit forward ID (from status --json)
-ssh-forward approve 8080              # One-time Approval for a Listener
-ssh-forward suppress 8080             # One-time Suppression for a Listener
+ssh-forward add 5173                  # remember a remote port
+ssh-forward add --dir /home/dev/app   # remember a Development Host directory
+ssh-forward remove 5173
+ssh-forward remove --dir /home/dev/app
 ssh-forward default <alias>           # pin the default Development Host
 ssh-forward status [--json]
 ssh-forward watch [--json]            # stream snapshots (JSONL with --json)
@@ -22,15 +23,15 @@ ssh-forward host list [--json]        # hosts from the SSH client config
 ssh-forward manager serve             # run the singleton in the foreground
 ```
 
-`status` is forward-focused: it shows the host, connection, diagnostics, and the active forwards; listeners appear only as a one-line Ask heads-up, and the full observation set lives in `--json`. `add` is idempotent — adding an already-forwarded port reports the existing forward instead of creating a duplicate. The commands are verbs: `add` can only name a remote port, so the port is a positional argument (flags may precede or follow it). The Development Host resolves in order: `--host`, then `config.jsonc`'s `default_host` (set with `ssh-forward default ALIAS`), then the single literal Host alias in the SSH client configuration; with several hosts and no default, a terminal prompts for one per command, and a non-terminal run lists the candidates in the error. There are no legacy numeric shorthands or compatibility aliases. Human-readable output is not an automation contract; every resource command supports structured `--json` output for scripts and desktop clients.
+`add` writes a simple Auto-forward policy (one port, or one working-directory tree) and is idempotent. `remove` forgets that same simple rule. Unmatched listeners are not forwarded; `status` lists new remote ports as a one-line heads-up. The Development Host resolves in order: `--host`, then `config.jsonc`'s `default_host` (set with `ssh-forward default ALIAS`), then the single literal Host alias in the SSH client configuration; with several hosts and no default, a terminal prompts for one per command, and a non-terminal run lists the candidates in the error. There are no legacy numeric shorthands or compatibility aliases. Human-readable output is not an automation contract; every resource command supports structured `--json` output for scripts and desktop clients.
 
-## Manual Forward
+## Remembered Auto-forward
 
-A Manual Forward targets only loopback on one Development Host; it cannot name an arbitrary remote destination. `family` may be `auto`, `ipv4`, or `ipv6`. Auto uses a current Listener Observation when available and otherwise defaults to remote IPv4 loopback. Creating a Manual Forward lazily connects its host, binds both supported local loopback families, and applies the normal preferred-port/fallback policy.
+A remembered port forwards when that remote port has a listener, and does not occupy a local port when it does not. A remembered directory forwards listeners whose process cwd is in that Development Host tree. Both survive manager and SSH restarts because they are policies, not runtime tunnels. `--dir` must be an absolute host path (`/…`), not a path on the Local Machine.
 
 ## Persistent intent
 
-The product persists Development Host aliases (the `default_host` in `config.jsonc` is read today and names the host when `--host` is absent), `Monitor at Login`, Forwarding Policies, and product settings. The remaining write paths — host lists, settings, and the revisioned configuration updates — land with the desktop slice. Manual Forwards, One-time Approvals, One-time Suppressions, Listener Observations, Active Forwards, and live connection state remain runtime-only. After restart, policy-driven state is reconstructed from fresh observations rather than restored from a stale runtime snapshot.
+The product persists the `default_host` in `config.jsonc` (set with `ssh-forward default`) and Forwarding Policies in `policies.jsonc`. `Monitor at Login`, host lists, product settings, and revisioned configuration writes land with the desktop slice. Runtime tunnels, Listener Observations, Active Forwards, and live connection state remain runtime-only. After restart, policy-driven state is reconstructed from fresh observations rather than restored from a stale runtime snapshot.
 
 ## Configuration locations
 
@@ -44,11 +45,11 @@ The planned configuration watch (debounced preview/reconcile of external JSONC e
 
 ## Manager ownership
 
-Only one new-product manager runs per user (ADR-0016), and the CLI implements it: `ssh-forward manager serve` owns the Manager and listens on the per-user Unix socket (`manager.sock` next to the configuration files, `SSH_FORWARD_CONFIG_DIR`-overridable). Every other command is then a client of that singleton over the JSON-RPC v1 wire (docs/design/ipc-protocol.md) and shares its state; a conflicting `--host` is a warning, not an error. The first command auto-spawns the singleton in the background (its own executable by absolute path, `manager.log` next to the socket, `manager.pid` recording it) and then executes as its client, so there is no separate start step; `SSH_FORWARD_NO_AUTOSPAWN=1` keeps the in-process fallback for scripts and tests, and `SSH_FORWARD_MANAGER_BINARY` overrides the spawned executable. A second serve is refused while one runs; a stale socket file (one no live manager answers) is replaced. Desktop starts its signed bundled core by absolute bundle path rather than searching `$PATH` for a helper. An incompatible client reports the required restart or upgrade and never terminates an unknown manager automatically.
+Only one manager runs per user (ADR-0016), and the CLI implements it: `ssh-forward manager serve` owns the Manager and listens on the per-user Unix socket (`manager.sock` next to the configuration files, `SSH_FORWARD_CONFIG_DIR`-overridable). `status` and `watch` are then clients of that singleton over the JSON-RPC v1 wire (docs/design/ipc-protocol.md) and share its state; a conflicting `--host` is a warning, not an error. The first `status`/`watch` auto-spawns the singleton in the background (its own executable by absolute path, `manager.log` next to the socket, `manager.pid` recording it) and then executes as its client, so there is no separate start step; `SSH_FORWARD_NO_AUTOSPAWN=1` keeps the in-process fallback for scripts and tests, and `SSH_FORWARD_MANAGER_BINARY` overrides the spawned executable. A second serve is refused while one runs; a stale socket file (one no live manager answers) is replaced. Desktop starts its signed bundled core by absolute bundle path rather than searching `$PATH` for a helper. An incompatible client reports the required restart or upgrade and never terminates an unknown manager automatically.
 
-## Development isolation
+## Compatibility
 
-Until the new product is mature, its executable path, configuration directory, runtime endpoint, and SSH/SOCKS processes remain isolated from the installed legacy utility. The product does not inspect, adopt, migrate, stop, replace, or uninstall legacy state. The user will remove the old utility separately after choosing to cut over.
+The product does not inspect, adopt, migrate, stop, replace, or uninstall any unrelated SSH-forwarding utility that happens to share a similar name. There is no compatibility contract with such tools.
 
 ## Version boundaries
 

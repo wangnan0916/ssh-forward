@@ -9,23 +9,15 @@ import (
 	"strings"
 	"testing"
 
-	"ssh-forward/cli/internal/app"
-	"ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/app"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 // fakeManager is a scriptable core.Manager for CLI tests: commands do not
 // touch the network, so the whole surface runs on injected state.
 type fakeManager struct {
 	snapshot core.Snapshot
-	execute  func(context.Context, core.Command) (core.Outcome, error)
 	watch    func(context.Context) (core.SnapshotStream, error)
-}
-
-func (m *fakeManager) Execute(ctx context.Context, command core.Command) (core.Outcome, error) {
-	if m.execute == nil {
-		return core.Outcome{}, errors.New("unexpected Execute call")
-	}
-	return m.execute(ctx, command)
 }
 
 func (m *fakeManager) Snapshot(context.Context) (core.Snapshot, error) {
@@ -43,14 +35,21 @@ func (*fakeManager) Close(context.Context) error { return nil }
 
 func runApp(t *testing.T, manager core.Manager, args ...string) (string, error) {
 	t.Helper()
+	return runCLI(t, &App{
+		Manager:      manager,
+		Host:         core.HostAlias("development"),
+		PoliciesPath: filepath.Join(t.TempDir(), "policies.jsonc"),
+	}, args...)
+}
+
+func runCLI(t *testing.T, surface *App, args ...string) (string, error) {
+	t.Helper()
 	var stdout, stderr bytes.Buffer
-	app := &App{
-		Manager: manager,
-		Host:    core.HostAlias("development"),
-		Stdout:  &stdout,
-		Stderr:  &stderr,
+	surface.Stdout = &stdout
+	if surface.Stderr == nil {
+		surface.Stderr = &stderr
 	}
-	err := app.Run(context.Background(), args)
+	err := surface.Run(context.Background(), args)
 	return stdout.String(), err
 }
 
@@ -67,23 +66,20 @@ func snapshotWithHost() core.Snapshot {
 			},
 			ListenerObservations: []core.ListenerObservation{
 				{Family: core.FamilyIPv4, BindScope: core.BindLoopback, RemotePort: 8080},
-				{Family: core.FamilyIPv6, BindScope: core.BindLoopback, RemotePort: 8080},
+				{Family: core.FamilyIPv6, BindScope: core.BindLoopback, RemotePort: 9090},
 			},
 			ListenerLifetimes: []core.ListenerLifetimeSnapshot{
 				{Family: core.FamilyIPv4, BindScope: core.BindLoopback, RemotePort: 8080, Status: core.LifetimeContinuous, PostBaseline: true},
-				{Family: core.FamilyIPv6, BindScope: core.BindLoopback, RemotePort: 8080, Status: core.LifetimeNew, PostBaseline: true},
-			},
-			AskListeners: []core.ListenerAskSnapshot{
-				{Family: core.FamilyIPv6, BindScope: core.BindLoopback, RemotePort: 8080},
+				{Family: core.FamilyIPv6, BindScope: core.BindLoopback, RemotePort: 9090, Status: core.LifetimeNew, PostBaseline: true},
 			},
 			Forwards: []core.ForwardSnapshot{
 				{
-					ID:                 core.ForwardID("manual:op-1"),
-					Kind:               core.ForwardManual,
+					ID:                 core.ForwardID("managed:ipv4:loopback:8080"),
+					Kind:               core.ForwardManaged,
 					RemotePort:         8080,
 					RemoteFamily:       core.FamilyIPv4,
-					AllocatedLocalPort: 8081,
-					LocalFamilies:      []core.AddressFamily{core.FamilyIPv4, core.FamilyIPv6},
+					AllocatedLocalPort: 8080,
+					LocalFamilies:      []core.AddressFamily{core.FamilyIPv4},
 				},
 			},
 		},
@@ -98,8 +94,8 @@ func TestStatusHuman(t *testing.T) {
 	for _, want := range []string{
 		"Host: development — connected",
 		"Discovery: healthy (baseline true, scanner v1)",
-		"Listeners needing a decision: 8080",
-		"manual:op-1 (manual) → ipv4:8080 (local 8081)",
+		"New remote ports: 9090 (ssh-forward add PORT)",
+		"managed:ipv4:loopback:8080 (managed) → ipv4:8080 (local 8080)",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("status output missing %q:\n%s", want, output)
@@ -112,14 +108,13 @@ func TestStatusJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status --json: %v", err)
 	}
-	// The --json shape is the wire shape: ask_listeners and the listener
-	// lifetime post_baseline flag ride along.
+	// The --json shape is the wire shape: the listener lifetime
+	// post_baseline flag rides along.
 	for _, want := range []string{
 		`"revision":5`,
 		`"alias":"development"`,
-		`"ask_listeners":[{"family":"ipv6","bind_scope":"loopback","remote_port":8080}]`,
 		`"post_baseline":true`,
-		`"kind":"manual"`,
+		`"kind":"managed"`,
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("status --json missing %q:\n%s", want, output)
@@ -135,132 +130,79 @@ func TestStatusNoHost(t *testing.T) {
 }
 
 func TestAdd(t *testing.T) {
-	wantCommand := core.AddManualForward{
-		CommandID:  core.CommandID("op-1"),
-		Host:       core.HostAlias("development"),
-		RemotePort: 8080,
-		Family:     core.FamilyAuto,
-	}
-	manager := &fakeManager{
-		execute: func(_ context.Context, command core.Command) (core.Outcome, error) {
-			if command != wantCommand {
-				t.Fatalf("command = %#v, want %#v", command, wantCommand)
-			}
-			return core.Outcome{
-				Kind:     core.OutcomeForwardAdded,
-				Revision: 6,
-				Forward: core.ForwardSnapshot{
-					ID:                 core.ForwardID("manual:op-1"),
-					Kind:               core.ForwardManual,
-					RemotePort:         8080,
-					RemoteFamily:       core.FamilyIPv4,
-					AllocatedLocalPort: 8080,
-				},
-			}, nil
-		},
-	}
-	output, err := runApp(t, manager, "add", "--operation-id", "op-1", "8080")
+	path := filepath.Join(t.TempDir(), "policies.jsonc")
+	output, err := runCLI(t, &App{
+		Manager:      &fakeManager{},
+		PoliciesPath: path,
+	}, "add", "5173")
 	if err != nil {
-		t.Fatalf("forward add: %v", err)
+		t.Fatalf("add: %v", err)
 	}
-	if !strings.Contains(output, "forward_added") || !strings.Contains(output, "manual:op-1") {
-		t.Fatalf("forward add output = %q", output)
+	if output != "added port 5173\n" {
+		t.Fatalf("add output = %q", output)
+	}
+	policies, err := app.LoadPolicies(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(policies) != 1 || policies[0].ID != "port-5173" {
+		t.Fatalf("policies = %#v, want port-5173", policies)
 	}
 }
 
 func TestAddJSON(t *testing.T) {
-	manager := &fakeManager{
-		execute: func(context.Context, core.Command) (core.Outcome, error) {
-			return core.Outcome{Kind: core.OutcomeForwardAdded, Revision: 6}, nil
-		},
-	}
-	output, err := runApp(t, manager, "add", "--json", "8080")
+	path := filepath.Join(t.TempDir(), "policies.jsonc")
+	output, err := runCLI(t, &App{PoliciesPath: path}, "add", "--json", "5173")
 	if err != nil {
-		t.Fatalf("forward add --json: %v", err)
+		t.Fatalf("add --json: %v", err)
 	}
-	// The --json shape is the wire shape (jsonrpc.MarshalOutcome): the
-	// forward object carries local_families exactly like the IPC outcome.
-	for _, want := range []string{
-		`"kind":"forward_added"`,
-		`"revision":6`,
-		`"forward":{`,
-		`"local_families"`,
-	} {
-		if !strings.Contains(output, want) {
-			t.Fatalf("forward add --json missing %q: %s", want, output)
-		}
+	if !strings.Contains(output, `"added":true`) || !strings.Contains(output, `"port":5173`) {
+		t.Fatalf("add --json output = %q", output)
 	}
 }
 
-func TestAddRequiresPort(t *testing.T) {
+func TestAddRequiresPortOrDir(t *testing.T) {
 	if _, err := runApp(t, &fakeManager{}, "add"); err == nil {
-		t.Fatal("add without a port succeeded")
+		t.Fatal("add without a port or --dir succeeded")
+	}
+}
+
+func TestAddDir(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policies.jsonc")
+	output, err := runCLI(t, &App{PoliciesPath: path}, "add", "--dir", "/home/dev/src/app")
+	if err != nil {
+		t.Fatalf("add --dir: %v", err)
+	}
+	if output != "added directory /home/dev/src/app\n" {
+		t.Fatalf("add --dir output = %q", output)
+	}
+}
+
+func TestAddRejectsPortAndDir(t *testing.T) {
+	_, err := runApp(t, &fakeManager{}, "add", "5173", "--dir", "/home/dev/src/app")
+	if err == nil || !strings.Contains(err.Error(), "usage:") {
+		t.Fatalf("add port and --dir err = %v, want usage", err)
 	}
 }
 
 func TestRemove(t *testing.T) {
-	manager := &fakeManager{
-		execute: func(_ context.Context, command core.Command) (core.Outcome, error) {
-			remove, ok := command.(core.RemoveForward)
-			if !ok || remove.ForwardID != core.ForwardID("manual:op-1") {
-				t.Fatalf("command = %#v, want remove of manual:op-1", command)
-			}
-			return core.Outcome{Kind: core.OutcomeForwardRemoved, Revision: 7}, nil
-		},
+	path := filepath.Join(t.TempDir(), "policies.jsonc")
+	if _, err := runCLI(t, &App{PoliciesPath: path}, "add", "5173"); err != nil {
+		t.Fatal(err)
 	}
-	output, err := runApp(t, manager, "remove", "manual:op-1")
+	output, err := runCLI(t, &App{PoliciesPath: path}, "remove", "5173")
 	if err != nil {
-		t.Fatalf("forward remove: %v", err)
+		t.Fatalf("remove: %v", err)
 	}
-	if !strings.Contains(output, "forward_removed") {
-		t.Fatalf("forward remove output = %q", output)
+	if output != "removed port 5173\n" {
+		t.Fatalf("remove output = %q", output)
 	}
 }
 
-func TestApprove(t *testing.T) {
-	manager := &fakeManager{
-		execute: func(_ context.Context, command core.Command) (core.Outcome, error) {
-			approve, ok := command.(core.ApproveListener)
-			if !ok || approve.RemotePort != 8080 || approve.Host != core.HostAlias("development") {
-				t.Fatalf("command = %#v, want approve of port 8080", command)
-			}
-			return core.Outcome{Kind: core.OutcomeApprovalRecorded, Revision: 8}, nil
-		},
-	}
-	output, err := runApp(t, manager, "approve", "8080")
-	if err != nil {
-		t.Fatalf("listener approve: %v", err)
-	}
-	if !strings.Contains(output, "approval_recorded") {
-		t.Fatalf("listener approve output = %q", output)
-	}
-}
-
-func TestSuppress(t *testing.T) {
-	manager := &fakeManager{
-		execute: func(_ context.Context, command core.Command) (core.Outcome, error) {
-			suppress, ok := command.(core.SuppressListener)
-			if !ok || suppress.RemotePort != 8080 {
-				t.Fatalf("command = %#v, want suppress of port 8080", command)
-			}
-			return core.Outcome{Kind: core.OutcomeSuppressionRecorded, Revision: 9}, nil
-		},
-	}
-	output, err := runApp(t, manager, "suppress", "8080")
-	if err != nil {
-		t.Fatalf("listener suppress: %v", err)
-	}
-	if !strings.Contains(output, "suppression_recorded") {
-		t.Fatalf("listener suppress output = %q", output)
-	}
-}
-
-func TestApproveRejectsInvalidFamily(t *testing.T) {
-	// The wire adapter rejects a bad family as invalid parameters; the
-	// CLI must say the same instead of a misleading Listener-not-found.
-	_, err := runApp(t, &fakeManager{}, "approve", "8080", "--family", "bogus")
-	if err == nil || !strings.Contains(err.Error(), "--family") {
-		t.Fatalf("invalid family err = %v, want --family error", err)
+func TestRemoveMissingPort(t *testing.T) {
+	_, err := runApp(t, &fakeManager{}, "remove", "5173")
+	if err == nil || !strings.Contains(err.Error(), "not remembered") {
+		t.Fatalf("remove missing err = %v, want not remembered", err)
 	}
 }
 
@@ -361,86 +303,55 @@ func TestPolicyListMissingFile(t *testing.T) {
 		PoliciesPath: filepath.Join(t.TempDir(), "absent.jsonc"),
 		Stdout:       &stdout,
 	}
-	if err := app.Run(context.Background(), []string{"policy", "list"}); err == nil {
-		t.Fatal("policy list on a missing file succeeded")
+	if err := app.Run(context.Background(), []string{"policy", "list"}); err != nil {
+		t.Fatalf("policy list on a missing file: %v", err)
+	}
+	if stdout.String() != "no policies\n" {
+		t.Fatalf("policy list output = %q, want no policies", stdout.String())
 	}
 }
 
-// TestRemoveByPort pins the port form of remove: "remove 8000" tears down
-// the Manual Forward on that remote port (the counterpart of add).
-func TestRemoveByPort(t *testing.T) {
-	manager := &fakeManager{
-		snapshot: snapshotWithHost(), // manual:op-1 → ipv4:8080
-		execute: func(_ context.Context, command core.Command) (core.Outcome, error) {
-			remove, ok := command.(core.RemoveForward)
-			if !ok {
-				t.Fatalf("execute got %T, want RemoveForward", command)
-			}
-			if remove.ForwardID != core.ForwardID("manual:op-1") {
-				t.Fatalf("remove target = %q, want manual:op-1", remove.ForwardID)
-			}
-			return core.Outcome{Kind: core.OutcomeForwardRemoved, Revision: 6, Forward: core.ForwardSnapshot{ID: remove.ForwardID}}, nil
-		},
+func TestRemoveDir(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policies.jsonc")
+	if _, err := runCLI(t, &App{PoliciesPath: path}, "add", "--dir", "/home/dev/src/app"); err != nil {
+		t.Fatal(err)
 	}
-	output, err := runApp(t, manager, "remove", "8080")
+	output, err := runCLI(t, &App{PoliciesPath: path}, "remove", "--dir", "/home/dev/src/app")
 	if err != nil {
-		t.Fatalf("remove by port: %v", err)
+		t.Fatalf("remove --dir: %v", err)
 	}
-	if !strings.Contains(output, "forward_removed") {
-		t.Fatalf("remove by port output = %q", output)
-	}
-}
-
-// TestRemoveByPortRejectsManagedOnly pins the guard: a port served only
-// by a Managed Forward must not be removed by port — that would fight
-// reconciliation.
-func TestRemoveByPortRejectsManagedOnly(t *testing.T) {
-	manager := &fakeManager{snapshot: core.Snapshot{
-		Revision: 5,
-		Host: &core.HostSnapshot{
-			Alias: "development",
-			Forwards: []core.ForwardSnapshot{
-				{ID: core.ForwardID("managed:ipv4:loopback:8080"), Kind: core.ForwardManaged, RemotePort: 8080},
-			},
-		},
-	}}
-	_, err := runApp(t, manager, "remove", "8080")
-	if err == nil || !strings.Contains(err.Error(), "managed forward") {
-		t.Fatalf("remove err = %v, want the managed-forward guard", err)
+	if output != "removed directory /home/dev/src/app\n" {
+		t.Fatalf("remove --dir output = %q", output)
 	}
 }
 
-// TestStatusCollapsesQuietListeners pins the focus rule: listeners with
-// no lifetime, no Ask decision, and no forward fold into a summary line.
 func TestAddIsIdempotent(t *testing.T) {
-	manager := &fakeManager{
-		snapshot: snapshotWithHost(), // manual:op-1 → ipv4:8080
-		execute: func(context.Context, core.Command) (core.Outcome, error) {
-			t.Fatal("add executed despite an existing forward on the port")
-			return core.Outcome{}, nil
-		},
+	path := filepath.Join(t.TempDir(), "policies.jsonc")
+	surface := &App{PoliciesPath: path}
+	if _, err := runCLI(t, surface, "add", "8080"); err != nil {
+		t.Fatal(err)
 	}
-	output, err := runApp(t, manager, "add", "8080")
+	output, err := runCLI(t, &App{PoliciesPath: path}, "add", "8080")
 	if err != nil {
 		t.Fatalf("add: %v", err)
 	}
-	if !strings.Contains(output, "already forwarded (local 8081)") {
-		t.Fatalf("add output = %q, want the already-forwarded notice", output)
+	if output != "already added port 8080\n" {
+		t.Fatalf("add output = %q, want already added", output)
 	}
 }
 
-// TestStatusShowsForwardsAndAskSummary pins the focused human view: no
-// listener dump, just the active forwards and a one-line Ask heads-up.
-func TestStatusShowsForwardsAndAskSummary(t *testing.T) {
+// TestStatusShowsForwardsAndNewPorts pins the focused human view: no
+// listener dump, just the active forwards and a one-line new-port heads-up.
+func TestStatusShowsForwardsAndNewPorts(t *testing.T) {
 	output, err := runApp(t, &fakeManager{snapshot: snapshotWithHost()}, "status")
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if !strings.Contains(output, "manual:op-1 (manual) → ipv4:8080 (local 8081)") {
+	if !strings.Contains(output, "managed:ipv4:loopback:8080 (managed) → ipv4:8080 (local 8080)") {
 		t.Fatalf("status missing the forward:\n%s", output)
 	}
-	if !strings.Contains(output, "Listeners needing a decision: 8080") {
-		t.Fatalf("status missing the Ask summary:\n%s", output)
+	if !strings.Contains(output, "New remote ports: 9090") {
+		t.Fatalf("status missing the new-port summary:\n%s", output)
 	}
 	if strings.Contains(output, "continuous") || strings.Contains(output, "631/") {
 		t.Fatalf("status leaked the listener dump:\n%s", output)
@@ -456,8 +367,6 @@ func TestHelpListsCommands(t *testing.T) {
 		"Available Commands:",
 		"add",
 		"remove",
-		"approve",
-		"suppress",
 		"status",
 		"watch",
 		"policy",
@@ -469,6 +378,11 @@ func TestHelpListsCommands(t *testing.T) {
 			t.Fatalf("--help missing %q:\n%s", want, output)
 		}
 	}
+	for _, hide := range []string{"approve", "suppress"} {
+		if strings.Contains(output, hide) {
+			t.Fatalf("--help should not list %q:\n%s", hide, output)
+		}
+	}
 }
 
 func TestAddHelp(t *testing.T) {
@@ -476,10 +390,13 @@ func TestAddHelp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add --help: %v", err)
 	}
-	if !strings.Contains(output, "forward one remote port") {
+	if !strings.Contains(output, "remember a remote port") {
 		t.Fatalf("add --help missing the command summary:\n%s", output)
 	}
-	if !strings.Contains(output, "--json") || !strings.Contains(output, "--family") {
+	if !strings.Contains(output, "--dir") || !strings.Contains(output, "--json") {
 		t.Fatalf("add --help missing flags:\n%s", output)
+	}
+	if strings.Contains(output, "--family") {
+		t.Fatalf("add --help still lists --family:\n%s", output)
 	}
 }

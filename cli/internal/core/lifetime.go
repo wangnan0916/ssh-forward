@@ -14,7 +14,7 @@ import (
 // The tracker classifies one observation generation per call; grace is counted
 // in observation cycles so verdicts are deterministic and clock-free. Policy
 // reconciliation (ADR-0015) consumes these verdicts to reconcile Managed
-// Forward lifetimes and One-time Approvals.
+// Forward lifetimes.
 type LifetimeStatus string
 
 const (
@@ -27,7 +27,7 @@ const (
 
 // ListenerLifetimeSnapshot is one Remote Listener's current lifetime status.
 // PostBaseline records whether the Listener was first observed after the
-// Discovery Baseline: only post-baseline Listeners enter the Ask flow.
+// Discovery Baseline: whether this Listener was first seen after connect.
 type ListenerLifetimeSnapshot struct {
 	Family       AddressFamily
 	BindScope    ListenerBindScope
@@ -63,8 +63,7 @@ func newLifetimeTracker(graceCycles int) *lifetimeTracker {
 	}
 }
 
-// markBaseline records that the Discovery Baseline is established: Listeners
-// first observed from here on enter the Ask flow. Baseline is established by
+// markBaseline records that the Discovery Baseline is established. Baseline is established by
 // the actor on the first complete ObservationSet (actor.go); the tracker
 // stays clock-free and knows nothing about sessions or outages.
 func (t *lifetimeTracker) markBaseline() {

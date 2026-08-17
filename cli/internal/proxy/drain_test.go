@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"ssh-forward/cli/internal/proxy"
+	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
 )
 
 func TestEndpointBoundsPostHalfCloseDrain(t *testing.T) {

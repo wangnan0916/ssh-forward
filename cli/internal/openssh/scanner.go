@@ -11,7 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 const (

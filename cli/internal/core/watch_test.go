@@ -6,8 +6,6 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
-
-	"github.com/google/go-cmp/cmp"
 )
 
 func TestSnapshotStreamHonorsCancellationBeforeReadingAvailableSnapshot(t *testing.T) {
@@ -29,60 +27,37 @@ func TestSnapshotStreamHonorsCancellationBeforeReadingAvailableSnapshot(t *testi
 }
 
 func TestWatchCoalescesUnreadSnapshotsToLatestRevision(t *testing.T) {
-	owner := &scriptedOwnedForward{
-		projection: ForwardSnapshot{
-			ID:                 ForwardID("manual:operation-add"),
-			Kind:               ForwardManual,
-			RemotePort:         8080,
-			RemoteFamily:       FamilyIPv4,
-			AllocatedLocalPort: 8087,
-			LocalFamilies:      []AddressFamily{FamilyIPv4, FamilyIPv6},
-		},
-		closeStart: make(chan struct{}),
-		closeDone:  make(chan struct{}),
-	}
-	owner.release()
-	manager := newManager(managerOptions{
-		host:      HostAlias("development"),
-		connector: blockingConnector{started: make(chan HostAlias, 1)},
-		forwardAllocator: scriptedForwardAllocator{
-			requests: make(chan forwardSpec, 1),
-			owner:    owner,
-		},
+	synctest.Test(t, func(t *testing.T) {
+		session := newScriptedDiscoverySession()
+		manager := newManager(managerOptions{
+			host:      HostAlias("development"),
+			connector: oneSessionConnector{session: session},
+		})
+		defer func() {
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			_ = manager.Close(ctx)
+		}()
+		synctest.Wait()
+		stream, err := manager.Watch(t.Context())
+		if err != nil {
+			t.Fatalf("Watch: %v", err)
+		}
+		defer stream.Close()
+		if _, err := stream.Next(t.Context()); err != nil {
+			t.Fatalf("initial Next: %v", err)
+		}
+		session.facts <- ObservationSet{Sequence: 1, Capability: fullTestCapability, Budget: fullObservationBudget, Observations: []ListenerObservation{loopbackListener(8080)}}
+		session.facts <- ObservationSet{Sequence: 2, Capability: fullTestCapability, Budget: fullObservationBudget, Observations: []ListenerObservation{loopbackListener(8081)}}
+		synctest.Wait()
+		latest, err := stream.Next(t.Context())
+		if err != nil {
+			t.Fatalf("coalesced Next: %v", err)
+		}
+		if latest.Host == nil || len(latest.Host.ListenerObservations) != 1 || latest.Host.ListenerObservations[0].RemotePort != 8081 {
+			t.Fatalf("coalesced Snapshot = %#v, want the latest observation", latest.Host)
+		}
 	})
-	t.Cleanup(func() { _ = manager.Close(context.Background()) })
-	stream, err := manager.Watch(context.Background())
-	if err != nil {
-		t.Fatalf("Watch: %v", err)
-	}
-	t.Cleanup(func() { _ = stream.Close() })
-	if _, err := stream.Next(context.Background()); err != nil {
-		t.Fatalf("initial Next: %v", err)
-	}
-	added, err := manager.Execute(context.Background(), AddManualForward{
-		CommandID:  CommandID("operation-add"),
-		Host:       HostAlias("development"),
-		RemotePort: 8080,
-		Family:     FamilyAuto,
-	})
-	if err != nil {
-		t.Fatalf("add Manual Forward: %v", err)
-	}
-	if _, err := manager.Execute(context.Background(), RemoveForward{
-		CommandID: CommandID("operation-remove"),
-		ForwardID: added.Forward.ID,
-	}); err != nil {
-		t.Fatalf("remove Manual Forward: %v", err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	latest, err := stream.Next(ctx)
-	if err != nil {
-		t.Fatalf("coalesced Next: %v", err)
-	}
-	if latest.Revision != 2 || len(latest.Host.Forwards) != 0 {
-		t.Fatalf("coalesced Snapshot = %#v, want revision 2 without Forwards", latest)
-	}
 }
 
 func TestManagerCloseWakesSnapshotStream(t *testing.T) {
@@ -187,89 +162,46 @@ func TestWatchEnforcesManagerLimitAndReleasesCapacity(t *testing.T) {
 }
 
 func TestWatchReturnsSubscriptionSnapshotBeforeCoalescedLatest(t *testing.T) {
-	owner := &scriptedOwnedForward{
-		projection: ForwardSnapshot{
-			ID:                 ForwardID("manual:operation-add"),
-			Kind:               ForwardManual,
-			RemotePort:         8080,
-			RemoteFamily:       FamilyIPv4,
-			AllocatedLocalPort: 8087,
-			LocalFamilies:      []AddressFamily{FamilyIPv4, FamilyIPv6},
-		},
-		closeStart: make(chan struct{}),
-		closeDone:  make(chan struct{}),
-	}
-	manager := newManager(managerOptions{
-		host:      HostAlias("development"),
-		connector: blockingConnector{started: make(chan HostAlias, 1)},
-		forwardAllocator: scriptedForwardAllocator{
-			requests: make(chan forwardSpec, 1),
-			owner:    owner,
-		},
+	synctest.Test(t, func(t *testing.T) {
+		session := newScriptedDiscoverySession()
+		manager := newManager(managerOptions{
+			host:      HostAlias("development"),
+			connector: oneSessionConnector{session: session},
+		})
+		defer func() {
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			_ = manager.Close(ctx)
+		}()
+		synctest.Wait()
+		stream, err := manager.Watch(t.Context())
+		if err != nil {
+			t.Fatalf("Watch: %v", err)
+		}
+		defer stream.Close()
+		initial, err := stream.Next(t.Context())
+		if err != nil {
+			t.Fatalf("initial Next: %v", err)
+		}
+		session.facts <- ObservationSet{Sequence: 1, Capability: fullTestCapability, Budget: fullObservationBudget, Observations: []ListenerObservation{loopbackListener(8080)}}
+		synctest.Wait()
+		latest, err := stream.Next(t.Context())
+		if err != nil {
+			t.Fatalf("latest Next: %v", err)
+		}
+		if latest.Revision <= initial.Revision {
+			t.Fatalf("latest revision %d did not advance past initial %d", latest.Revision, initial.Revision)
+		}
+		if latest.Host == nil || len(latest.Host.ListenerObservations) != 1 {
+			t.Fatalf("latest Snapshot = %#v, want one observation", latest.Host)
+		}
+		latest.Host.ListenerObservations[0].RemotePort = 9
+		current, err := manager.Snapshot(t.Context())
+		if err != nil {
+			t.Fatalf("Snapshot after caller mutation: %v", err)
+		}
+		if current.Host.ListenerObservations[0].RemotePort != 8080 {
+			t.Fatalf("caller mutation changed canonical Snapshot: %#v", current.Host.ListenerObservations)
+		}
 	})
-	t.Cleanup(func() {
-		owner.release()
-		_ = manager.Close(context.Background())
-	})
-
-	stream, err := manager.Watch(context.Background())
-	if err != nil {
-		t.Fatalf("Watch: %v", err)
-	}
-	t.Cleanup(func() { _ = stream.Close() })
-	if _, err := manager.Execute(context.Background(), AddManualForward{
-		CommandID:  CommandID("operation-add"),
-		Host:       HostAlias("development"),
-		RemotePort: 8080,
-		Family:     FamilyAuto,
-	}); err != nil {
-		t.Fatalf("add Manual Forward: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	initial, err := stream.Next(ctx)
-	if err != nil {
-		t.Fatalf("initial Next: %v", err)
-	}
-	wantInitial := Snapshot{
-		Revision: 0,
-		Host: &HostSnapshot{
-			Alias:                HostAlias("development"),
-			Connection:           ConnectionDisconnected,
-			Discovery:            stoppedDiscovery(),
-			ListenerObservations: []ListenerObservation{},
-			Forwards:             []ForwardSnapshot{},
-		},
-	}
-	if diff := cmp.Diff(initial, wantInitial); diff != "" {
-		t.Fatalf("initial Snapshot mismatch (-got +want):\n%s", diff)
-	}
-
-	latest, err := stream.Next(ctx)
-	if err != nil {
-		t.Fatalf("latest Next: %v", err)
-	}
-	wantLatest := Snapshot{
-		Revision: 1,
-		Host: &HostSnapshot{
-			Alias:                HostAlias("development"),
-			Connection:           ConnectionConnecting,
-			Discovery:            stoppedDiscovery(),
-			ListenerObservations: []ListenerObservation{},
-			Forwards:             []ForwardSnapshot{owner.projection},
-		},
-	}
-	if diff := cmp.Diff(latest, wantLatest); diff != "" {
-		t.Fatalf("latest Snapshot mismatch (-got +want):\n%s", diff)
-	}
-
-	latest.Host.Forwards[0].LocalFamilies[0] = FamilyIPv6
-	current, err := manager.Snapshot(context.Background())
-	if err != nil {
-		t.Fatalf("Snapshot after caller mutation: %v", err)
-	}
-	if diff := cmp.Diff(current, wantLatest); diff != "" {
-		t.Fatalf("caller mutation changed canonical Snapshot (-got +want):\n%s", diff)
-	}
 }

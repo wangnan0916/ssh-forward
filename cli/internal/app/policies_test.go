@@ -1,12 +1,13 @@
 package app
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -319,5 +320,135 @@ func TestMarshalPoliciesPinsEveryConditionField(t *testing.T) {
 		if !strings.Contains(string(encoded), want) {
 			t.Fatalf("Marshaled file missing %q: %s", want, string(encoded))
 		}
+	}
+}
+
+func TestAddAutoForwardPortCreatesFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "policies.jsonc")
+	added, err := AddAutoForwardPort(path, 5173)
+	if err != nil || !added {
+		t.Fatalf("AddAutoForwardPort = %v, %v, want added", added, err)
+	}
+	policies, err := LoadPolicies(path)
+	if err != nil {
+		t.Fatalf("LoadPolicies: %v", err)
+	}
+	want := []core.ForwardingPolicy{{
+		ID:       "port-5173",
+		Priority: 10,
+		Action:   core.PolicyAutoForward,
+		Conditions: []core.PolicyCondition{{
+			RemotePorts: &core.PortRange{From: 5173, To: 5173},
+		}},
+	}}
+	if diff := cmp.Diff(policies, want); diff != "" {
+		t.Fatalf("policies mismatch (-got +want):\n%s", diff)
+	}
+}
+
+func TestAddAutoForwardPortIsIdempotent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policies.jsonc")
+	if _, err := AddAutoForwardPort(path, 5173); err != nil {
+		t.Fatal(err)
+	}
+	added, err := AddAutoForwardPort(path, 5173)
+	if err != nil || added {
+		t.Fatalf("second AddAutoForwardPort = %v, %v, want already present", added, err)
+	}
+	policies, err := LoadPolicies(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(policies) != 1 {
+		t.Fatalf("policies = %#v, want one port rule", policies)
+	}
+}
+
+func TestAddAutoForwardPreservesOtherPolicies(t *testing.T) {
+	path := writePolicyFile(t, `{"schema_version": 1, "policies": [
+	  {"id": "db", "priority": 5, "action": "ignore", "conditions": [{"remote_ports": {"from": 5432, "to": 5432}}]}
+	]}`)
+	if _, err := AddAutoForwardPort(path, 5173); err != nil {
+		t.Fatal(err)
+	}
+	policies, err := LoadPolicies(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(policies) != 2 || policies[0].ID != "db" || policies[1].ID != "port-5173" {
+		t.Fatalf("policies = %#v, want db then port-5173", policies)
+	}
+}
+
+func TestAddAutoForwardDirNormalizesTrailingSlash(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policies.jsonc")
+	added, stored, err := AddAutoForwardDir(path, "/home/dev/src/app/")
+	if err != nil || !added || stored != "/home/dev/src/app" {
+		t.Fatalf("AddAutoForwardDir = %v, %q, %v", added, stored, err)
+	}
+	policies, err := LoadPolicies(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(policies) != 1 || policies[0].ID != "dir-/home/dev/src/app" {
+		t.Fatalf("policies = %#v", policies)
+	}
+	if policies[0].Conditions[0].WorkingDirectoryTree == nil || *policies[0].Conditions[0].WorkingDirectoryTree != "/home/dev/src/app" {
+		t.Fatalf("tree = %#v", policies[0].Conditions)
+	}
+}
+
+func TestAddAutoForwardDirRejectsRelativePath(t *testing.T) {
+	_, _, err := AddAutoForwardDir(filepath.Join(t.TempDir(), "policies.jsonc"), "src/app")
+	if !errors.Is(err, ErrHostDirectory) {
+		t.Fatalf("err = %v, want ErrHostDirectory", err)
+	}
+}
+
+func TestRemoveAutoForwardPortLeavesComplexPolicy(t *testing.T) {
+	path := writePolicyFile(t, `{"schema_version": 1, "policies": [
+	  {"id": "web", "priority": 10, "action": "auto_forward", "conditions": [
+	    {"remote_ports": {"from": 5173, "to": 5173}, "executable": "node"}
+	  ]}
+	]}`)
+	removed, err := RemoveAutoForwardPort(path, 5173)
+	if err != nil || removed {
+		t.Fatalf("RemoveAutoForwardPort = %v, %v, want no simple port rule", removed, err)
+	}
+	policies, err := LoadPolicies(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(policies) != 1 || policies[0].ID != "web" {
+		t.Fatalf("policies = %#v, want the complex rule kept", policies)
+	}
+}
+
+func TestRemoveAutoForwardPortAndDir(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policies.jsonc")
+	if _, err := AddAutoForwardPort(path, 5173); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := AddAutoForwardDir(path, "/srv/app"); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := RemoveAutoForwardPort(path, 5173)
+	if err != nil || !removed {
+		t.Fatalf("RemoveAutoForwardPort = %v, %v", removed, err)
+	}
+	removedDir, stored, err := RemoveAutoForwardDir(path, "/srv/app")
+	if err != nil || !removedDir || stored != "/srv/app" {
+		t.Fatalf("RemoveAutoForwardDir = %v, %q, %v", removedDir, stored, err)
+	}
+	policies, err := LoadPolicies(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(policies) != 0 {
+		t.Fatalf("policies = %#v, want empty after both removes", policies)
+	}
+	removed, err = RemoveAutoForwardPort(path, 5173)
+	if err != nil || removed {
+		t.Fatalf("second RemoveAutoForwardPort = %v, %v, want missing", removed, err)
 	}
 }

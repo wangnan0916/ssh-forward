@@ -36,10 +36,10 @@ func leaf(executable, cwd string) ProcessMetadata {
 	return ProcessMetadata{PID: 1, Executable: executable, WorkingDirectory: cwd}
 }
 
-func TestPolicyNoPoliciesDefaultAsk(t *testing.T) {
+func TestPolicyNoPoliciesDoesNotForward(t *testing.T) {
 	verdict := evaluatePolicies(nil, listenerObservation(8080, nil))
-	if verdict.Action != PolicyAsk || verdict.PolicyID != "" {
-		t.Fatalf("evaluatePolicies(nil) = %+v, want Ask with no policy", verdict)
+	if verdict.Action != "" || verdict.PolicyID != "" {
+		t.Fatalf("evaluatePolicies(nil) = %+v, want no action", verdict)
 	}
 }
 
@@ -56,16 +56,16 @@ func TestPolicyPortRange(t *testing.T) {
 	if verdict := evaluatePolicies(policies, listenerObservation(8500, nil)); verdict.Action != PolicyAutoForward {
 		t.Fatalf("in-range verdict = %+v, want auto_forward", verdict)
 	}
-	if verdict := evaluatePolicies(policies, listenerObservation(9001, nil)); verdict.Action != PolicyAsk {
-		t.Fatalf("out-of-range verdict = %+v, want Ask", verdict)
+	if verdict := evaluatePolicies(policies, listenerObservation(9001, nil)); verdict.Action != "" {
+		t.Fatalf("out-of-range verdict = %+v, want no action", verdict)
 	}
 }
 
 func TestPolicyBindScopeLoopbackOnly(t *testing.T) {
 	policies := []ForwardingPolicy{{ID: "p1", Action: PolicyAutoForward, Conditions: []PolicyCondition{{BindScope: &loopbackScope}}}}
 	wildcard := ListenerObservation{Family: FamilyIPv4, BindScope: BindWildcard, RemotePort: 8080}
-	if verdict := evaluatePolicies(policies, wildcard); verdict.Action != PolicyAsk {
-		t.Fatalf("wildcard verdict = %+v, want Ask (loopback-only policy)", verdict)
+	if verdict := evaluatePolicies(policies, wildcard); verdict.Action != "" {
+		t.Fatalf("wildcard verdict = %+v, want no action (loopback-only policy)", verdict)
 	}
 	if verdict := evaluatePolicies(policies, listenerObservation(8080, nil)); verdict.Action != PolicyAutoForward {
 		t.Fatalf("loopback verdict = %+v, want auto_forward", verdict)
@@ -95,16 +95,16 @@ func TestPolicyExecutableFullPath(t *testing.T) {
 		t.Fatalf("full-path verdict = %+v, want auto_forward", verdict)
 	}
 	other := listenerObservation(8080, []ProcessChain{chain(leaf("/opt/bin/node", "/srv/app"))})
-	if verdict := evaluatePolicies(policies, other); verdict.Action != PolicyAsk {
-		t.Fatalf("different-path verdict = %+v, want Ask", verdict)
+	if verdict := evaluatePolicies(policies, other); verdict.Action != "" {
+		t.Fatalf("different-path verdict = %+v, want no action", verdict)
 	}
 }
 
 func TestPolicyExecutableCaseSensitive(t *testing.T) {
 	policies := []ForwardingPolicy{{ID: "p1", Action: PolicyAutoForward, Conditions: []PolicyCondition{{Executable: strptr("NODE")}}}}
 	observation := listenerObservation(8080, []ProcessChain{chain(leaf("/usr/local/bin/node", "/srv/app"))})
-	if verdict := evaluatePolicies(policies, observation); verdict.Action != PolicyAsk {
-		t.Fatalf("case-mismatch verdict = %+v, want Ask", verdict)
+	if verdict := evaluatePolicies(policies, observation); verdict.Action != "" {
+		t.Fatalf("case-mismatch verdict = %+v, want no action", verdict)
 	}
 }
 
@@ -115,8 +115,8 @@ func TestPolicyWorkingDirectoryTree(t *testing.T) {
 		t.Fatalf("inside-tree verdict = %+v, want auto_forward", verdict)
 	}
 	outside := listenerObservation(8080, []ProcessChain{chain(leaf("/usr/bin/python3", "/srv/apple"))})
-	if verdict := evaluatePolicies(policies, outside); verdict.Action != PolicyAsk {
-		t.Fatalf("component-adjacent verdict = %+v, want Ask (path components)", verdict)
+	if verdict := evaluatePolicies(policies, outside); verdict.Action != "" {
+		t.Fatalf("component-adjacent verdict = %+v, want no action (path components)", verdict)
 	}
 }
 
@@ -131,16 +131,16 @@ func TestPolicyAncestorExecutable(t *testing.T) {
 	}
 	// The leaf itself is not an ancestor; a make leaf must not match.
 	noAncestor := listenerObservation(8080, []ProcessChain{chain(leaf("/usr/bin/node", "/srv/app"))})
-	if verdict := evaluatePolicies(policies, noAncestor); verdict.Action != PolicyAsk {
-		t.Fatalf("no-ancestor verdict = %+v, want Ask", verdict)
+	if verdict := evaluatePolicies(policies, noAncestor); verdict.Action != "" {
+		t.Fatalf("no-ancestor verdict = %+v, want no action", verdict)
 	}
 }
 
 func TestPolicyMissingEvidenceNeverMatches(t *testing.T) {
 	policies := []ForwardingPolicy{{ID: "p1", Action: PolicyAutoForward, Conditions: []PolicyCondition{{Executable: strptr("node")}}}}
 	verdict := evaluatePolicies(policies, listenerObservation(8080, nil))
-	if verdict.Action != PolicyAsk {
-		t.Fatalf("no-evidence verdict = %+v, want Ask", verdict)
+	if verdict.Action != "" {
+		t.Fatalf("no-evidence verdict = %+v, want no action", verdict)
 	}
 }
 
@@ -161,8 +161,8 @@ func TestPolicyConditionsAnd(t *testing.T) {
 	}
 	// One condition broken (the executable) breaks the AND.
 	wrongExe := listenerObservation(8080, []ProcessChain{chain(leaf("/usr/bin/python3", "/srv/app"))})
-	if verdict := evaluatePolicies(policies, wrongExe); verdict.Action != PolicyAsk {
-		t.Fatalf("broken-AND verdict = %+v, want Ask", verdict)
+	if verdict := evaluatePolicies(policies, wrongExe); verdict.Action != "" {
+		t.Fatalf("broken-AND verdict = %+v, want no action", verdict)
 	}
 }
 
@@ -193,14 +193,14 @@ func TestPolicyMultipleProcessesConsistent(t *testing.T) {
 	}
 }
 
-func TestPolicyMultipleProcessesInconsistentAsk(t *testing.T) {
+func TestPolicyMultipleProcessesInconsistentDoesNotMatch(t *testing.T) {
 	policies := []ForwardingPolicy{{ID: "p1", Action: PolicyAutoForward, Conditions: []PolicyCondition{{Executable: strptr("node")}}}}
 	observation := listenerObservation(8080, []ProcessChain{
 		chain(leaf("/usr/bin/node", "/srv/a")),
 		chain(leaf("/usr/bin/python3", "/srv/b")),
 	})
-	if verdict := evaluatePolicies(policies, observation); verdict.Action != PolicyAsk {
-		t.Fatalf("inconsistent verdict = %+v, want Ask", verdict)
+	if verdict := evaluatePolicies(policies, observation); verdict.Action != "" {
+		t.Fatalf("inconsistent verdict = %+v, want no action", verdict)
 	}
 }
 

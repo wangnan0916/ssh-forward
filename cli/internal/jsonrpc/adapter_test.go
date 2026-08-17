@@ -15,22 +15,14 @@ import (
 	"testing"
 	"time"
 
-	"ssh-forward/cli/internal/core"
-	managerjsonrpc "ssh-forward/cli/internal/jsonrpc"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	managerjsonrpc "github.com/wangnan0916/ssh-forward/cli/internal/jsonrpc"
 
 	"github.com/google/go-cmp/cmp"
 )
 
 type snapshotManager struct {
 	snapshot core.Snapshot
-	execute  func(context.Context, core.Command) (core.Outcome, error)
-}
-
-func (m *snapshotManager) Execute(ctx context.Context, command core.Command) (core.Outcome, error) {
-	if m.execute == nil {
-		return core.Outcome{}, errors.New("unexpected Execute call")
-	}
-	return m.execute(ctx, command)
 }
 
 func (m *snapshotManager) Snapshot(context.Context) (core.Snapshot, error) {
@@ -47,10 +39,6 @@ func (*snapshotManager) Close(context.Context) error {
 
 type blockingManager struct {
 	started chan struct{}
-}
-
-func (*blockingManager) Execute(context.Context, core.Command) (core.Outcome, error) {
-	return core.Outcome{}, errors.New("unexpected Execute call")
 }
 
 func (m *blockingManager) Snapshot(ctx context.Context) (core.Snapshot, error) {
@@ -151,8 +139,8 @@ func TestServeNegotiatesHello(t *testing.T) {
 
 func TestSharedGoldenTranscripts(t *testing.T) {
 	forward := core.ForwardSnapshot{
-		ID:                 core.ForwardID("manual:operation-1"),
-		Kind:               core.ForwardManual,
+		ID:                 core.ForwardID("managed:ipv4:loopback:8080"),
+		Kind:               core.ForwardManaged,
 		RemotePort:         8080,
 		RemoteFamily:       core.FamilyIPv4,
 		AllocatedLocalPort: 8081,
@@ -164,41 +152,6 @@ func TestSharedGoldenTranscripts(t *testing.T) {
 	}{
 		{name: "hello-success.jsonl", manager: core.NewManager()},
 		{name: "snapshot-empty.jsonl", manager: core.NewManager()},
-		{
-			name: "manual-forward-add.jsonl",
-			manager: &snapshotManager{execute: func(context.Context, core.Command) (core.Outcome, error) {
-				return core.Outcome{Kind: core.OutcomeForwardAdded, Revision: 7, Forward: forward}, nil
-			}},
-		},
-		{
-			name: "manual-forward-remove.jsonl",
-			manager: &snapshotManager{execute: func(context.Context, core.Command) (core.Outcome, error) {
-				return core.Outcome{Kind: core.OutcomeForwardRemoved, Revision: 8, Forward: forward}, nil
-			}},
-		},
-		{
-			name: "policy-approve.jsonl",
-			manager: &snapshotManager{execute: func(context.Context, core.Command) (core.Outcome, error) {
-				return core.Outcome{
-					Kind:     core.OutcomeApprovalRecorded,
-					Revision: 9,
-					Forward: core.ForwardSnapshot{
-						ID:                 core.ForwardID("managed:ipv4:loopback:8080"),
-						Kind:               core.ForwardManaged,
-						RemotePort:         8080,
-						RemoteFamily:       core.FamilyIPv4,
-						AllocatedLocalPort: 8080,
-						LocalFamilies:      []core.AddressFamily{core.FamilyIPv4},
-					},
-				}, nil
-			}},
-		},
-		{
-			name: "policy-suppress.jsonl",
-			manager: &snapshotManager{execute: func(context.Context, core.Command) (core.Outcome, error) {
-				return core.Outcome{Kind: core.OutcomeSuppressionRecorded, Revision: 10}, nil
-			}},
-		},
 		{
 			name: "snapshot-discovery.jsonl",
 			manager: &snapshotManager{
@@ -228,7 +181,7 @@ func TestSharedGoldenTranscripts(t *testing.T) {
 			},
 		},
 		{
-			name: "snapshot-manual-forward.jsonl",
+			name: "snapshot-managed-forward.jsonl",
 			manager: &snapshotManager{
 				snapshot: core.Snapshot{
 					Revision: 9,
@@ -332,101 +285,6 @@ func TestServeRejectsBuiltinMethodBeforeHello(t *testing.T) {
 	assertConnectionClosed(t, session)
 }
 
-func TestServeExecutesAddManualForward(t *testing.T) {
-	wantCommand := core.AddManualForward{
-		CommandID:  core.CommandID("operation-1"),
-		Host:       core.HostAlias("development"),
-		RemotePort: 8080,
-		Family:     core.FamilyAuto,
-	}
-	manager := &snapshotManager{
-		execute: func(_ context.Context, command core.Command) (core.Outcome, error) {
-			if !cmp.Equal(command, wantCommand) {
-				return core.Outcome{}, fmt.Errorf("command mismatch (-got +want):\n%s", cmp.Diff(command, wantCommand))
-			}
-			return core.Outcome{
-				Kind:     core.OutcomeForwardAdded,
-				Revision: 7,
-				Forward: core.ForwardSnapshot{
-					ID:                 core.ForwardID("manual:operation-1"),
-					Kind:               core.ForwardManual,
-					RemotePort:         8080,
-					RemoteFamily:       core.FamilyIPv4,
-					AllocatedLocalPort: 8081,
-					LocalFamilies:      []core.AddressFamily{core.FamilyIPv4, core.FamilyIPv6},
-				},
-			}, nil
-		},
-	}
-	session := newTestSessionWithManager(t, manager)
-	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
-	response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.execute","params":{"command":{"kind":"manual_forward.add","operation_id":"operation-1","host":"development","remote_port":8080,"family":"auto"}}}`)
-	want := `{"jsonrpc":"2.0","id":"2","result":{"outcome":{"kind":"forward_added","revision":7,"forward":{"id":"manual:operation-1","kind":"manual","remote_port":8080,"remote_family":"ipv4","allocated_local_port":8081,"local_families":["ipv4","ipv6"]}}}}`
-	assertJSONEqual(t, response, []byte(want))
-}
-
-func TestServeExecutesRemoveForward(t *testing.T) {
-	wantCommand := core.RemoveForward{
-		CommandID: core.CommandID("operation-2"),
-		ForwardID: core.ForwardID("manual:operation-1"),
-	}
-	manager := &snapshotManager{
-		execute: func(_ context.Context, command core.Command) (core.Outcome, error) {
-			if !cmp.Equal(command, wantCommand) {
-				return core.Outcome{}, fmt.Errorf("command mismatch (-got +want):\n%s", cmp.Diff(command, wantCommand))
-			}
-			return core.Outcome{
-				Kind:     core.OutcomeForwardRemoved,
-				Revision: 8,
-				Forward: core.ForwardSnapshot{
-					ID:                 core.ForwardID("manual:operation-1"),
-					Kind:               core.ForwardManual,
-					RemotePort:         8080,
-					RemoteFamily:       core.FamilyIPv4,
-					AllocatedLocalPort: 8081,
-					LocalFamilies:      []core.AddressFamily{core.FamilyIPv4, core.FamilyIPv6},
-				},
-			}, nil
-		},
-	}
-	session := newTestSessionWithManager(t, manager)
-	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
-	response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.execute","params":{"command":{"kind":"manual_forward.remove","operation_id":"operation-2","forward_id":"manual:operation-1"}}}`)
-	want := `{"jsonrpc":"2.0","id":"2","result":{"outcome":{"kind":"forward_removed","revision":8,"forward":{"id":"manual:operation-1","kind":"manual","remote_port":8080,"remote_family":"ipv4","allocated_local_port":8081,"local_families":["ipv4","ipv6"]}}}}`
-	assertJSONEqual(t, response, []byte(want))
-}
-
-func TestServeRejectsInvalidManualForwardParameters(t *testing.T) {
-	requests := []string{
-		`{"kind":"manual_forward.add","operation_id":"operation-1","host":"development","remote_port":0,"family":"auto"}`,
-		`{"kind":"manual_forward.add","operation_id":"operation-1","host":"development","remote_port":8080,"family":"unknown"}`,
-		`{"kind":"manual_forward.add","operation_id":"operation-1","host":"","remote_port":8080,"family":"auto"}`,
-		fmt.Sprintf(`{"kind":"manual_forward.add","operation_id":"%s","host":"development","remote_port":8080,"family":"auto"}`, strings.Repeat("x", 129)),
-		fmt.Sprintf(`{"kind":"manual_forward.add","operation_id":"operation-1","host":"%s","remote_port":8080,"family":"auto"}`, strings.Repeat("h", 256)),
-		fmt.Sprintf(`{"kind":"manual_forward.remove","operation_id":"operation-2","forward_id":"%s"}`, strings.Repeat("f", 257)),
-	}
-	for _, command := range requests {
-		session := newTestSession(t)
-		session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
-		response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.execute","params":{"command":`+command+`}}`)
-		want := `{"jsonrpc":"2.0","id":"2","error":{"code":-32602,"message":"invalid parameters","data":{"kind":"invalid_parameters","retryable":false}}}`
-		assertJSONEqual(t, response, []byte(want))
-	}
-}
-
-func TestServeMapsTypedManagerError(t *testing.T) {
-	manager := &snapshotManager{
-		execute: func(context.Context, core.Command) (core.Outcome, error) {
-			return core.Outcome{}, &core.DomainError{Kind: core.ErrorUnknownHost}
-		},
-	}
-	session := newTestSessionWithManager(t, manager)
-	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
-	response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.execute","params":{"command":{"kind":"manual_forward.add","operation_id":"operation-1","host":"unknown","remote_port":8080,"family":"auto"}}}`)
-	want := `{"jsonrpc":"2.0","id":"2","error":{"code":-32010,"message":"unknown Development Host","data":{"kind":"unknown_host","retryable":false}}}`
-	assertJSONEqual(t, response, []byte(want))
-}
-
 func TestServeReturnsManagerSnapshotAfterHello(t *testing.T) {
 	manager := &snapshotManager{
 		snapshot: core.Snapshot{Revision: 42},
@@ -482,8 +340,8 @@ func discoveryFixtureSnapshot() core.Snapshot {
 func TestServeReturnsCompleteManagerSnapshot(t *testing.T) {
 	snapshot := discoveryFixtureSnapshot()
 	snapshot.Host.Forwards = []core.ForwardSnapshot{{
-		ID:                 core.ForwardID("manual:operation-1"),
-		Kind:               core.ForwardManual,
+		ID:                 core.ForwardID("managed:ipv4:loopback:8080"),
+		Kind:               core.ForwardManaged,
 		RemotePort:         8080,
 		RemoteFamily:       core.FamilyIPv4,
 		AllocatedLocalPort: 8081,
@@ -493,103 +351,7 @@ func TestServeReturnsCompleteManagerSnapshot(t *testing.T) {
 	session := newTestSessionWithManager(t, manager)
 	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
 	response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.snapshot","params":{"scope":{"kind":"all"}}}`)
-	want := `{"jsonrpc":"2.0","id":"2","result":{"snapshot":{"revision":9,"host":{"alias":"development","connection":"connected","discovery":{"state":"degraded","capability":{"remote_listeners":"full","socket_identity":"full","process_metadata":"partial"},"baseline_established":true,"scanner_version":1,"scanner_checksum":"abc123","diagnostic":"process_metadata_partial"},"listener_observations":[{"family":"ipv4","bind_scope":"loopback","remote_port":8080,"socket_identities":["socket:one"],"process_chains":[{"processes":[{"pid":42,"executable":"/usr/bin/python3","working_directory":"/workspace","arguments":["python3","app.py"]}]}]}],"listener_lifetimes":[{"family":"ipv4","bind_scope":"loopback","remote_port":8080,"status":"continuous"}],"forwards":[{"id":"manual:operation-1","kind":"manual","remote_port":8080,"remote_family":"ipv4","allocated_local_port":8081,"local_families":["ipv4","ipv6"]}]}}}}`
-	assertJSONEqual(t, response, []byte(want))
-}
-
-func TestServeExecutesApproveListener(t *testing.T) {
-	wantCommand := core.ApproveListener{
-		CommandID:  core.CommandID("operation-3"),
-		Host:       core.HostAlias("development"),
-		RemotePort: 8080,
-		Family:     core.FamilyIPv4,
-	}
-	manager := &snapshotManager{
-		execute: func(_ context.Context, command core.Command) (core.Outcome, error) {
-			if !cmp.Equal(command, wantCommand) {
-				return core.Outcome{}, fmt.Errorf("command mismatch (-got +want):\n%s", cmp.Diff(command, wantCommand))
-			}
-			return core.Outcome{
-				Kind:     core.OutcomeApprovalRecorded,
-				Revision: 9,
-				Forward: core.ForwardSnapshot{
-					ID:                 core.ForwardID("managed:ipv4:loopback:8080"),
-					Kind:               core.ForwardManaged,
-					RemotePort:         8080,
-					RemoteFamily:       core.FamilyIPv4,
-					AllocatedLocalPort: 8080,
-					LocalFamilies:      []core.AddressFamily{core.FamilyIPv4},
-				},
-			}, nil
-		},
-	}
-	session := newTestSessionWithManager(t, manager)
-	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
-	response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.execute","params":{"command":{"kind":"policy.approve","operation_id":"operation-3","host":"development","remote_port":8080,"family":"ipv4"}}}`)
-	want := `{"jsonrpc":"2.0","id":"2","result":{"outcome":{"kind":"approval_recorded","revision":9,"forward":{"id":"managed:ipv4:loopback:8080","kind":"managed","remote_port":8080,"remote_family":"ipv4","allocated_local_port":8080,"local_families":["ipv4"]}}}}`
-	assertJSONEqual(t, response, []byte(want))
-}
-
-func TestServeExecutesSuppressListener(t *testing.T) {
-	wantCommand := core.SuppressListener{
-		CommandID:  core.CommandID("operation-4"),
-		Host:       core.HostAlias("development"),
-		RemotePort: 8080,
-	}
-	manager := &snapshotManager{
-		execute: func(_ context.Context, command core.Command) (core.Outcome, error) {
-			if !cmp.Equal(command, wantCommand) {
-				return core.Outcome{}, fmt.Errorf("command mismatch (-got +want):\n%s", cmp.Diff(command, wantCommand))
-			}
-			return core.Outcome{Kind: core.OutcomeSuppressionRecorded, Revision: 10}, nil
-		},
-	}
-	session := newTestSessionWithManager(t, manager)
-	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
-	response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.execute","params":{"command":{"kind":"policy.suppress","operation_id":"operation-4","host":"development","remote_port":8080}}}`)
-	want := `{"jsonrpc":"2.0","id":"2","result":{"outcome":{"kind":"suppression_recorded","revision":10,"forward":{"id":"","kind":"","remote_port":0,"remote_family":"","allocated_local_port":0,"local_families":[]}}}}`
-	assertJSONEqual(t, response, []byte(want))
-}
-
-func TestServeRejectsInvalidListenerDecisionParameters(t *testing.T) {
-	requests := []string{
-		`{"kind":"policy.approve","operation_id":"operation-3","host":"development","remote_port":0,"family":"ipv4"}`,
-		`{"kind":"policy.approve","operation_id":"operation-3","host":"development","remote_port":8080,"family":"unknown"}`,
-		`{"kind":"policy.approve","operation_id":"operation-3","host":"","remote_port":8080}`,
-		fmt.Sprintf(`{"kind":"policy.suppress","operation_id":"%s","host":"development","remote_port":8080}`, strings.Repeat("x", 129)),
-	}
-	for _, command := range requests {
-		session := newTestSession(t)
-		session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
-		response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.execute","params":{"command":`+command+`}}`)
-		want := `{"jsonrpc":"2.0","id":"2","error":{"code":-32602,"message":"invalid parameters","data":{"kind":"invalid_parameters","retryable":false}}}`
-		assertJSONEqual(t, response, []byte(want))
-	}
-}
-
-func TestServeMapsListenerNotFound(t *testing.T) {
-	manager := &snapshotManager{
-		execute: func(context.Context, core.Command) (core.Outcome, error) {
-			return core.Outcome{}, &core.DomainError{Kind: core.ErrorListenerNotFound}
-		},
-	}
-	session := newTestSessionWithManager(t, manager)
-	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
-	response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.execute","params":{"command":{"kind":"policy.approve","operation_id":"operation-3","host":"development","remote_port":9999}}}`)
-	want := `{"jsonrpc":"2.0","id":"2","error":{"code":-32016,"message":"Listener was not found","data":{"kind":"listener_not_found","retryable":false}}}`
-	assertJSONEqual(t, response, []byte(want))
-}
-
-func TestServeMarshalsAskListeners(t *testing.T) {
-	snapshot := discoveryFixtureSnapshot()
-	snapshot.Host.AskListeners = []core.ListenerAskSnapshot{
-		{Family: core.FamilyIPv6, BindScope: core.BindLoopback, RemotePort: 9090},
-	}
-	manager := &snapshotManager{snapshot: snapshot}
-	session := newTestSessionWithManager(t, manager)
-	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
-	response := session.exchange(t, `{"jsonrpc":"2.0","id":"2","method":"manager.snapshot","params":{"scope":{"kind":"all"}}}`)
-	want := `{"jsonrpc":"2.0","id":"2","result":{"snapshot":{"revision":9,"host":{"alias":"development","connection":"connected","discovery":{"state":"degraded","capability":{"remote_listeners":"full","socket_identity":"full","process_metadata":"partial"},"baseline_established":true,"scanner_version":1,"scanner_checksum":"abc123","diagnostic":"process_metadata_partial"},"listener_observations":[{"family":"ipv4","bind_scope":"loopback","remote_port":8080,"socket_identities":["socket:one"],"process_chains":[{"processes":[{"pid":42,"executable":"/usr/bin/python3","working_directory":"/workspace","arguments":["python3","app.py"]}]}]}],"listener_lifetimes":[{"family":"ipv4","bind_scope":"loopback","remote_port":8080,"status":"continuous"}],"ask_listeners":[{"family":"ipv6","bind_scope":"loopback","remote_port":9090}],"forwards":[]}}}}`
+	want := `{"jsonrpc":"2.0","id":"2","result":{"snapshot":{"revision":9,"host":{"alias":"development","connection":"connected","discovery":{"state":"degraded","capability":{"remote_listeners":"full","socket_identity":"full","process_metadata":"partial"},"baseline_established":true,"scanner_version":1,"scanner_checksum":"abc123","diagnostic":"process_metadata_partial"},"listener_observations":[{"family":"ipv4","bind_scope":"loopback","remote_port":8080,"socket_identities":["socket:one"],"process_chains":[{"processes":[{"pid":42,"executable":"/usr/bin/python3","working_directory":"/workspace","arguments":["python3","app.py"]}]}]}],"listener_lifetimes":[{"family":"ipv4","bind_scope":"loopback","remote_port":8080,"status":"continuous"}],"forwards":[{"id":"managed:ipv4:loopback:8080","kind":"managed","remote_port":8080,"remote_family":"ipv4","allocated_local_port":8081,"local_families":["ipv4","ipv6"]}]}}}}`
 	assertJSONEqual(t, response, []byte(want))
 }
 

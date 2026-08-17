@@ -2,6 +2,8 @@
 
 This context describes how eligible TCP listeners on a remote development machine become reachable on a user's local machine, preferring the same port.
 
+Development path: **CLI** (current) → **TUI** (after the CLI is ready) → **macOS desktop** (after the TUI is ready). Do not start a later surface early. Details: [docs/product/mvp.md](docs/product/mvp.md).
+
 ## Language
 
 **Development Host**:
@@ -49,7 +51,7 @@ The live, dedicated SSH connection carrying Active Forwards for one Development 
 _Avoid_: Terminal session, editor session
 
 **Discovery State**:
-The current health of Remote Listener observation for one Development Host, independent of whether its Forwarding Session can still carry Manual Forwards.
+The current health of Remote Listener observation for one Development Host, independent of whether its Forwarding Session can still carry traffic.
 _Avoid_: Connection State, Forwarding Session State
 
 **Discovery Capability**:
@@ -72,14 +74,6 @@ _Avoid_: Saved state, Forwarding Policy
 The period during which a Remote Listener retains continuity across successful observations, including a short disappearance grace period. It ends when the endpoint disappears or all previously observed Socket Identities are replaced, even if the same remote port remains occupied.
 _Avoid_: Process lifetime, Forwarding Session
 
-**One-time Approval**:
-A user's decision to create a Managed Forward for the current Listener Lifetime without saving a Forwarding Policy.
-_Avoid_: Manual Forward, Auto-forward policy
-
-**One-time Suppression**:
-A user's decision not to ask again during the current Listener Lifetime, without saving an `Ignore` policy.
-_Avoid_: Ignore policy, permanent exclusion
-
 **Listener Process**:
 Any process observed holding a socket associated with a Remote Listener. A listener may have zero, one, or multiple Listener Processes.
 _Avoid_: Service, unique owner
@@ -97,16 +91,12 @@ The Listener Observation facts used to explain why a Forwarding Policy matched, 
 _Avoid_: Policy, Process Metadata
 
 **Forwarding Policy**:
-A saved, prioritized rule whose conditions evaluate a Listener Observation and yield `Auto-forward`, `Ask`, or `Ignore`. Conditions within a policy all must match; no matching policy defaults to `Ask`.
+A saved, prioritized rule whose conditions evaluate a Listener Observation and yield `Auto-forward` or `Ignore`. Conditions within a policy all must match; no matching policy leaves the listener unforwarded.
 _Avoid_: Forward, Active Forward
 
 **Managed Forward**:
-A Forward created from a Listener Observation by a Forwarding Policy or One-time Approval. Its lifetime is reconciled with the corresponding Remote Listener.
-_Avoid_: Manual Forward, permanent rule
-
-**Manual Forward**:
-A Forward explicitly requested outside policy reconciliation, optionally for a remote loopback port that has not been observed. It remains until the user removes it or its Forwarding Session ends.
-_Avoid_: Managed Forward, saved policy, arbitrary remote tunnel
+A Forward created from a Listener Observation by a Forwarding Policy. Its lifetime is reconciled with the corresponding Remote Listener.
+_Avoid_: remembered rule, permanent tunnel
 
 **Local Port Conflict**:
 The state in which no permitted Local Endpoint can be allocated because strict same-port allocation was required or the bounded fallback range was exhausted.

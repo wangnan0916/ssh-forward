@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"ssh-forward/cli/internal/proxy"
+	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
 )
 
 type unusedDialer struct{}

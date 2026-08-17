@@ -1,4 +1,4 @@
-module ssh-forward/cli
+module github.com/wangnan0916/ssh-forward/cli
 
 go 1.26.6
 

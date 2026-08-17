@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"ssh-forward/cli/internal/jsonrpc"
+	"github.com/wangnan0916/ssh-forward/cli/internal/jsonrpc"
 )
 
 // runWatch streams the snapshot sequence until the context ends. Human

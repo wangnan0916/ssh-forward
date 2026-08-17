@@ -1,4 +1,0 @@
-{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}
-{"jsonrpc":"2.0","id":"1","result":{"protocol":{"major":1,"minor":0},"capabilities":[],"max_frame_bytes":1048576}}
-{"jsonrpc":"2.0","id":"2","method":"manager.execute","params":{"command":{"kind":"manual_forward.add","operation_id":"operation-1","host":"development","remote_port":8080,"family":"auto"}}}
-{"jsonrpc":"2.0","id":"2","result":{"outcome":{"kind":"forward_added","revision":7,"forward":{"id":"manual:operation-1","kind":"manual","remote_port":8080,"remote_family":"ipv4","allocated_local_port":8081,"local_families":["ipv4","ipv6"]}}}}

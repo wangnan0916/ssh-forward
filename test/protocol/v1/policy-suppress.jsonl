@@ -1,4 +1,0 @@
-{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}
-{"jsonrpc":"2.0","id":"1","result":{"protocol":{"major":1,"minor":0},"capabilities":[],"max_frame_bytes":1048576}}
-{"jsonrpc":"2.0","id":"2","method":"manager.execute","params":{"command":{"kind":"policy.suppress","operation_id":"operation-4","host":"development","remote_port":8080}}}
-{"jsonrpc":"2.0","id":"2","result":{"outcome":{"kind":"suppression_recorded","revision":10,"forward":{"id":"","kind":"","remote_port":0,"remote_family":"","allocated_local_port":0,"local_families":[]}}}}

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 type watchErrorManager struct {

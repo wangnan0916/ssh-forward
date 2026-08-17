@@ -6,23 +6,28 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
-	"ssh-forward/cli/internal/core"
-	"ssh-forward/cli/internal/openssh"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/openssh"
 
 	"github.com/google/go-cmp/cmp"
 )
 
 // TestNewManagerWiresPolicySource pins the composition-root seam (slice 5):
-// the policy source handed to NewManager reaches the Manager's snapshot
-// derivation, so a file-backed source changes the Ask list. The Manager is
-// inert here — no command runs, so nothing dials a Development Host.
+// the policy source handed to NewManager is the same file-backed set the
+// Manager will evaluate. Connection starts at construction, so this test
+// uses an isolated SSH config that cannot reach a real host.
 func TestNewManagerWiresPolicySource(t *testing.T) {
 	sshPath, err := exec.LookPath("ssh")
 	if err != nil {
 		t.Skipf("no ssh in PATH: %v", err)
 	}
-	adapter, err := openssh.New(openssh.Options{Executable: sshPath})
+	configPath := filepath.Join(t.TempDir(), "ssh_config")
+	if err := os.WriteFile(configPath, []byte("Host development\n    HostName 127.0.0.1\n    Port 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	adapter, err := openssh.New(openssh.Options{Executable: sshPath, ConfigFile: configPath, ReadyTimeout: 50 * time.Millisecond})
 	if err != nil {
 		t.Fatalf("openssh.New: %v", err)
 	}

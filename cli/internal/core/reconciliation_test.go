@@ -87,7 +87,7 @@ func (f *simpleOwnedForward) Close(context.Context) error { return nil }
 
 // reconcileHarness wires a Manager with scripted discovery, a mutable
 // policy source, an auto allocator, and the injected clock. The actor is
-// armed at construction (in the real product the first command does that).
+// armed at construction.
 type reconcileHarness struct {
 	t        *testing.T
 	manager  *manager
@@ -196,23 +196,9 @@ func managedForwards(snapshot Snapshot) []ForwardSnapshot {
 	return managed
 }
 
-func askPorts(snapshot Snapshot) map[uint16]bool {
-	ports := make(map[uint16]bool)
-	if snapshot.Host == nil {
-		return ports
-	}
-	for _, listener := range snapshot.Host.AskListeners {
-		ports[listener.RemotePort] = true
-	}
-	return ports
-}
-
 func TestManagedForwardIdentityRoundTripsThroughSpec(t *testing.T) {
 	key := remoteListenerKey{family: FamilyIPv4, scope: BindLoopback, port: 8080}
-	spec, err := managedForwardSpec(key)
-	if err != nil {
-		t.Fatalf("managedForwardSpec: %v", err)
-	}
+	spec := managedForwardSpec(key)
 	if spec.Kind != ForwardManaged || spec.PreferredLocalPort != 8080 {
 		t.Fatalf("spec = %+v, want managed kind on port 8080", spec)
 	}
@@ -281,7 +267,7 @@ func (h *reconcileHarness) currentSnapshot() Snapshot {
 	return snapshot
 }
 
-func TestIgnorePolicyNeverCreatesAndNeverAsks(t *testing.T) {
+func TestIgnorePolicyNeverCreates(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := newReconcileHarness(t, []ForwardingPolicy{
 			{ID: "p1", Action: PolicyIgnore, Conditions: []PolicyCondition{{RemotePorts: policyPort(9000)}}},
@@ -295,103 +281,6 @@ func TestIgnorePolicyNeverCreatesAndNeverAsks(t *testing.T) {
 		if managed := managedForwards(snapshot); len(managed) != 0 {
 			t.Fatalf("Ignore policy created a Managed Forward: %+v", managed)
 		}
-		if ports := askPorts(snapshot); ports[9000] {
-			t.Fatalf("Ignore policy left port 9000 in Ask: %+v", ports)
-		}
-	})
-}
-
-func TestDefaultAskAppearsPostBaseline(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		h := newReconcileHarness(t, nil)
-		defer closeReconciliation(t, h)
-		// The baseline generation's own Listeners are pre-baseline and never
-		// Ask; the first listener observed after the baseline enters Ask.
-		h.push(loopbackListener(8080))
-		h.waitFor("baseline settles", func(s Snapshot) bool {
-			return s.Host != nil && s.Host.Discovery.BaselineEstablished
-		})
-		h.push(loopbackListener(8081))
-		snapshot := h.waitFor("Ask appears", func(s Snapshot) bool {
-			return askPorts(s)[8081]
-		})
-		if ports := askPorts(snapshot); ports[8080] {
-			t.Fatalf("pre-baseline listener entered Ask: %+v", ports)
-		}
-		if len(snapshot.Host.AskListeners) != 1 {
-			t.Fatalf("AskListeners = %+v, want exactly port 8081", snapshot.Host.AskListeners)
-		}
-	})
-}
-
-func TestPreBaselineListenerNeverAsks(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		h := newReconcileHarness(t, nil)
-		defer closeReconciliation(t, h)
-		h.push(loopbackListener(8080))
-		h.push(loopbackListener(8080))
-		snapshot := h.waitFor("listener settles post-baseline", func(s Snapshot) bool {
-			return s.Host != nil && s.Host.Discovery.BaselineEstablished && len(s.Host.ListenerLifetimes) == 1
-		})
-		if ports := askPorts(snapshot); ports[8080] {
-			t.Fatalf("pre-baseline listener entered Ask: %+v", ports)
-		}
-		// A listener first observed after the baseline does ask.
-		h.push(loopbackListener(8081))
-		snapshot = h.waitFor("new listener asks", func(s Snapshot) bool {
-			return askPorts(s)[8081]
-		})
-		if ports := askPorts(snapshot); ports[8080] {
-			t.Fatalf("pre-baseline listener still asks: %+v", ports)
-		}
-	})
-}
-
-func TestApprovalCreatesImmediatelyAndRetiresOnEnded(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		h := newReconcileHarness(t, nil)
-		defer closeReconciliation(t, h)
-		h.push(loopbackListener(8000)) // baseline generation, pre-baseline
-		h.waitFor("baseline settles", func(s Snapshot) bool {
-			return s.Host != nil && s.Host.Discovery.BaselineEstablished
-		})
-		h.push(loopbackListener(8080))
-		h.waitFor("Ask appears", func(s Snapshot) bool { return askPorts(s)[8080] })
-
-		outcome, err := h.manager.Execute(context.Background(), ApproveListener{
-			CommandID:  CommandID("approve-1"),
-			Host:       HostAlias("development"),
-			RemotePort: 8080,
-		})
-		if err != nil {
-			t.Fatalf("approve: %v", err)
-		}
-		if outcome.Kind != OutcomeApprovalRecorded {
-			t.Fatalf("approve outcome = %q, want approval_recorded", outcome.Kind)
-		}
-		snapshot := h.waitFor("Managed Forward appears", func(s Snapshot) bool {
-			return len(managedForwards(s)) == 1
-		})
-		managed := managedForwards(snapshot)
-		if managed[0].RemotePort != 8080 {
-			t.Fatalf("approved Managed Forward = %+v, want port 8080", managed[0])
-		}
-		if ports := askPorts(snapshot); ports[8080] {
-			t.Fatalf("approved listener still asks: %+v", ports)
-		}
-
-		// The listener disappears for graceCycles+1 observations; the ended
-		// verdict retires the One-time Approval and removes the forward.
-		h.push()
-		h.push()
-		h.push()
-		h.waitFor("lifetime enters grace", func(s Snapshot) bool {
-			return lifetimeStatus(s, 8080) == LifetimeGrace
-		})
-		h.push()
-		h.waitFor("lifetime ends and forward is removed", func(s Snapshot) bool {
-			return lifetimeStatus(s, 8080) == LifetimeEnded && len(managedForwards(s)) == 0
-		})
 	})
 }
 
@@ -405,75 +294,6 @@ func lifetimeStatus(snapshot Snapshot, port uint16) LifetimeStatus {
 		}
 	}
 	return ""
-}
-
-func TestSuppressionHidesAskAndRetiresWithLifetime(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		h := newReconcileHarness(t, nil)
-		defer closeReconciliation(t, h)
-		h.push(loopbackListener(8000)) // baseline generation, pre-baseline
-		h.waitFor("baseline settles", func(s Snapshot) bool {
-			return s.Host != nil && s.Host.Discovery.BaselineEstablished
-		})
-		h.push(loopbackListener(8080))
-		h.waitFor("Ask appears", func(s Snapshot) bool { return askPorts(s)[8080] })
-
-		if _, err := h.manager.Execute(context.Background(), SuppressListener{
-			CommandID:  CommandID("suppress-1"),
-			Host:       HostAlias("development"),
-			RemotePort: 8080,
-		}); err != nil {
-			t.Fatalf("suppress: %v", err)
-		}
-		h.push(loopbackListener(8080))
-		h.waitFor("suppressed listener no longer asks", func(s Snapshot) bool {
-			return s.Host != nil && !askPorts(s)[8080]
-		})
-
-		// The suppression lasts one Listener Lifetime: after the listener ends,
-		// a new lifetime on the same port asks again.
-		h.push()
-		h.push()
-		h.push()
-		h.push()
-		h.waitFor("lifetime ends", func(s Snapshot) bool { return lifetimeStatus(s, 8080) == LifetimeEnded })
-		h.push(loopbackListener(8080))
-		h.waitFor("new lifetime asks again", func(s Snapshot) bool {
-			return askPorts(s)[8080]
-		})
-	})
-}
-
-func TestPolicyEditChangingOnlyAskVerdictsRefreshesAsk(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		h := newReconcileHarness(t, nil)
-		defer closeReconciliation(t, h)
-		h.push(loopbackListener(8000)) // baseline generation, pre-baseline
-		h.waitFor("baseline settles", func(s Snapshot) bool {
-			return s.Host != nil && s.Host.Discovery.BaselineEstablished
-		})
-		h.push(loopbackListener(8080))
-		h.waitFor("Ask appears", func(s Snapshot) bool { return askPorts(s)[8080] })
-
-		// The edit changes only the Ask verdict: no policy touches any
-		// forward, so the generation's delta is empty — but the Ask list must
-		// still follow the file (the policy cache commits before the delta
-		// check, and a changed set republishes even without a delta).
-		h.policies.set([]ForwardingPolicy{
-			{ID: "p1", Action: PolicyIgnore, Conditions: []PolicyCondition{{RemotePorts: policyPort(8080)}}},
-		})
-		h.push(loopbackListener(8080))
-		h.waitFor("Ask list follows the edited policy", func(s Snapshot) bool {
-			return !askPorts(s)[8080]
-		})
-
-		// And the reverse: an edit back to default Ask restores the Ask entry.
-		h.policies.set(nil)
-		h.push(loopbackListener(8080))
-		h.waitFor("Ask list follows the reverted policy", func(s Snapshot) bool {
-			return askPorts(s)[8080]
-		})
-	})
 }
 
 func TestPolicyMismatchRemovalRequiresTwoObservationsAndFiveSeconds(t *testing.T) {
@@ -530,45 +350,6 @@ func TestDisappearanceRemovesManagedForward(t *testing.T) {
 		h.clock.advance(5 * time.Second)
 		h.push()
 		h.waitFor("Managed Forward removed", func(s Snapshot) bool { return len(managedForwards(s)) == 0 })
-	})
-}
-
-func TestManualForwardNotReconciled(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		h := newReconcileHarness(t, []ForwardingPolicy{
-			{ID: "p1", Action: PolicyAutoForward, Conditions: []PolicyCondition{{RemotePorts: policyPort(8080)}}},
-		})
-		defer closeReconciliation(t, h)
-		if _, err := h.manager.Execute(context.Background(), AddManualForward{
-			CommandID:  CommandID("manual-1"),
-			Host:       HostAlias("development"),
-			RemotePort: 8080,
-			Family:     FamilyAuto,
-		}); err != nil {
-			t.Fatalf("add Manual Forward: %v", err)
-		}
-		// The listener disappears entirely; policy would remove a Managed
-		// Forward, but the Manual Forward must survive reconciliation.
-		h.push(loopbackListener(8080))
-		h.push(loopbackListener(8080))
-		h.waitFor("observations settle", func(s Snapshot) bool {
-			return s.Host != nil && len(s.Host.ListenerLifetimes) == 1
-		})
-		h.clock.advance(time.Hour)
-		for range 4 {
-			h.push()
-		}
-		h.waitFor("listener ends", func(s Snapshot) bool { return lifetimeStatus(s, 8080) == LifetimeEnded })
-		snapshot := h.currentSnapshot()
-		found := false
-		for _, forward := range snapshot.Host.Forwards {
-			if forward.Kind == ForwardManual && forward.RemotePort == 8080 {
-				found = true
-			}
-		}
-		if !found {
-			t.Fatalf("Manual Forward was reconciled away: %+v", snapshot.Host.Forwards)
-		}
 	})
 }
 

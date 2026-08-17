@@ -20,7 +20,7 @@ System SSH is launched by a platform-determined absolute path with an argument v
 
 The remote command is one fixed, versioned product scanner invoked through `sh -s`. Host aliases, ports, paths, and Process Metadata never modify the script text. Structured inputs use bounded stdin or constrained arguments. Scanner checksum/version is diagnostic metadata. Observation stdout uses bounded versioned frames with hex-encoded metadata and remains separate from diagnostic stderr.
 
-Each frame, complete observation, queued fact set, collection count, string, argument vector, Process Chain, and materialized per-host evidence projection is independently bounded and validated before becoming a domain value. Socket-to-endpoint relationships are validated before process evidence is expanded. Repeated invalid observations stop parsing but keep stdout drained so discovery failure cannot fill the SSH channel or terminate SOCKS Manual Forwards. Process Metadata is display and Policy Evidence only; it is never executed, interpolated into a command, treated as trusted markup, or emitted unredacted in normal logs.
+Each frame, complete observation, queued fact set, collection count, string, argument vector, Process Chain, and materialized per-host evidence projection is independently bounded and validated before becoming a domain value. Socket-to-endpoint relationships are validated before process evidence is expanded. Repeated invalid observations stop parsing but keep stdout drained so discovery failure cannot fill the SSH channel or terminate SOCKS forwards. Process Metadata is display and Policy Evidence only; it is never executed, interpolated into a command, treated as trusted markup, or emitted unredacted in normal logs.
 
 ## Out of scope
 
@@ -39,10 +39,10 @@ Enforced today:
 - Bounded versioned frames with hex-encoded metadata keep observation stdout separate from diagnostic stderr (openssh/scanner.go, session.go); repeated invalid observations stop parsing but keep stdout drained.
 - Socket-to-endpoint relationships are validated before process evidence expands (core/forward_ownership.go).
 - Process Metadata is evidence-only; no credential is stored anywhere.
+- The product config directory is created `0700`, and the manager socket is `0600`. A second `manager serve` is refused while a live manager answers; a stale socket file is replaced only after a connection probe proves no live manager owns it (`ipc/server.go`). Manager IPC trusts the current OS user (ADR-0017); there is no additional application token.
 
 Lands with later slices:
 
 - Askpass prompting: desktop phase (research/library-options.md:136).
-- Configuration/log/Unix-socket/lock-file ownership hardening and fail-closed startup: with the ADR-0010 persistence surfaces (config and state directories do not exist yet).
-- Manager IPC user-permission enforcement: ADR-0017's unstarted IPC half (the JSON-RPC adapter accepts a caller-provided connection; no socket or listener exists yet).
+- Broader ownership/symlink fail-closed checks on the config directory, logs, and lock files at startup.
 - Log redaction ("never emitted unredacted in normal logs"): with the first log sink (research/library-options.md slog design).

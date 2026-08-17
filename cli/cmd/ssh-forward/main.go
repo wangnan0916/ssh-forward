@@ -1,7 +1,7 @@
 // Command ssh-forward is the domain-oriented CLI (slice 6,
-// implementation-sequence.md): it runs the headless Manager in-process,
-// exposes the product domain's command surface, and emits wire-shaped
-// --json output for scripts and desktop clients.
+// implementation-sequence.md): it auto-spawns a per-user manager, exposes
+// the product domain's command surface, and emits wire-shaped --json output
+// for scripts and desktop clients.
 package main
 
 import (
@@ -20,16 +20,16 @@ import (
 	"syscall"
 	"time"
 
-	"ssh-forward/cli/internal/app"
-	"ssh-forward/cli/internal/cli"
-	"ssh-forward/cli/internal/core"
-	"ssh-forward/cli/internal/ipc"
-	"ssh-forward/cli/internal/openssh"
+	"github.com/wangnan0916/ssh-forward/cli/internal/app"
+	"github.com/wangnan0916/ssh-forward/cli/internal/cli"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/ipc"
+	"github.com/wangnan0916/ssh-forward/cli/internal/openssh"
 )
 
 // buildVersion is the product version, bumped with each release tag; the
 // formula's test and the brew audit both key off it.
-const buildVersion = "0.1.0"
+const buildVersion = "0.1.0-alpha.1"
 
 // versionString reports the product version plus the embedded build
 // revision (Go stamps vcs.revision into the binary), so --version tells a

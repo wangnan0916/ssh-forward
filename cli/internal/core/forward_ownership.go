@@ -8,7 +8,7 @@ import (
 	"slices"
 	"time"
 
-	"ssh-forward/cli/internal/proxy"
+	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
 )
 
 type forwardSpec struct {
@@ -91,8 +91,7 @@ func closeOwnedForward(forward ownedForward) {
 }
 
 type forwardEntry struct {
-	owner        ownedForward
-	removalOwner CommandID
+	owner ownedForward
 }
 
 type forwardTable struct {
@@ -112,13 +111,10 @@ func (t *forwardTable) add(owner ownedForward) bool {
 	return true
 }
 
-// removeDirect removes one forward outside the command protocol; only the
-// reconciliation worker calls it. It returns the owner when this call
-// removed the entry, so teardown happens exactly once: a command that
-// already reserved the removal has taken the entry out of reach.
+// removeDirect removes one forward; only the reconciliation worker calls it.
 func (t *forwardTable) removeDirect(id ForwardID) (ownedForward, bool) {
 	entry, found := t.entries[id]
-	if !found || entry.removalOwner != "" {
+	if !found {
 		return nil, false
 	}
 	delete(t.entries, id)
@@ -148,53 +144,6 @@ func (t *forwardTable) managedForwardsLocked() []managedForwardEntry {
 		}
 	}
 	return entries
-}
-
-// hasManagedForListener reports whether a Managed Forward already serves
-// the given listener key; the approve command uses it to record an
-// approval without duplicating a forward an auto policy already created.
-func (t *forwardTable) hasManagedForListener(key remoteListenerKey) bool {
-	for _, entry := range t.entries {
-		projection := entry.owner.Projection()
-		if projection.Kind != ForwardManaged {
-			continue
-		}
-		if managedKey, known := managedForwardKey(projection.ID); known && managedKey == key {
-			return true
-		}
-	}
-	return false
-}
-
-type removalReservationState uint8
-
-const (
-	removalMissing removalReservationState = iota
-	removalAvailable
-	removalInProgress
-)
-
-func (t *forwardTable) reserveRemoval(id ForwardID, commandID CommandID) (ownedForward, ForwardSnapshot, CommandID, removalReservationState) {
-	entry, found := t.entries[id]
-	if !found {
-		return nil, ForwardSnapshot{}, "", removalMissing
-	}
-	projection := entry.owner.Projection()
-	if entry.removalOwner != "" {
-		return nil, projection, entry.removalOwner, removalInProgress
-	}
-	entry.removalOwner = commandID
-	return entry.owner, projection, commandID, removalAvailable
-}
-
-func (t *forwardTable) completeRemoval(id ForwardID, commandID CommandID) (ForwardSnapshot, bool) {
-	entry, found := t.entries[id]
-	if !found || entry.removalOwner != commandID {
-		return ForwardSnapshot{}, false
-	}
-	projection := entry.owner.Projection()
-	delete(t.entries, id)
-	return projection, true
 }
 
 func (t *forwardTable) snapshots() []ForwardSnapshot {

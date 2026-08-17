@@ -7,16 +7,27 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
 
-	"ssh-forward/cli/internal/app"
-	"ssh-forward/cli/internal/core"
-	"ssh-forward/cli/internal/openssh"
+	"github.com/wangnan0916/ssh-forward/cli/internal/app"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/openssh"
 )
 
-func TestManualForwardThroughDisposableDevelopmentHost(t *testing.T) {
+func TestManagedForwardThroughDisposableDevelopmentHost(t *testing.T) {
+	policiesPath := filepath.Join(t.TempDir(), "policies.jsonc")
+	if err := os.WriteFile(policiesPath, []byte(fmt.Sprintf(`{
+  "schema_version": 1,
+  "policies": [
+    {"id": "fixture-v4", "priority": 10, "action": "auto_forward", "conditions": [{"remote_ports": {"from": %d, "to": %d}}]}
+  ]
+}`, fixturePortV4(), fixturePortV4())), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	config := isolatedSSHConfig(t)
 	adapter, err := openssh.New(openssh.Options{
 		Executable:   "/usr/bin/ssh",
@@ -26,7 +37,7 @@ func TestManualForwardThroughDisposableDevelopmentHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create OpenSSH Adapter: %v", err)
 	}
-	manager := app.NewManager(core.HostAlias(testHostAlias()), adapter)
+	manager := app.NewManager(core.HostAlias(testHostAlias()), adapter, app.FilePolicySource(policiesPath))
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -34,19 +45,12 @@ func TestManualForwardThroughDisposableDevelopmentHost(t *testing.T) {
 			t.Errorf("close Manager: %v", err)
 		}
 	})
-	added, err := manager.Execute(context.Background(), core.AddManualForward{
-		CommandID:  core.CommandID("integration-add"),
-		Host:       core.HostAlias(testHostAlias()),
-		RemotePort: fixturePortV4(),
-		Family:     core.FamilyAuto,
-	})
-	if err != nil {
-		t.Fatalf("add Manual Forward: %v", err)
-	}
+	snapshot := waitForPolicyManagedForward(t, manager, fixturePortV4())
 	waitForConnected(t, manager)
+	localPort := managedLocalPort(t, snapshot, fixturePortV4())
 
 	for _, host := range []string{"127.0.0.1", "::1"} {
-		address := net.JoinHostPort(host, strconv.Itoa(int(added.Forward.AllocatedLocalPort)))
+		address := net.JoinHostPort(host, strconv.Itoa(int(localPort)))
 		connection, err := net.DialTimeout("tcp", address, time.Second)
 		if err != nil {
 			t.Fatalf("connect to Local Endpoint %s: %v", address, err)
@@ -73,22 +77,18 @@ func TestManualForwardThroughDisposableDevelopmentHost(t *testing.T) {
 			t.Fatalf("response through %s = %q, want %q", address, got, want)
 		}
 	}
-
-	if _, err := manager.Execute(context.Background(), core.RemoveForward{
-		CommandID: core.CommandID("integration-remove"),
-		ForwardID: added.Forward.ID,
-	}); err != nil {
-		t.Fatalf("remove Manual Forward: %v", err)
-	}
-	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(added.Forward.AllocatedLocalPort)))
-	connection, err := net.DialTimeout("tcp4", address, 100*time.Millisecond)
-	if err == nil {
-		_ = connection.Close()
-		t.Fatal("removed Local Endpoint still accepts connections")
-	}
 }
 
-func TestIPv6ManualForwardThroughDisposableDevelopmentHost(t *testing.T) {
+func TestIPv6ManagedForwardThroughDisposableDevelopmentHost(t *testing.T) {
+	policiesPath := filepath.Join(t.TempDir(), "policies.jsonc")
+	if err := os.WriteFile(policiesPath, []byte(fmt.Sprintf(`{
+  "schema_version": 1,
+  "policies": [
+    {"id": "fixture-v6", "priority": 10, "action": "auto_forward", "conditions": [{"remote_ports": {"from": %d, "to": %d}}]}
+  ]
+}`, fixturePortV6(), fixturePortV6())), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	config := isolatedSSHConfig(t)
 	adapter, err := openssh.New(openssh.Options{
 		Executable:   "/usr/bin/ssh",
@@ -98,7 +98,7 @@ func TestIPv6ManualForwardThroughDisposableDevelopmentHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create OpenSSH Adapter: %v", err)
 	}
-	manager := app.NewManager(core.HostAlias(testHostAlias()), adapter)
+	manager := app.NewManager(core.HostAlias(testHostAlias()), adapter, app.FilePolicySource(policiesPath))
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -106,21 +106,14 @@ func TestIPv6ManualForwardThroughDisposableDevelopmentHost(t *testing.T) {
 			t.Errorf("close Manager: %v", err)
 		}
 	})
-	added, err := manager.Execute(context.Background(), core.AddManualForward{
-		CommandID:  core.CommandID("integration-ipv6"),
-		Host:       core.HostAlias(testHostAlias()),
-		RemotePort: fixturePortV6(),
-		Family:     core.FamilyIPv6,
-	})
-	if err != nil {
-		t.Fatalf("add IPv6 Manual Forward: %v", err)
-	}
+	snapshot := waitForPolicyManagedForward(t, manager, fixturePortV6())
 	waitForConnected(t, manager)
+	localPort := managedLocalPort(t, snapshot, fixturePortV6())
 
-	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(added.Forward.AllocatedLocalPort)))
+	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(localPort)))
 	connection, err := net.DialTimeout("tcp4", address, time.Second)
 	if err != nil {
-		t.Fatalf("connect to IPv6 Manual Forward: %v", err)
+		t.Fatalf("connect to IPv6 Managed Forward: %v", err)
 	}
 	defer connection.Close()
 	if err := connection.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
@@ -139,4 +132,15 @@ func TestIPv6ManualForwardThroughDisposableDevelopmentHost(t *testing.T) {
 	if got, want := string(response), "fixture:ipv6-request"; got != want {
 		t.Fatalf("IPv6 response = %q, want %q", got, want)
 	}
+}
+
+func managedLocalPort(t *testing.T, snapshot core.Snapshot, remotePort uint16) uint16 {
+	t.Helper()
+	for _, forward := range snapshot.Host.Forwards {
+		if forward.Kind == core.ForwardManaged && forward.RemotePort == remotePort {
+			return forward.AllocatedLocalPort
+		}
+	}
+	t.Fatalf("no Managed Forward for port %d in %#v", remotePort, snapshot.Host.Forwards)
+	return 0
 }

@@ -6,7 +6,7 @@ import (
 	"net/netip"
 	"testing"
 
-	"ssh-forward/cli/internal/proxy"
+	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
 )
 
 var errUnexpectedSessionDial = errors.New("underlying dialer was called")

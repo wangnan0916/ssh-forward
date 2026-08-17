@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"ssh-forward/cli/internal/app"
+	"github.com/wangnan0916/ssh-forward/cli/internal/app"
 )
 
 func (a *App) runHostList(jsonOutput bool) error {

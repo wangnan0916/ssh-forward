@@ -1,11 +1,12 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
 
-	"ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/app"
 )
 
 // RootCommand builds the cobra command tree: the command definitions and
@@ -42,8 +43,6 @@ func (a *App) RootCommand() *cobra.Command {
 	root.AddCommand(
 		a.addCommand(),
 		a.removeCommand(),
-		a.approveCommand(),
-		a.suppressCommand(),
 		a.statusCommand(),
 		a.watchCommand(),
 		a.policyCommand(),
@@ -55,139 +54,108 @@ func (a *App) RootCommand() *cobra.Command {
 }
 
 func (a *App) addCommand() *cobra.Command {
+	var dir string
 	command := &cobra.Command{
-		Use:   "add <port>",
-		Short: "forward one remote port to the local machine",
-		Args:  cobra.ExactArgs(1),
+		Use:   "add [port]",
+		Short: "remember a remote port or project directory to auto-forward",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			port, err := requirePort("add", args[0])
-			if err != nil {
-				return err
-			}
-			if existing, found := a.existingManualForward(ctx, port); found {
-				fmt.Fprintf(a.Stdout, "port %d already forwarded (local %d)\n", port, existing.AllocatedLocalPort)
-				return nil
-			}
-			family, err := familyFlag(cmd)
-			if err != nil {
-				return err
-			}
-			jsonOutput, _ := cmd.Flags().GetBool("json")
-			operationID, _ := cmd.Flags().GetString("operation-id")
-			outcome, err := a.Manager.Execute(ctx, core.AddManualForward{
-				CommandID:  core.CommandID(operationIDOrRandom(operationID)),
-				Host:       a.Host,
-				RemotePort: port,
-				Family:     family,
-			})
-			if err != nil {
-				return err
-			}
-			return a.writeOutcome(outcome, jsonOutput)
+			return a.runRemember(cmd, args, dir, true)
 		},
 	}
-	command.Flags().Bool("json", false, "emit the wire-shaped outcome")
-	command.Flags().String("family", "auto", "auto, ipv4, or ipv6")
-	command.Flags().String("operation-id", "", "stable operation ID for retries")
+	command.Flags().StringVar(&dir, "dir", "", "Development Host working directory to auto-forward")
+	command.Flags().Bool("json", false, "emit JSON")
 	return command
 }
 
 func (a *App) removeCommand() *cobra.Command {
+	var dir string
 	command := &cobra.Command{
-		Use:   "remove <port|forward-id>",
-		Short: "tear down a forward (by port, or by ID from status)",
-		Args:  cobra.ExactArgs(1),
+		Use:   "remove [port]",
+		Short: "forget a remembered port or project directory",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			jsonOutput, _ := cmd.Flags().GetBool("json")
-			operationID, _ := cmd.Flags().GetString("operation-id")
-			if port, ok := parsePort(args[0]); ok {
-				return a.removeByPort(ctx, port, jsonOutput)
-			}
-			outcome, err := a.Manager.Execute(ctx, core.RemoveForward{
-				CommandID: core.CommandID(operationIDOrRandom(operationID)),
-				ForwardID: core.ForwardID(args[0]),
-			})
-			if err != nil {
-				return err
-			}
-			return a.writeOutcome(outcome, jsonOutput)
+			return a.runRemember(cmd, args, dir, false)
 		},
 	}
-	command.Flags().Bool("json", false, "emit the wire-shaped outcome")
-	command.Flags().String("operation-id", "", "stable operation ID for retries")
+	command.Flags().StringVar(&dir, "dir", "", "Development Host working directory to forget")
+	command.Flags().Bool("json", false, "emit JSON")
 	return command
 }
 
-func (a *App) approveCommand() *cobra.Command {
-	command := &cobra.Command{
-		Use:   "approve <port>",
-		Short: "allow a listener in the Ask flow (One-time Approval)",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			port, err := requirePort("approve", args[0])
-			if err != nil {
-				return err
-			}
-			family, err := familyFlag(cmd)
-			if err != nil {
-				return err
-			}
-			jsonOutput, _ := cmd.Flags().GetBool("json")
-			operationID, _ := cmd.Flags().GetString("operation-id")
-			outcome, err := a.Manager.Execute(ctx, core.ApproveListener{
-				CommandID:  core.CommandID(operationIDOrRandom(operationID)),
-				Host:       a.Host,
-				RemotePort: port,
-				Family:     family,
-			})
-			if err != nil {
-				return err
-			}
-			return a.writeOutcome(outcome, jsonOutput)
-		},
+func (a *App) runRemember(cmd *cobra.Command, args []string, dir string, adding bool) error {
+	if a.PoliciesPath == "" {
+		return fmt.Errorf("no policies file is configured (--policies)")
 	}
-	command.Flags().Bool("json", false, "emit the wire-shaped outcome")
-	command.Flags().String("family", "auto", "auto, ipv4, or ipv6")
-	command.Flags().String("operation-id", "", "stable operation ID for retries")
-	return command
+	if dir != "" && len(args) != 0 {
+		return UsageError(fmt.Errorf("usage: ssh-forward %s PORT  or  ssh-forward %s --dir PATH", cmd.Name(), cmd.Name()))
+	}
+	jsonOutput, _ := cmd.Flags().GetBool("json")
+	if dir != "" {
+		return a.rememberDir(dir, adding, jsonOutput)
+	}
+	if len(args) != 1 {
+		return UsageError(fmt.Errorf("usage: ssh-forward %s PORT  or  ssh-forward %s --dir PATH", cmd.Name(), cmd.Name()))
+	}
+	port, err := requirePort(cmd.Name(), args[0])
+	if err != nil {
+		return UsageError(err)
+	}
+	return a.rememberPort(port, adding, jsonOutput)
 }
 
-func (a *App) suppressCommand() *cobra.Command {
-	command := &cobra.Command{
-		Use:   "suppress <port>",
-		Short: "silence a listener in the Ask flow (One-time Suppression)",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			port, err := requirePort("suppress", args[0])
-			if err != nil {
-				return err
-			}
-			family, err := familyFlag(cmd)
-			if err != nil {
-				return err
-			}
-			jsonOutput, _ := cmd.Flags().GetBool("json")
-			operationID, _ := cmd.Flags().GetString("operation-id")
-			outcome, err := a.Manager.Execute(ctx, core.SuppressListener{
-				CommandID:  core.CommandID(operationIDOrRandom(operationID)),
-				Host:       a.Host,
-				RemotePort: port,
-				Family:     family,
-			})
-			if err != nil {
-				return err
-			}
-			return a.writeOutcome(outcome, jsonOutput)
-		},
+func (a *App) rememberPort(port uint16, adding, jsonOutput bool) error {
+	var (
+		changed bool
+		err     error
+	)
+	if adding {
+		changed, err = app.AddAutoForwardPort(a.PoliciesPath, port)
+	} else {
+		changed, err = app.RemoveAutoForwardPort(a.PoliciesPath, port)
 	}
-	command.Flags().Bool("json", false, "emit the wire-shaped outcome")
-	command.Flags().String("family", "auto", "auto, ipv4, or ipv6")
-	command.Flags().String("operation-id", "", "stable operation ID for retries")
-	return command
+	if err != nil {
+		return err
+	}
+	a.refreshPolicies()
+	if !adding && !changed {
+		return fmt.Errorf("port %d is not remembered", port)
+	}
+	return a.writeRemember(jsonOutput, adding, changed, port, "")
+}
+
+func (a *App) rememberDir(dir string, adding, jsonOutput bool) error {
+	var (
+		changed bool
+		stored  string
+		err     error
+	)
+	if adding {
+		changed, stored, err = app.AddAutoForwardDir(a.PoliciesPath, dir)
+	} else {
+		changed, stored, err = app.RemoveAutoForwardDir(a.PoliciesPath, dir)
+	}
+	if err != nil {
+		if errorsIsHostDir(err) {
+			return UsageError(err)
+		}
+		return err
+	}
+	a.refreshPolicies()
+	if !adding && !changed {
+		return fmt.Errorf("directory %s is not remembered", stored)
+	}
+	return a.writeRemember(jsonOutput, adding, changed, 0, stored)
+}
+
+func errorsIsHostDir(err error) bool {
+	return errors.Is(err, app.ErrEmptyDirectory) || errors.Is(err, app.ErrHostDirectory)
+}
+
+func (a *App) refreshPolicies() {
+	if a.PolicyReader != nil {
+		_, _ = a.PolicyReader.Read()
+	}
 }
 
 func (a *App) statusCommand() *cobra.Command {
@@ -231,7 +199,7 @@ func (a *App) watchCommand() *cobra.Command {
 func (a *App) policyCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "policy",
-		Short: "manage forwarding policies",
+		Short: "show forwarding policies",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return UsageError(fmt.Errorf("policy needs a subcommand (list)"))
 		},
@@ -309,16 +277,4 @@ func (a *App) managerCommand() *cobra.Command {
 	}
 	command.AddCommand(serve)
 	return command
-}
-
-// familyFlag validates the --family flag exactly like the wire adapter, so
-// a bad family reports invalid parameters instead of a misleading
-// Listener-not-found.
-func familyFlag(cmd *cobra.Command) (core.AddressFamily, error) {
-	text, _ := cmd.Flags().GetString("family")
-	family := core.AddressFamily(text)
-	if !core.ValidAddressFamily(family) {
-		return "", fmt.Errorf("invalid --family %q (auto, ipv4, or ipv6)", text)
-	}
-	return family, nil
 }

@@ -20,21 +20,18 @@ type managedRemoval struct {
 }
 
 // reconciler owns the Forwarding Policy subsystem's state (slice 5): the
-// policy cache and source, the One-time decision sets, the creation and
-// removal hysteresis, the worker's wake-up signal, and the Ask derivation.
-// Like forwardTable, it holds no lock of its own — the Manager lock guards
-// it, and its methods are called only while that lock is held, with one
-// exception: the policy source is a user-injected function (file-backed in
-// production) and the reconciliation worker invokes it before taking any
-// lock. The worker goroutine is the only writer of the hysteresis state;
-// commands write the decision sets through the Manager.
+// policy cache and source, the creation and removal hysteresis, and the
+// worker's wake-up signal. Like forwardTable, it holds no lock of its own —
+// the Manager lock guards it, and its methods are called only while that
+// lock is held, with one exception: the policy source is a user-injected
+// function (file-backed in production) and the reconciliation worker
+// invokes it before taking any lock. The worker goroutine is the only
+// writer of the hysteresis state.
 type reconciler struct {
 	policyCache  []ForwardingPolicy
 	evaluated    []ForwardingPolicy
 	policySource func() []ForwardingPolicy
 	now          func() time.Time
-	approvals    map[remoteListenerKey]struct{}
-	suppressions map[remoteListenerKey]struct{}
 	createState  map[remoteListenerKey]int
 	removalState map[ForwardID]*managedRemoval
 	reconcile    chan struct{}
@@ -47,8 +44,6 @@ func newReconciler(policySource func() []ForwardingPolicy, now func() time.Time)
 		evaluated:    sortPolicies(initial),
 		policySource: policySource,
 		now:          now,
-		approvals:    make(map[remoteListenerKey]struct{}),
-		suppressions: make(map[remoteListenerKey]struct{}),
 		createState:  make(map[remoteListenerKey]int),
 		removalState: make(map[ForwardID]*managedRemoval),
 		reconcile:    make(chan struct{}, 8),
@@ -65,64 +60,16 @@ func (r *reconciler) notify() {
 	}
 }
 
-// cloneApprovals snapshots the One-time Approval set so the worker can
-// evaluate a generation without holding the Manager lock. Suppressions are
-// deliberately not cloned: the worker's delta never depends on them (they
-// shape only the Ask derivation, which reads under the lock).
-func (r *reconciler) cloneApprovals() map[remoteListenerKey]struct{} {
-	approvals := make(map[remoteListenerKey]struct{}, len(r.approvals))
-	for key := range r.approvals {
-		approvals[key] = struct{}{}
-	}
-	return approvals
-}
-
-// retiredDecisions finds One-time decisions whose Listener Lifetime ended
-// or was replaced: "Listener ended" retires One-time Approvals, and a new
-// Lifetime must not inherit a Suppression.
-func (r *reconciler) retiredDecisions(statusByKey map[remoteListenerKey]LifetimeStatus) []remoteListenerKey {
-	var retired []remoteListenerKey
-	for key := range r.approvals {
-		switch statusByKey[key] {
-		case LifetimeEnded, LifetimeReplaced:
-			retired = append(retired, key)
-		}
-	}
-	for key := range r.suppressions {
-		switch statusByKey[key] {
-		case LifetimeEnded, LifetimeReplaced:
-			retired = append(retired, key)
-		}
-	}
-	return retired
-}
-
-// retire removes retired One-time decisions and their creation state.
-func (r *reconciler) retire(retired []remoteListenerKey) {
-	for _, key := range retired {
-		delete(r.approvals, key)
-		delete(r.suppressions, key)
-		delete(r.createState, key)
-	}
-}
-
 // commitPolicies records the policy set this generation evaluated (the
 // source order, for equality against the next read) and its priority-sorted
 // evaluation order (sorted once per generation), reporting whether the set
 // differs from the cache so the worker can republish when an edit changed
-// only derived Ask verdicts.
+// only which listeners match.
 func (r *reconciler) commitPolicies(source, ordered []ForwardingPolicy) bool {
 	changed := !policySetsEqual(r.policyCache, source)
 	r.policyCache = source
 	r.evaluated = ordered
 	return changed
-}
-
-// evaluate applies the cached policies to one observation without
-// re-sorting: the worker sorted this generation's set at commit, so every
-// per-publish Ask derivation is a linear scan.
-func (r *reconciler) evaluate(observation ListenerObservation) PolicyVerdict {
-	return evaluateOrdered(r.evaluated, observation)
 }
 
 // policySetsEqual compares policy sets by value, treating nil and empty as
@@ -153,17 +100,12 @@ func (r *reconciler) createReady(key remoteListenerKey, hasManaged bool) bool {
 
 // removalStep advances the removal hysteresis for one Managed Forward that
 // is no longer desired, reporting whether the removal is due now. desired
-// keeps the forward and clears the count; a retired One-time Approval
-// removes its forward immediately (the approval's credential was scoped to
-// the ended Lifetime); otherwise two consecutive observations AND five
-// seconds make the removal due.
-func (r *reconciler) removalStep(id ForwardID, desired, retired bool) bool {
+// keeps the forward and clears the count; otherwise two consecutive
+// observations AND five seconds make the removal due.
+func (r *reconciler) removalStep(id ForwardID, desired bool) bool {
 	if desired {
 		delete(r.removalState, id)
 		return false
-	}
-	if retired {
-		return true
 	}
 	record := r.removalState[id]
 	if record == nil {
@@ -177,50 +119,12 @@ func (r *reconciler) removalStep(id ForwardID, desired, retired bool) bool {
 	return record.absentObservations >= 2 && !record.absentSince.Add(5*time.Second).After(r.now())
 }
 
-// askListeners derives the Ask list from the current mirror: Listeners
-// first observed after the Discovery Baseline, not suppressed, and whose
-// policy evaluation yields Ask (no policy matched, or the matched policy
-// could not act automatically). It is derived state, not stored state, so
-// it can never drift from the observation generation it describes.
-func (r *reconciler) askListeners(host HostSnapshot) []ListenerAskSnapshot {
-	if !host.Discovery.BaselineEstablished {
-		return nil
-	}
-	postBaseline := make(map[remoteListenerKey]bool, len(host.ListenerLifetimes))
-	for _, verdict := range host.ListenerLifetimes {
-		postBaseline[lifetimeKey(verdict)] = verdict.PostBaseline
-	}
-	ask := make([]ListenerAskSnapshot, 0)
-	for _, observation := range host.ListenerObservations {
-		key := listenerKey(observation)
-		if !postBaseline[key] {
-			continue
-		}
-		if _, suppressed := r.suppressions[key]; suppressed {
-			continue
-		}
-		if _, approved := r.approvals[key]; approved {
-			continue
-		}
-		if r.evaluate(observation).Action != PolicyAsk {
-			continue
-		}
-		ask = append(ask, ListenerAskSnapshot{
-			Family:     observation.Family,
-			BindScope:  observation.BindScope,
-			RemotePort: observation.RemotePort,
-		})
-	}
-	return ask
-}
-
 // reconcileLoop is the Manager's single reconciliation worker. The actor
 // signals it once per applied observation generation (reconciler.notify);
 // the worker reads the mirror outside the Manager lock, evaluates policies,
 // and executes the Managed Forward delta — so allocation and teardown never
-// block the actor or a command. It is the primary writer of the Managed
-// Forward lifecycle; the approve command creates through the same
-// allocation path, and both register under the Manager lock. The drain
+// block the actor. It is the writer of the Managed Forward lifecycle and
+// registers under the Manager lock. The drain
 // loop consumes every buffered notification so each generation advances
 // the hysteresis exactly once, even when the actor outruns the worker.
 func (m *manager) reconcileLoop() {
@@ -244,10 +148,6 @@ func (m *manager) reconcileLoop() {
 }
 
 func (m *manager) reconcileOnce() {
-	// The policy source is a user-injected function (file-backed in
-	// production): call it outside both locks, and sort this generation's
-	// set once — every evaluation below, and every Ask derivation until
-	// the next commit, reuses this order.
 	policies := m.reconciler.policySource()
 	ordered := sortPolicies(policies)
 	m.mu.RLock()
@@ -256,7 +156,6 @@ func (m *manager) reconcileOnce() {
 		return
 	}
 	host := m.hostSnapshot
-	approvals := m.reconciler.cloneApprovals()
 	managedEntries := m.forwards.managedForwardsLocked()
 	m.mu.RUnlock()
 
@@ -264,41 +163,14 @@ func (m *manager) reconcileOnce() {
 	for _, observation := range host.ListenerObservations {
 		observationByKey[listenerKey(observation)] = observation
 	}
-	statusByKey := make(map[remoteListenerKey]LifetimeStatus, len(host.ListenerLifetimes))
-	for _, verdict := range host.ListenerLifetimes {
-		statusByKey[lifetimeKey(verdict)] = verdict.Status
-	}
 
-	// Desired Managed Forwards: one per Listener that is either governed by
-	// an active One-time Approval or matched by an auto_forward policy.
 	desired := make(map[remoteListenerKey]struct{})
 	for key, observation := range observationByKey {
-		if _, approved := approvals[key]; approved {
-			desired[key] = struct{}{}
-			continue
-		}
-		// No Discovery Baseline gate here: an auto policy applies from
-		// the first observation (boot-time listeners forward at once).
-		// The Baseline only gates Ask, which is for listeners that
-		// appear after the boot set.
 		if evaluateOrdered(ordered, observation).Action == PolicyAutoForward {
 			desired[key] = struct{}{}
 		}
 	}
 
-	// Retire one-time decisions whose Listener Lifetime ended or was
-	// replaced: "Listener ended" retires One-time Approvals, and a new
-	// Lifetime must not inherit a Suppression.
-	retired := m.reconciler.retiredDecisions(statusByKey)
-	retiredKeys := make(map[remoteListenerKey]struct{}, len(retired))
-	for _, key := range retired {
-		retiredKeys[key] = struct{}{}
-	}
-
-	// Advance the creation hysteresis: a Managed Forward needs two
-	// consecutive observations of the same auto verdict. The has-managed
-	// check reads the lock-snapshot taken above, so it never races a
-	// command's add.
 	managedKeys := make(map[remoteListenerKey]struct{}, len(managedEntries))
 	for _, entry := range managedEntries {
 		managedKeys[entry.key] = struct{}{}
@@ -310,36 +182,24 @@ func (m *manager) reconcileOnce() {
 		if !m.reconciler.createReady(key, managed) {
 			continue
 		}
-		spec, err := managedForwardSpec(key)
-		if err != nil {
-			continue
-		}
-		toCreate = append(toCreate, spec)
+		toCreate = append(toCreate, managedForwardSpec(key))
 	}
 
-	// Advance the removal hysteresis for Managed Forwards that are no
-	// longer desired (policy mismatch, Ignore, retirement, disappearance).
-	// The entry list above is the one traversal: no table re-walk, no
-	// clone-and-sort of the full snapshot (Manual Forwards are irrelevant).
 	var toRemove []ForwardID
 	for _, entry := range managedEntries {
-		_, isRetired := retiredKeys[entry.key]
 		_, stillDesired := desired[entry.key]
-		if m.reconciler.removalStep(entry.id, stillDesired, isRetired) {
+		if m.reconciler.removalStep(entry.id, stillDesired) {
 			toRemove = append(toRemove, entry.id)
 		}
 	}
 
-	// Commit this generation's policy set before the delta check: the Ask
-	// derivation reads the cache, so an edit that changed only Ask
-	// verdicts must land even when no forward delta follows.
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
 		return
 	}
 	policyChanged := m.reconciler.commitPolicies(policies, ordered)
-	if len(toCreate) == 0 && len(toRemove) == 0 && len(retired) == 0 {
+	if len(toCreate) == 0 && len(toRemove) == 0 {
 		if policyChanged {
 			m.publishLocked()
 		}
@@ -376,7 +236,6 @@ func (m *manager) reconcileOnce() {
 		}
 		return
 	}
-	m.reconciler.retire(retired)
 	for _, owner := range created {
 		if !m.forwards.add(owner) {
 			_ = owner.Close(context.Background())
@@ -386,49 +245,29 @@ func (m *manager) reconcileOnce() {
 		_ = forward.owner.Close(context.Background())
 		delete(m.reconciler.removalState, forward.id)
 	}
-	if len(created) != 0 || len(removed) != 0 || len(retired) != 0 {
+	if len(created) != 0 || len(removed) != 0 {
 		m.publishLocked()
 	}
 }
 
-// managedForwardSpec is the single construction of a Managed Forward's
-// allocation spec: the managed:<family>:<scope>:<port> identity format
-// lives here, shared by the reconciliation worker and the approve command.
-func managedForwardSpec(key remoteListenerKey) (forwardSpec, error) {
-	remote, err := manualTarget(key.family, key.port)
-	if err != nil {
-		return forwardSpec{}, err
-	}
+func managedForwardSpec(key remoteListenerKey) forwardSpec {
 	return forwardSpec{
 		ID:                 ForwardID("managed:" + managedForwardToken(key)),
 		Kind:               ForwardManaged,
-		Remote:             remote,
+		Remote:             loopbackTarget(key.family, key.port),
 		PreferredLocalPort: key.port,
-	}, nil
-}
-
-// allocateManagedForward allocates the Local Endpoint for a Managed Forward
-// serving key, through the single spec construction above. Registration is
-// the caller's: the worker and the approve command differ in how they treat
-// a registration race, and both close a losing owner.
-func (m *manager) allocateManagedForward(ctx context.Context, key remoteListenerKey) (ownedForward, error) {
-	spec, err := managedForwardSpec(key)
-	if err != nil {
-		return nil, err
 	}
-	return m.forwardAllocator.Allocate(ctx, spec)
 }
 
 // managedForwardToken builds a stable, collision-resistant Managed Forward
 // identity from the listener key: reconciliation must address the same
-// forward across observations and commands.
+// forward across observations.
 func managedForwardToken(key remoteListenerKey) string {
 	return string(key.family) + ":" + string(key.scope) + ":" + strconv.Itoa(int(key.port))
 }
 
 // managedForwardKey recovers the listener key a Managed Forward serves from
-// its identity (managed:<family>:<scope>:<port>). Unknown shapes (foreign
-// or manual forwards) report false.
+// its identity (managed:<family>:<scope>:<port>). Unknown shapes report false.
 func managedForwardKey(id ForwardID) (remoteListenerKey, bool) {
 	token, found := strings.CutPrefix(string(id), "managed:")
 	if !found {
