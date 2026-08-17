@@ -29,4 +29,4 @@ Lands with later slices:
 
 - Structured log rotation (seven days / 20 MiB) and normal-log redaction of aliases, working directories, argument vectors, environment variables, and prompts: with the first log sink (ADR-0010 persistence surfaces; research/library-options.md slog design).
 - Export Diagnostics redacted bundle with preview: with the first log sink and the CLI (slice 6).
-- Desktop restart backoff and stale socket/pipe cleanup: desktop phase (ADR-0017's unstarted IPC half — no socket or listener exists yet).
+- Desktop restart backoff: desktop phase. The IPC half (ADR-0017) is started: `manager serve` listens on the per-user Unix socket, refuses a second singleton, and replaces a stale socket file only after its connection probe proves no live manager owns it.
