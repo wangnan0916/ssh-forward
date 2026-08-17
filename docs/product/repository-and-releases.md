@@ -6,7 +6,7 @@ The greenfield product, repository, and eventual executable are named `ssh-forwa
 
 ## Repository
 
-The personal project root is a new local Git repository with no inherited history, tag, or remote (created at implementation start; the design documents were captured in the first commits). Creating or pushing a remote is a separate future decision.
+The personal project root is a new local Git repository with no inherited history or tag (created at implementation start; the design documents were captured in the first commits). A private GitHub remote (`wangnan0916/ssh-forward`) was created later to host the CI workflow: hosted macOS and Linux runners run the unit and Docker-integration jobs in parallel. The complete macOS-local-plus-Docker combination is exercised on the development machine itself — hosted macOS runners cannot nest virtualization, so the disposable-container suite runs on the Linux runner there.
 
 ```text
 /
