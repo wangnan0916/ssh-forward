@@ -66,58 +66,35 @@ func handleExecute(ctx context.Context, request *jrpc2.Request, manager core.Man
 	if json.Unmarshal(params.Command, &header) != nil {
 		return nil, errInvalidParameters
 	}
+	// Each decode function is the one validation home for its method kind:
+	// unmarshal plus the shared field rules. nil means invalid parameters —
+	// a single rejection site for every kind, including unknown ones.
 	var command core.Command
 	switch header.Kind {
 	case "manual_forward.add":
-		var add addManualForwardParams
-		if json.Unmarshal(params.Command, &add) != nil || len(add.OperationID) == 0 || len(add.OperationID) > maxOperationID ||
-			len(add.Host) == 0 || len(add.Host) > maxHostAlias || add.RemotePort == 0 ||
-			!core.ValidAddressFamily(core.AddressFamily(add.Family)) {
-			return nil, errInvalidParameters
-		}
-		command = core.AddManualForward{
-			CommandID:  core.CommandID(add.OperationID),
-			Host:       core.HostAlias(add.Host),
-			RemotePort: add.RemotePort,
-			Family:     core.AddressFamily(add.Family),
-		}
+		command = decodeAddManualForward(params.Command)
 	case "manual_forward.remove":
-		var remove removeForwardParams
-		if json.Unmarshal(params.Command, &remove) != nil || len(remove.OperationID) == 0 || len(remove.OperationID) > maxOperationID ||
-			len(remove.ForwardID) == 0 || len(remove.ForwardID) > maxForwardID {
-			return nil, errInvalidParameters
-		}
-		command = core.RemoveForward{
-			CommandID: core.CommandID(remove.OperationID),
-			ForwardID: core.ForwardID(remove.ForwardID),
-		}
+		command = decodeRemoveForward(params.Command)
 	case "policy.approve":
-		var approve listenerDecisionParams
-		if json.Unmarshal(params.Command, &approve) != nil || len(approve.OperationID) == 0 || len(approve.OperationID) > maxOperationID ||
-			len(approve.Host) == 0 || len(approve.Host) > maxHostAlias || approve.RemotePort == 0 ||
-			(approve.Family != "" && !core.ValidAddressFamily(core.AddressFamily(approve.Family))) {
-			return nil, errInvalidParameters
-		}
-		command = core.ApproveListener{
-			CommandID:  core.CommandID(approve.OperationID),
-			Host:       core.HostAlias(approve.Host),
-			RemotePort: approve.RemotePort,
-			Family:     core.AddressFamily(approve.Family),
-		}
+		command = decodeDecision(params.Command, func(decision listenerDecisionParams) core.Command {
+			return core.ApproveListener{
+				CommandID:  core.CommandID(decision.OperationID),
+				Host:       core.HostAlias(decision.Host),
+				RemotePort: decision.RemotePort,
+				Family:     core.AddressFamily(decision.Family),
+			}
+		})
 	case "policy.suppress":
-		var suppress listenerDecisionParams
-		if json.Unmarshal(params.Command, &suppress) != nil || len(suppress.OperationID) == 0 || len(suppress.OperationID) > maxOperationID ||
-			len(suppress.Host) == 0 || len(suppress.Host) > maxHostAlias || suppress.RemotePort == 0 ||
-			(suppress.Family != "" && !core.ValidAddressFamily(core.AddressFamily(suppress.Family))) {
-			return nil, errInvalidParameters
-		}
-		command = core.SuppressListener{
-			CommandID:  core.CommandID(suppress.OperationID),
-			Host:       core.HostAlias(suppress.Host),
-			RemotePort: suppress.RemotePort,
-			Family:     core.AddressFamily(suppress.Family),
-		}
-	default:
+		command = decodeDecision(params.Command, func(decision listenerDecisionParams) core.Command {
+			return core.SuppressListener{
+				CommandID:  core.CommandID(decision.OperationID),
+				Host:       core.HostAlias(decision.Host),
+				RemotePort: decision.RemotePort,
+				Family:     core.AddressFamily(decision.Family),
+			}
+		})
+	}
+	if command == nil {
 		return nil, errInvalidParameters
 	}
 	outcome, err := manager.Execute(ctx, command)
@@ -125,6 +102,54 @@ func handleExecute(ctx context.Context, request *jrpc2.Request, manager core.Man
 		return nil, marshalManagerError(err)
 	}
 	return outcomeResult{Outcome: marshalOutcome(outcome)}, nil
+}
+
+// decodeAddManualForward builds the core command for a validated
+// manual_forward.add payload, or nil when any field rule fails. Family is
+// required here: a Manual Forward always names its target address family.
+func decodeAddManualForward(data []byte) core.Command {
+	var add addManualForwardParams
+	if json.Unmarshal(data, &add) != nil || len(add.OperationID) == 0 || len(add.OperationID) > maxOperationID ||
+		len(add.Host) == 0 || len(add.Host) > maxHostAlias || add.RemotePort == 0 ||
+		!core.ValidAddressFamily(core.AddressFamily(add.Family)) {
+		return nil
+	}
+	return core.AddManualForward{
+		CommandID:  core.CommandID(add.OperationID),
+		Host:       core.HostAlias(add.Host),
+		RemotePort: add.RemotePort,
+		Family:     core.AddressFamily(add.Family),
+	}
+}
+
+// decodeRemoveForward builds the core command for a validated
+// manual_forward.remove payload, or nil when any field rule fails.
+func decodeRemoveForward(data []byte) core.Command {
+	var remove removeForwardParams
+	if json.Unmarshal(data, &remove) != nil || len(remove.OperationID) == 0 || len(remove.OperationID) > maxOperationID ||
+		len(remove.ForwardID) == 0 || len(remove.ForwardID) > maxForwardID {
+		return nil
+	}
+	return core.RemoveForward{
+		CommandID: core.CommandID(remove.OperationID),
+		ForwardID: core.ForwardID(remove.ForwardID),
+	}
+}
+
+// decodeDecision validates one listener-decision payload — the shared shape
+// of policy.approve and policy.suppress — and builds the core command
+// through build, or returns nil when any field rule fails. Family is
+// optional for decisions: an absent family matches the first Listener on
+// the port.
+func decodeDecision(data []byte, build func(listenerDecisionParams) core.Command) core.Command {
+	var decision listenerDecisionParams
+	if json.Unmarshal(data, &decision) != nil ||
+		len(decision.OperationID) == 0 || len(decision.OperationID) > maxOperationID ||
+		len(decision.Host) == 0 || len(decision.Host) > maxHostAlias || decision.RemotePort == 0 ||
+		(decision.Family != "" && !core.ValidAddressFamily(core.AddressFamily(decision.Family))) {
+		return nil
+	}
+	return build(decision)
 }
 
 func marshalManagerError(err error) error {
