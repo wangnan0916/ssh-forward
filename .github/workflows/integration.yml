@@ -1,11 +1,13 @@
 name: integration
 
-# The disposable-Development-Host topology is the same here as on a
-# developer's Mac: a real macOS runner hosts the product binary and system
-# ssh, Docker (via colima) hosts the one-shot Ubuntu Development Host
-# container, and the suite must leave Docker spotless afterwards.
+# Two jobs, two honest homes:
 #
-# Runs on every push to main and on manual dispatch.
+#  - macOS job: everything that depends on macOS behavior (system ssh
+#    quirks, Unix-socket paths, the singleton IPC) — no Docker, because
+#    hosted macOS runners cannot nest virtualization (colima cannot start
+#    a VM there).
+#  - Linux job: the disposable-Development-Host suite (scripts/
+#    test-integration) on a native-Docker runner, leaving Docker spotless.
 
 on:
   push:
@@ -13,8 +15,30 @@ on:
   workflow_dispatch: {}
 
 jobs:
-  integration:
+  macos-unit:
     runs-on: macos-15 # Apple Silicon, matching the local machine
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+
+      - name: Unit, race, vet, and format
+        run: |
+          set -e
+          cd cli
+          go build ./...
+          go test ./... -count=1
+          go test -race ./... -count=1
+          go vet ./...
+          test -z "$(gofmt -l .)"
+          go mod tidy -diff
+
+  docker-integration:
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -22,14 +46,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
 
-      - name: Start colima (Docker Engine 28+ for loopback port isolation)
-        run: |
-          brew install colima docker >/dev/null
-          colima start --cpu 3 --memory 4 --disk 20
-          docker version --format 'server={{.Server.Version}}'
-
-      - name: Unit and integration suites (disposable containers)
+      - name: Integration suites (disposable containers)
         run: ./scripts/test-integration
 
       - name: Verify Docker is spotless afterwards
