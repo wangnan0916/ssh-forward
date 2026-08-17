@@ -20,7 +20,7 @@ import (
 // so these tests never touch the network or the configured Development
 // Host; the command surface itself is tested in cli/internal/cli.
 func TestRunRequiresHost(t *testing.T) {
-	disableAutospawn(t)
+	isolateUserEnv(t)
 	var stdout, stderr bytes.Buffer
 	if code := run(context.Background(), []string{"status"}, &stdout, &stderr); code == 0 {
 		t.Fatal("run without --host succeeded")
@@ -33,7 +33,7 @@ func TestRunRequiresHost(t *testing.T) {
 // TestRunDefaultHostFromConfig pins the Persistent intent contract: with
 // no --host, config.jsonc's default_host names the Development Host.
 func TestRunDefaultHostFromConfig(t *testing.T) {
-	disableAutospawn(t)
+	isolateUserEnv(t)
 	configDir := t.TempDir()
 	configPath := filepath.Join(configDir, "config.jsonc")
 	if err := os.WriteFile(configPath, []byte(`{"schema_version": 1, "default_host": "development"}`), 0o600); err != nil {
@@ -55,7 +55,7 @@ func TestRunDefaultHostFromConfig(t *testing.T) {
 // config.jsonc: usage-style failure, not a silent fallback or a runtime
 // error without context.
 func TestRunCorruptConfigDiagnosed(t *testing.T) {
-	disableAutospawn(t)
+	isolateUserEnv(t)
 	configDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(configDir, "config.jsonc"), []byte(`{"schema_version": 1, "default_host": 7}`), 0o600); err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestRunCorruptConfigDiagnosed(t *testing.T) {
 }
 
 func TestRunRequiresCommand(t *testing.T) {
-	disableAutospawn(t)
+	isolateUserEnv(t)
 	var stdout, stderr bytes.Buffer
 	if code := run(context.Background(), []string{"--host", "development"}, &stdout, &stderr); code == 0 {
 		t.Fatal("run without a command succeeded")
@@ -85,7 +85,7 @@ func TestRunRequiresCommand(t *testing.T) {
 // Snapshot: the actor connects lazily on the first command, so a status
 // read never dials the Development Host.
 func TestRunStatusWithoutConnection(t *testing.T) {
-	disableAutospawn(t)
+	isolateUserEnv(t)
 	var stdout, stderr bytes.Buffer
 	policies := filepath.Join(t.TempDir(), "absent.jsonc")
 	code := run(context.Background(), []string{"--host", "development", "--policies", policies, "status"}, &stdout, &stderr)
@@ -102,7 +102,7 @@ func TestRunStatusWithoutConnection(t *testing.T) {
 }
 
 func TestRunUnknownCommand(t *testing.T) {
-	disableAutospawn(t)
+	isolateUserEnv(t)
 	var stdout, stderr bytes.Buffer
 	if code := run(context.Background(), []string{"--host", "development", "frobnicate"}, &stdout, &stderr); code != 1 {
 		t.Fatalf("unknown command exit code = %d, want 1", code)
@@ -136,11 +136,14 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// disableAutospawn keeps the in-process fallback for tests: auto-spawn
-// would leave a detached manager owning the endpoint.
-func disableAutospawn(t *testing.T) {
+// isolateUserEnv keeps the in-process fallback and a hermetically empty
+// SSH client configuration: auto-spawn would leave a detached manager
+// owning the endpoint, and host discovery must never read the developer's
+// real ~/.ssh/config.
+func isolateUserEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("SSH_FORWARD_NO_AUTOSPAWN", "1")
+	t.Setenv("HOME", t.TempDir())
 }
 
 // shortConfigDir makes a real short runtime directory: the manager socket's
@@ -160,7 +163,7 @@ func shortConfigDir(t *testing.T) string {
 // serve owns one Manager; subsequent commands are its clients over the
 // Unix socket and share its state.
 func TestRunManagerSingletonServesClients(t *testing.T) {
-	disableAutospawn(t)
+	isolateUserEnv(t)
 	dir := shortConfigDir(t)
 	t.Setenv("SSH_FORWARD_CONFIG_DIR", dir)
 	policies := filepath.Join(dir, "absent.jsonc")
@@ -248,7 +251,7 @@ func TestBuildAdapterResolvesSSHConfigToAbsolute(t *testing.T) {
 }
 
 func TestRunVersion(t *testing.T) {
-	disableAutospawn(t)
+	isolateUserEnv(t)
 	var stdout bytes.Buffer
 	if code := run(context.Background(), []string{"--version"}, &stdout, io.Discard); code != 0 {
 		t.Fatalf("--version exit code = %d", code)
@@ -316,5 +319,70 @@ func TestRunAutospawnsTheSingleton(t *testing.T) {
 			t.Fatal("manager did not stop with SIGTERM")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestResolveHostFallsBackToSSHConfig pins the discovery chain: with no
+// --host and no config, a single literal Host alias in the SSH client
+// configuration names the Development Host — the zero-setup path.
+func TestResolveHostFallsBackToSSHConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), []byte("Host ubuntu\n    User dev\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	host, err := resolveHost("", "")
+	if err != nil {
+		t.Fatalf("resolveHost: %v", err)
+	}
+	if host != "ubuntu" {
+		t.Fatalf("host = %q, want ubuntu", host)
+	}
+}
+
+func TestResolveHostReportsAmbiguousSSHHosts(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), []byte("Host ubuntu devbox\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := resolveHost("", "")
+	if err == nil || !strings.Contains(err.Error(), "configured hosts: ubuntu, devbox") {
+		t.Fatalf("resolveHost err = %v, want the candidate list", err)
+	}
+}
+
+// TestRunHostList pins the discovery surface: hosts come from the SSH
+// client configuration, the current default is marked, --json is the
+// machine shape.
+func TestRunHostList(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), []byte("Host ubuntu\nHost devbox\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	if code := run(context.Background(), []string{"host", "list"}, &stdout, io.Discard); code != 0 {
+		t.Fatalf("host list exit code = %d", code)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "ubuntu") || !strings.Contains(output, "devbox") {
+		t.Fatalf("host list output = %q", output)
+	}
+	var jsonOut bytes.Buffer
+	if code := run(context.Background(), []string{"host", "list", "--json"}, &jsonOut, io.Discard); code != 0 {
+		t.Fatalf("host list --json exit code = %d", code)
+	}
+	if !strings.Contains(jsonOut.String(), `"ubuntu"`) || !strings.Contains(jsonOut.String(), `"devbox"`) {
+		t.Fatalf("host list --json output = %q", jsonOut.String())
 	}
 }

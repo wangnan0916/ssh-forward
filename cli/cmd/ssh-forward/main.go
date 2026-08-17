@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -66,6 +68,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if rest[0] == "manager" {
 		return runManager(ctx, rest[1:], *host, *policies, *sshConfig, stdout, stderr)
 	}
+	if rest[0] == "host" {
+		if len(rest) < 2 || rest[1] != "list" {
+			fmt.Fprintln(stderr, "usage: ssh-forward host list")
+			return 2
+		}
+		return runHostList(ctx, rest[2:], *sshConfig, stdout, stderr)
+	}
 
 	// Singleton mode (ADR-0016): when the per-user manager runs, every
 	// command becomes a client of its Unix socket.
@@ -75,7 +84,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	// The host resolves before anything may be spawned: a manager needs
 	// one Development Host.
-	resolvedHost, err := resolveHost(*host)
+	resolvedHost, err := resolveHost(*host, *sshConfig)
 	if err != nil {
 		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
 		return 2
@@ -157,13 +166,96 @@ func runAsClient(ctx context.Context, clientManager core.Manager, rest []string,
 	return 0
 }
 
-// resolveHost names the Development Host: --host wins, then config.jsonc's
-// default_host.
-func resolveHost(hostFlag string) (string, error) {
+// resolveHost names the Development Host, in order: --host, then
+// config.jsonc's default_host, then — when the SSH client configuration
+// names exactly one literal Host alias — that host. A corrupt config is
+// diagnosed, not bypassed; ambiguous choices are reported with the
+// candidates.
+func resolveHost(hostFlag, sshConfigPath string) (string, error) {
 	if hostFlag != "" {
 		return hostFlag, nil
 	}
-	return defaultHost()
+	if host, err := defaultHost(); err == nil {
+		return host, nil
+	} else if !errors.Is(err, errNoDefaultHost) {
+		return "", err
+	}
+	if sshConfigPath == "" {
+		sshConfigPath = defaultSSHConfigPath()
+	}
+	hosts, err := app.ConfiguredHosts(sshConfigPath)
+	if err != nil {
+		return "", err
+	}
+	switch len(hosts) {
+	case 0:
+		return "", errNoDefaultHost
+	case 1:
+		return hosts[0], nil
+	default:
+		return "", fmt.Errorf("no host selected; configured hosts: %s (pass one with --host, or set \"default_host\" in config.jsonc)", strings.Join(hosts, ", "))
+	}
+}
+
+// errNoDefaultHost reports that neither --host nor config.jsonc named a
+// Development Host.
+var errNoDefaultHost = errors.New("no --host given and no config.jsonc default host")
+
+// defaultSSHConfigPath is the user's SSH client configuration, read for
+// host discovery. The adapter itself still lets ssh read it natively.
+func defaultSSHConfigPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".ssh", "config")
+}
+
+// runHostList shows the Development Hosts the user already configured in
+// their SSH client configuration — the discovery surface that makes the
+// first command work without any setup.
+func runHostList(ctx context.Context, rest []string, sshConfigPath string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("host list", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	jsonOutput := flags.Bool("json", false, "emit the host list as JSON")
+	if err := flags.Parse(rest); err != nil {
+		return 2
+	}
+	if flags.NArg() != 0 {
+		fmt.Fprintln(stderr, "host list takes no positional arguments")
+		return 2
+	}
+	if sshConfigPath == "" {
+		sshConfigPath = defaultSSHConfigPath()
+	}
+	hosts, err := app.ConfiguredHosts(sshConfigPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
+		return 1
+	}
+	if *jsonOutput {
+		encoded, err := json.Marshal(hosts)
+		if err != nil {
+			fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
+			return 1
+		}
+		fmt.Fprintln(stdout, string(encoded))
+		return 0
+	}
+	fmt.Fprintln(stdout, "Configured hosts:")
+	if len(hosts) == 0 {
+		fmt.Fprintln(stdout, "  (none)")
+		return 0
+	}
+	selected, _ := defaultHost()
+	for _, host := range hosts {
+		marker := "  "
+		if host == selected {
+			marker = "* "
+		}
+		fmt.Fprintf(stdout, "%s%s\n", marker, host)
+	}
+	return 0
 }
 
 // spawnManager starts the per-user singleton in the background: its own
@@ -281,14 +373,10 @@ func runManager(ctx context.Context, rest []string, hostFlag, policies, sshConfi
 		fmt.Fprintln(stderr, "usage: ssh-forward manager serve")
 		return 2
 	}
-	resolvedHost := hostFlag
-	if resolvedHost == "" {
-		defaulted, err := defaultHost()
-		if err != nil {
-			fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
-			return 2
-		}
-		resolvedHost = defaulted
+	resolvedHost, err := resolveHost(hostFlag, sshConfig)
+	if err != nil {
+		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
+		return 2
 	}
 	sshPath, err := exec.LookPath("ssh")
 	if err != nil {
@@ -329,13 +417,13 @@ func runManager(ctx context.Context, rest []string, hostFlag, policies, sshConfi
 func defaultHost() (string, error) {
 	config, err := app.LoadConfig(defaultConfigPath())
 	if errors.Is(err, os.ErrNotExist) {
-		return "", errors.New("no --host given and no config.jsonc default host")
+		return "", errNoDefaultHost
 	}
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", defaultConfigPath(), err)
 	}
 	if config.DefaultHost == "" {
-		return "", errors.New("no --host given and config.jsonc has no default_host")
+		return "", errNoDefaultHost
 	}
 	return config.DefaultHost, nil
 }
