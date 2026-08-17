@@ -446,3 +446,40 @@ func TestStatusShowsForwardsAndAskSummary(t *testing.T) {
 		t.Fatalf("status leaked the listener dump:\n%s", output)
 	}
 }
+
+func TestHelpListsCommands(t *testing.T) {
+	output, err := runApp(t, &fakeManager{}, "--help")
+	if err != nil {
+		t.Fatalf("--help: %v", err)
+	}
+	for _, want := range []string{
+		"Available Commands:",
+		"add",
+		"remove",
+		"approve",
+		"suppress",
+		"status",
+		"watch",
+		"policy",
+		"host",
+		"default",
+		"manager",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("--help missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestAddHelp(t *testing.T) {
+	output, err := runApp(t, &fakeManager{}, "add", "--help")
+	if err != nil {
+		t.Fatalf("add --help: %v", err)
+	}
+	if !strings.Contains(output, "forward one remote port") {
+		t.Fatalf("add --help missing the command summary:\n%s", output)
+	}
+	if !strings.Contains(output, "--json") || !strings.Contains(output, "--family") {
+		t.Fatalf("add --help missing flags:\n%s", output)
+	}
+}

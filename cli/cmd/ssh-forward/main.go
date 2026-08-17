@@ -6,9 +6,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -63,51 +61,60 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	flags := flag.NewFlagSet("ssh-forward", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	host := flags.String("host", "", "Development Host SSH alias (defaults to config.jsonc's default_host)")
-	policies := flags.String("policies", defaultPoliciesPath(), "path to policies.jsonc")
-	sshConfig := flags.String("ssh-config", "", "SSH client config file (default: the user's ~/.ssh/config)")
-	showVersion := flags.Bool("version", false, "print the version and exit")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	surface := &cli.App{
+		Stdout:  stdout,
+		Stderr:  stderr,
+		Version: versionString(),
 	}
-	if *showVersion {
-		fmt.Fprintf(stdout, "ssh-forward %s\n", versionString())
-		return 0
+	var closer func()
+	defer func() {
+		if closer != nil {
+			closer()
+		}
+	}()
+	surface.Bind = func() {
+		if surface.PoliciesPath == "" {
+			surface.PoliciesPath = defaultPoliciesPath()
+		}
+		if surface.ConfigPath == "" {
+			surface.ConfigPath = defaultConfigPath()
+		}
 	}
-	rest := flags.Args()
-	if len(rest) == 0 {
-		fmt.Fprintln(stderr, "usage: ssh-forward [--host ALIAS] [--policies PATH] [--ssh-config PATH] COMMAND ...")
-		fmt.Fprintln(stderr, "commands: add PORT, remove ID, approve PORT, suppress PORT, default ALIAS, status, watch, policy list, host list, manager serve")
-		return 2
+	surface.Assemble = func() error {
+		return assembleCLI(ctx, surface, stdin, stdout, stderr, &closer)
 	}
-	if rest[0] == "manager" {
-		return runManager(ctx, rest[1:], *host, *policies, *sshConfig, stdout, stderr)
+	surface.ServeManager = func(serveCtx context.Context) error {
+		return serveManager(serveCtx, surface)
 	}
-	if rest[0] == "host" {
-		if len(rest) < 2 || rest[1] != "list" {
-			fmt.Fprintln(stderr, "usage: ssh-forward host list")
+	if err := surface.Run(ctx, args); err != nil {
+		if errors.Is(err, cli.ErrNeedCommand) {
 			return 2
 		}
-		return runHostList(ctx, rest[2:], *sshConfig, stdout, stderr)
-	}
-	if rest[0] == "default" {
-		return runSetDefault(ctx, rest[1:], stdout, stderr)
-	}
-
-	// Singleton mode (ADR-0016): when the per-user manager runs, every
-	// command becomes a client of its Unix socket.
-	if clientManager, err := ipc.Dial(ctx, endpointPath()); err == nil {
-		return runAsClient(ctx, clientManager, rest, *host, *policies, stdout, stderr)
-	}
-
-	// The host resolves before anything may be spawned: a manager needs
-	// one Development Host.
-	resolvedHost, err := resolveHost(*host, *sshConfig, isTerminal(stdin), stdin, stdout)
-	if err != nil {
 		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
-		return 2
+		if errors.Is(err, cli.ErrUsage) {
+			return 2
+		}
+		return 1
+	}
+	return 0
+}
+
+// assembleCLI wires a Manager for one command: prefer the running
+// singleton, otherwise resolve the Development Host and auto-spawn (or
+// fall back to an in-process Manager for scripts and tests).
+func assembleCLI(ctx context.Context, surface *cli.App, stdin io.Reader, stdout, stderr io.Writer, closer *func()) error {
+	setManager := func(manager core.Manager) {
+		surface.Manager = manager
+		*closer = func() { _ = manager.Close(context.Background()) }
+	}
+
+	if clientManager, err := ipc.Dial(ctx, endpointPath()); err == nil {
+		return attachClient(ctx, surface, clientManager, stderr, setManager)
+	}
+
+	resolvedHost, err := resolveHost(surface.HostFlag, surface.SSHConfigPath, isTerminal(stdin), stdin, stdout)
+	if err != nil {
+		return cli.UsageError(err)
 	}
 
 	// Auto-spawn: the first command starts the per-user singleton in the
@@ -115,75 +122,45 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	// its client. SSH_FORWARD_NO_AUTOSPAWN=1 disables this for scripts
 	// and tests.
 	if os.Getenv("SSH_FORWARD_NO_AUTOSPAWN") != "1" {
-		if err := spawnManager(resolvedHost, *policies, *sshConfig); err != nil {
-			fmt.Fprintf(stderr, "ssh-forward: could not start the manager: %v\n", err)
-			return 1
+		if err := spawnManager(resolvedHost, surface.PoliciesPath, surface.SSHConfigPath); err != nil {
+			return fmt.Errorf("could not start the manager: %w", err)
 		}
 		if err := waitForManagerEndpoint(ctx, endpointPath(), 5*time.Second); err != nil {
-			fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
-			return 1
+			return err
 		}
 		if clientManager, err := ipc.Dial(ctx, endpointPath()); err == nil {
-			return runAsClient(ctx, clientManager, rest, *host, *policies, stdout, stderr)
+			return attachClient(ctx, surface, clientManager, stderr, setManager)
 		}
 	}
 
-	// No singleton: run one Manager for this command's lifetime (the
-	// in-process fallback keeps scripts and tests on the old model).
 	sshPath, err := exec.LookPath("ssh")
 	if err != nil {
-		fmt.Fprintf(stderr, "ssh-forward: cannot find the OpenSSH client: %v\n", err)
-		return 1
+		return fmt.Errorf("cannot find the OpenSSH client: %w", err)
 	}
-	adapter, err := buildAdapter(sshPath, *sshConfig)
+	adapter, err := buildAdapter(sshPath, surface.SSHConfigPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
-		return 1
+		return err
 	}
-	policyReader := app.NewFilePolicyReader(*policies)
+	policyReader := app.NewFilePolicyReader(surface.PoliciesPath)
 	manager := app.NewManager(core.HostAlias(resolvedHost), adapter, policyReader.Source())
-	defer func() { _ = manager.Close(context.Background()) }()
-
-	app := &cli.App{
-		Manager:      manager,
-		Host:         core.HostAlias(resolvedHost),
-		PoliciesPath: *policies,
-		PolicyReader: policyReader,
-		Stdout:       stdout,
-		Stderr:       stderr,
-	}
-	if err := app.Run(ctx, rest); err != nil {
-		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
-		return 1
-	}
-	return 0
+	surface.Host = core.HostAlias(resolvedHost)
+	surface.PolicyReader = policyReader
+	setManager(manager)
+	return nil
 }
 
-// runAsClient executes one command against the running singleton. The
-// manager owns the Development Host; a conflicting --host is a warning,
-// not an error.
-func runAsClient(ctx context.Context, clientManager core.Manager, rest []string, hostFlag, policies string, stdout, stderr io.Writer) int {
-	defer func() { _ = clientManager.Close(context.Background()) }()
+func attachClient(ctx context.Context, surface *cli.App, clientManager core.Manager, stderr io.Writer, setManager func(core.Manager)) error {
 	snapshot, err := clientManager.Snapshot(ctx)
 	if err != nil || snapshot.Host == nil {
-		fmt.Fprintln(stderr, "ssh-forward: the running manager has no Development Host configured")
-		return 1
+		_ = clientManager.Close(context.Background())
+		return errors.New("the running manager has no Development Host configured")
 	}
-	if hostFlag != "" && hostFlag != string(snapshot.Host.Alias) {
-		fmt.Fprintf(stderr, "ssh-forward: warning: --host %s ignored; the running manager owns %s\n", hostFlag, snapshot.Host.Alias)
+	if surface.HostFlag != "" && surface.HostFlag != string(snapshot.Host.Alias) {
+		fmt.Fprintf(stderr, "ssh-forward: warning: --host %s ignored; the running manager owns %s\n", surface.HostFlag, snapshot.Host.Alias)
 	}
-	app := &cli.App{
-		Manager:      clientManager,
-		Host:         snapshot.Host.Alias,
-		PoliciesPath: policies,
-		Stdout:       stdout,
-		Stderr:       stderr,
-	}
-	if err := app.Run(ctx, rest); err != nil {
-		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
-		return 1
-	}
-	return 0
+	surface.Host = snapshot.Host.Alias
+	setManager(clientManager)
+	return nil
 }
 
 // resolveHost names the Development Host, in order: --host, then
@@ -266,68 +243,6 @@ func defaultSSHConfigPath() string {
 		return ""
 	}
 	return filepath.Join(home, ".ssh", "config")
-}
-
-// runHostList shows the Development Hosts the user already configured in
-// their SSH client configuration — the discovery surface that makes the
-// first command work without any setup.
-func runHostList(ctx context.Context, rest []string, sshConfigPath string, stdout, stderr io.Writer) int {
-	flags := flag.NewFlagSet("host list", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	jsonOutput := flags.Bool("json", false, "emit the host list as JSON")
-	if err := flags.Parse(rest); err != nil {
-		return 2
-	}
-	if flags.NArg() != 0 {
-		fmt.Fprintln(stderr, "host list takes no positional arguments")
-		return 2
-	}
-	if sshConfigPath == "" {
-		sshConfigPath = defaultSSHConfigPath()
-	}
-	hosts, err := app.ConfiguredHosts(sshConfigPath)
-	if err != nil {
-		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
-		return 1
-	}
-	if *jsonOutput {
-		encoded, err := json.Marshal(hosts)
-		if err != nil {
-			fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
-			return 1
-		}
-		fmt.Fprintln(stdout, string(encoded))
-		return 0
-	}
-	fmt.Fprintln(stdout, "Configured hosts:")
-	if len(hosts) == 0 {
-		fmt.Fprintln(stdout, "  (none)")
-		return 0
-	}
-	selected, _ := defaultHost()
-	for _, host := range hosts {
-		marker := "  "
-		if host == selected {
-			marker = "* "
-		}
-		fmt.Fprintf(stdout, "%s%s\n", marker, host)
-	}
-	return 0
-}
-
-// runSetDefault pins the Development Host: ssh-forward default <alias>
-// writes config.jsonc's default_host.
-func runSetDefault(ctx context.Context, rest []string, stdout, stderr io.Writer) int {
-	if len(rest) != 1 {
-		fmt.Fprintln(stderr, "usage: ssh-forward default ALIAS")
-		return 2
-	}
-	if err := app.SetDefaultHost(defaultConfigPath(), rest[0]); err != nil {
-		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
-		return 1
-	}
-	fmt.Fprintf(stdout, "default host set to %s\n", rest[0])
-	return 0
 }
 
 // spawnManager starts the per-user singleton in the background: its own
@@ -437,49 +352,34 @@ func buildAdapter(sshPath, sshConfig string) (*openssh.Adapter, error) {
 // (ADR-0016), next to the configuration files.
 func endpointPath() string { return filepath.Join(configDir(), "manager.sock") }
 
-// runManager executes the manager command family: serve keeps the per-user
-// singleton alive until interrupted, owning the Manager and answering
-// compatible CLI and desktop clients over the socket.
-func runManager(ctx context.Context, rest []string, hostFlag, policies, sshConfig string, stdout, stderr io.Writer) int {
-	if len(rest) != 1 || rest[0] != "serve" {
-		fmt.Fprintln(stderr, "usage: ssh-forward manager serve")
-		return 2
-	}
-	resolvedHost, err := resolveHost(hostFlag, sshConfig, false, nil, stdout) // serve never prompts
+// serveManager keeps the per-user singleton alive until interrupted,
+// owning the Manager and answering compatible CLI and desktop clients
+// over the socket.
+func serveManager(ctx context.Context, surface *cli.App) error {
+	resolvedHost, err := resolveHost(surface.HostFlag, surface.SSHConfigPath, false, nil, surface.Stdout)
 	if err != nil {
-		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
-		return 2
+		return cli.UsageError(err)
 	}
 	sshPath, err := exec.LookPath("ssh")
 	if err != nil {
-		fmt.Fprintf(stderr, "ssh-forward: cannot find the OpenSSH client: %v\n", err)
-		return 1
+		return fmt.Errorf("cannot find the OpenSSH client: %w", err)
 	}
-	adapter, err := buildAdapter(sshPath, sshConfig)
+	adapter, err := buildAdapter(sshPath, surface.SSHConfigPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
-		return 1
+		return err
 	}
-	policyReader := app.NewFilePolicyReader(policies)
+	policyReader := app.NewFilePolicyReader(surface.PoliciesPath)
 	manager := app.NewManager(core.HostAlias(resolvedHost), adapter, policyReader.Source())
 	defer func() { _ = manager.Close(context.Background()) }()
-	// The pid file lets clients and scripts find the singleton; it is
-	// removed on a clean stop.
 	if err := os.MkdirAll(configDir(), 0o700); err != nil {
-		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
-		return 1
+		return err
 	}
 	pidFile := filepath.Join(configDir(), "manager.pid")
 	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
-		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
-		return 1
+		return err
 	}
 	defer func() { _ = os.Remove(pidFile) }()
-	if err := ipc.Serve(ctx, endpointPath(), manager); err != nil {
-		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
-		return 1
-	}
-	return 0
+	return ipc.Serve(ctx, endpointPath(), manager)
 }
 
 // defaultHost resolves the Development Host alias: --host wins; otherwise

@@ -78,7 +78,7 @@ func TestRunRequiresCommand(t *testing.T) {
 	if code := run(context.Background(), []string{"--host", "development"}, &bytes.Buffer{}, &stdout, &stderr); code == 0 {
 		t.Fatal("run without a command succeeded")
 	}
-	if !strings.Contains(stderr.String(), "usage:") {
+	if !strings.Contains(stderr.String(), "Usage:") {
 		t.Fatalf("stderr = %q, want usage", stderr.String())
 	}
 }
@@ -260,6 +260,28 @@ func TestRunVersion(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "ssh-forward 0.1.0") {
 		t.Fatalf("--version output = %q", stdout.String())
+	}
+}
+
+func TestRunHelp(t *testing.T) {
+	isolateUserEnv(t)
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), []string{"--help"}, &bytes.Buffer{}, &stdout, &stderr); code != 0 {
+		t.Fatalf("--help exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Available Commands:") || !strings.Contains(stdout.String(), "add") {
+		t.Fatalf("--help output = %q", stdout.String())
+	}
+}
+
+func TestRunCommandHelp(t *testing.T) {
+	isolateUserEnv(t)
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), []string{"add", "--help"}, &bytes.Buffer{}, &stdout, &stderr); code != 0 {
+		t.Fatalf("add --help exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "forward one remote port") {
+		t.Fatalf("add --help output = %q", stdout.String())
 	}
 }
 

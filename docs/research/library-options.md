@@ -10,17 +10,18 @@ Keep the implementation mostly in the Go and Apple standard libraries. The justi
 2. [`github.com/tailscale/hujson`](https://github.com/tailscale/hujson) for comment-preserving JSONC/JWCC;
 3. [`golang.org/x/sys`](https://pkg.go.dev/golang.org/x/sys) for the small OS-specific surface: Unix locking/process groups and Windows locks, jobs, and process APIs;
 4. [`github.com/Microsoft/go-winio`](https://github.com/microsoft/go-winio) only in Windows builds, when named-pipe support is implemented;
-5. [`github.com/creachadair/jrpc2`](https://github.com/creachadair/jrpc2) for Go-side JSON-RPC 2.0 dispatch, correlation, errors, notifications, cancellation plumbing, and newline channels.
+5. [`github.com/creachadair/jrpc2`](https://github.com/creachadair/jrpc2) for Go-side JSON-RPC 2.0 dispatch, correlation, errors, notifications, cancellation plumbing, and newline channels;
+6. [`github.com/spf13/cobra`](https://github.com/spf13/cobra) for the CLI command tree, nested help, and POSIX/GNU-style flags (see ADR-0020).
 
-Do not add Cobra, a TCP-proxy package, a heavier RPC stack, a daemon framework, an embedded SSH stack, or a Swift package now. This keeps idle memory, binary size, update surface, and protocol coupling low.
+Do not add a TCP-proxy package, a heavier RPC stack, a daemon framework, an embedded SSH stack, or a Swift package now. This keeps idle memory, binary size, update surface, and protocol coupling low.
 
 ## Evaluation by concern
 
-### CLI parsing: standard `flag` now, not Cobra
+### CLI parsing: Cobra for the command surface
 
-Go's [`flag`](https://pkg.go.dev/flag) package provides `FlagSet`, selectable error handling, generated defaults, and `encoding.TextUnmarshaler` integration. A small dispatcher over `os.Args[1]` plus one `FlagSet` per subcommand is enough for a focused CLI and costs no dependencies. Keep parsing separate from command execution so the same application services are callable by IPC and tests.
+Go's [`flag`](https://pkg.go.dev/flag) package is enough for a handful of global flags, but the product now has nested commands (`policy list`, `host list`, `manager serve`) and needs the help shape users expect from a mainstream CLI: a command list, per-command `--help`, and flags that may precede or follow the positional port. Hand-rolled `FlagSet` dispatch plus a custom interspersed-flag parser duplicated that work and still produced a help page that did not match the command tree.
 
-[Cobra](https://github.com/spf13/cobra) provides nested commands, POSIX/GNU-style short and long flags, suggestions, generated help/completions, and command grouping. It is Apache-2.0 licensed ([license](https://github.com/spf13/cobra/blob/main/LICENSE.txt)) and itself uses `pflag` and, on Windows, `mousetrap` ([module file](https://github.com/spf13/cobra/blob/main/go.mod)). That is good value for a large public CLI, but unnecessary machinery for the anticipated manager-oriented command surface. **Defer Cobra**; reconsider only if discoverability, deep nesting, or generated shell completions become product requirements.
+[Cobra](https://github.com/spf13/cobra) is Apache-2.0 licensed ([license](https://github.com/spf13/cobra/blob/main/LICENSE.txt)) and uses `pflag` (and, on Windows, `mousetrap`). It owns the command tree and generated help. Composition — host resolution, auto-spawn, and the OpenSSH adapter — stays in `main`, which injects `Bind` / `Assemble` / `ServeManager` so tests can still drive `App.Run` with a fake Manager.
 
 ### SOCKS5 client into `ssh -D`: require cancellable half-close
 

@@ -2,9 +2,7 @@ package cli
 
 import (
 	"context"
-	"flag"
 	"fmt"
-	"io"
 
 	"ssh-forward/cli/internal/jsonrpc"
 )
@@ -13,16 +11,7 @@ import (
 // mode prints each generation's status block; --json emits one
 // wire-shaped snapshot per line (JSONL), the stream contract desktop and
 // scripts consume.
-func (a *App) runWatch(ctx context.Context, args []string) error {
-	flags := flag.NewFlagSet("watch", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	jsonOutput := flags.Bool("json", false, "emit one wire-shaped snapshot per line")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	if flags.NArg() != 0 {
-		return fmt.Errorf("watch takes no positional arguments")
-	}
+func (a *App) runWatch(ctx context.Context, jsonOutput bool) error {
 	stream, err := a.Manager.Watch(ctx)
 	if err != nil {
 		return err
@@ -40,7 +29,7 @@ func (a *App) runWatch(ctx context.Context, args []string) error {
 			}
 			return err
 		}
-		if *jsonOutput {
+		if jsonOutput {
 			encoded, err := jsonrpc.MarshalSnapshot(snapshot)
 			if err != nil {
 				return err
