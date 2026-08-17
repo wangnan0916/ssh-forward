@@ -46,6 +46,9 @@ cleanup() {
     status=$?
     trap - 0 HUP INT TERM
     cleanup_status=0
+    if [ -n "$server_pid" ]; then
+        stop_server || cleanup_status=1
+    fi
     if [ "$keep" -eq 0 ]; then
         ./scripts/internal/test-host-down || cleanup_status=1
         if [ "$cleanup_status" -ne 0 ]; then
