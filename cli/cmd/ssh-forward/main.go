@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"runtime/debug"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -32,6 +33,22 @@ import (
 // formula's test and the brew audit both key off it.
 const buildVersion = "0.1.0"
 
+// versionString reports the product version plus the embedded build
+// revision (Go stamps vcs.revision into the binary), so --version tells a
+// HEAD install apart by its actual commit.
+func versionString() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return buildVersion
+	}
+	for _, setting := range info.Settings {
+		if setting.Key == "vcs.revision" && len(setting.Value) >= 7 {
+			return buildVersion + "+" + setting.Value[:7]
+		}
+	}
+	return buildVersion
+}
+
 func main() {
 	// The context is cancellable so watch (and other long-running
 	// surfaces) end on Ctrl-C; the shell convention reports an interrupt
@@ -56,7 +73,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return 2
 	}
 	if *showVersion {
-		fmt.Fprintf(stdout, "ssh-forward %s\n", buildVersion)
+		fmt.Fprintf(stdout, "ssh-forward %s\n", versionString())
 		return 0
 	}
 	rest := flags.Args()
