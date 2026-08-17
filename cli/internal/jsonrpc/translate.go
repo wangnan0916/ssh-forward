@@ -94,18 +94,11 @@ func translateSnapshot(wire wireSnapshot) (core.Snapshot, error) {
 		})
 	}
 	for _, forward := range host.Forwards {
-		families := make([]core.AddressFamily, 0, len(forward.LocalFamilies))
-		for _, family := range forward.LocalFamilies {
-			families = append(families, core.AddressFamily(family))
+		filtered, err := translateForward(forward)
+		if err != nil {
+			return core.Snapshot{}, err
 		}
-		translated.Forwards = append(translated.Forwards, core.ForwardSnapshot{
-			ID:                 core.ForwardID(forward.ID),
-			Kind:               core.ForwardKind(forward.Kind),
-			RemotePort:         forward.RemotePort,
-			RemoteFamily:       core.AddressFamily(forward.RemoteFamily),
-			AllocatedLocalPort: forward.AllocatedLocalPort,
-			LocalFamilies:      families,
-		})
+		translated.Forwards = append(translated.Forwards, filtered)
 	}
 	snapshot.Host = &translated
 	return snapshot, nil
@@ -147,4 +140,37 @@ func translateObservation(wire wireListenerObservation) core.ListenerObservation
 		SocketIdentities: identities,
 		Processes:        chains,
 	}
+}
+
+// UnmarshalOutcome decodes a wire Outcome back into the domain shape —
+// the mirror of marshalOutcome, serving the ipc client's Execute path.
+func UnmarshalOutcome(data []byte) (core.Outcome, error) {
+	var wire wireOutcome
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return core.Outcome{}, err
+	}
+	outcome := core.Outcome{Kind: core.OutcomeKind(wire.Kind), Revision: core.Revision(wire.Revision)}
+	if wire.Forward.ID != "" {
+		forward, err := translateForward(wire.Forward)
+		if err != nil {
+			return core.Outcome{}, err
+		}
+		outcome.Forward = forward
+	}
+	return outcome, nil
+}
+
+func translateForward(wire wireForward) (core.ForwardSnapshot, error) {
+	families := make([]core.AddressFamily, 0, len(wire.LocalFamilies))
+	for _, family := range wire.LocalFamilies {
+		families = append(families, core.AddressFamily(family))
+	}
+	return core.ForwardSnapshot{
+		ID:                 core.ForwardID(wire.ID),
+		Kind:               core.ForwardKind(wire.Kind),
+		RemotePort:         wire.RemotePort,
+		RemoteFamily:       core.AddressFamily(wire.RemoteFamily),
+		AllocatedLocalPort: wire.AllocatedLocalPort,
+		LocalFamilies:      families,
+	}, nil
 }
