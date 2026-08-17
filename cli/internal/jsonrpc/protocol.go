@@ -132,7 +132,6 @@ func (c negotiatedCapabilities) wireValues() []string {
 
 type wireForward struct {
 	ID                 string   `json:"id"`
-	Kind               string   `json:"kind"`
 	RemotePort         uint16   `json:"remote_port"`
 	RemoteFamily       string   `json:"remote_family"`
 	AllocatedLocalPort uint16   `json:"allocated_local_port"`
@@ -183,7 +182,6 @@ type wireHost struct {
 	Connection           string                    `json:"connection"`
 	Discovery            wireDiscovery             `json:"discovery"`
 	ListenerObservations []wireListenerObservation `json:"listener_observations"`
-	ListenerLifetimes    []wireListenerLifetime    `json:"listener_lifetimes,omitempty"`
 	Forwards             []wireForward             `json:"forwards"`
 }
 
@@ -208,14 +206,6 @@ type wireListenerObservation struct {
 	RemotePort       uint16             `json:"remote_port"`
 	SocketIdentities []string           `json:"socket_identities"`
 	ProcessChains    []wireProcessChain `json:"process_chains"`
-}
-
-type wireListenerLifetime struct {
-	Family       string `json:"family"`
-	BindScope    string `json:"bind_scope"`
-	RemotePort   uint16 `json:"remote_port"`
-	Status       string `json:"status"`
-	PostBaseline bool   `json:"post_baseline,omitempty"`
 }
 
 type wireProcessChain struct {

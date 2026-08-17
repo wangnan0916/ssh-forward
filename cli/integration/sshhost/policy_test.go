@@ -100,7 +100,7 @@ func TestPolicyIgnoreThroughDisposableDevelopmentHost(t *testing.T) {
 		t.Fatalf("Snapshot: %v", err)
 	}
 	for _, forward := range snapshot.Host.Forwards {
-		if forward.Kind == core.ForwardManaged && forward.RemotePort == fixturePortV4() {
+		if forward.RemotePort == fixturePortV4() {
 			t.Fatalf("Ignored listener created a Managed Forward: %+v", forward)
 		}
 	}
@@ -122,7 +122,7 @@ func waitForPolicyManagedForward(t *testing.T, manager core.Manager, port uint16
 			return false
 		}
 		for _, forward := range snapshot.Host.Forwards {
-			if forward.Kind == core.ForwardManaged && forward.RemotePort == port {
+			if forward.RemotePort == port {
 				return true
 			}
 		}

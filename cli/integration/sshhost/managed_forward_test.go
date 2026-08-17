@@ -137,7 +137,7 @@ func TestIPv6ManagedForwardThroughDisposableDevelopmentHost(t *testing.T) {
 func managedLocalPort(t *testing.T, snapshot core.Snapshot, remotePort uint16) uint16 {
 	t.Helper()
 	for _, forward := range snapshot.Host.Forwards {
-		if forward.Kind == core.ForwardManaged && forward.RemotePort == remotePort {
+		if forward.RemotePort == remotePort {
 			return forward.AllocatedLocalPort
 		}
 	}

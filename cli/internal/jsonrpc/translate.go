@@ -28,20 +28,10 @@ func translateSnapshot(wire wireSnapshot) (core.Snapshot, error) {
 		Connection:           core.ConnectionState(host.Connection),
 		Discovery:            translateDiscovery(host.Discovery),
 		ListenerObservations: make([]core.ListenerObservation, 0, len(host.ListenerObservations)),
-		ListenerLifetimes:    make([]core.ListenerLifetimeSnapshot, 0, len(host.ListenerLifetimes)),
 		Forwards:             make([]core.ForwardSnapshot, 0, len(host.Forwards)),
 	}
 	for _, observation := range host.ListenerObservations {
 		translated.ListenerObservations = append(translated.ListenerObservations, translateObservation(observation))
-	}
-	for _, lifetime := range host.ListenerLifetimes {
-		translated.ListenerLifetimes = append(translated.ListenerLifetimes, core.ListenerLifetimeSnapshot{
-			Family:       core.AddressFamily(lifetime.Family),
-			BindScope:    core.ListenerBindScope(lifetime.BindScope),
-			RemotePort:   lifetime.RemotePort,
-			Status:       core.LifetimeStatus(lifetime.Status),
-			PostBaseline: lifetime.PostBaseline,
-		})
 	}
 	for _, forward := range host.Forwards {
 		filtered, err := translateForward(forward)
@@ -99,7 +89,6 @@ func translateForward(wire wireForward) (core.ForwardSnapshot, error) {
 	}
 	return core.ForwardSnapshot{
 		ID:                 core.ForwardID(wire.ID),
-		Kind:               core.ForwardKind(wire.Kind),
 		RemotePort:         wire.RemotePort,
 		RemoteFamily:       core.AddressFamily(wire.RemoteFamily),
 		AllocatedLocalPort: wire.AllocatedLocalPort,

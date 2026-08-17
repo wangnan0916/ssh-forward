@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
@@ -226,14 +225,12 @@ func FilePolicySource(path string) func() []core.ForwardingPolicy {
 	return NewFilePolicyReader(path).Source()
 }
 
-const cliPolicyPriority = 10
-
 var (
-	// ErrEmptyDirectory is returned when add/remove --dir is blank.
-	ErrEmptyDirectory = errors.New("directory is empty")
-	// ErrHostDirectory is returned when --dir is not an absolute
-	// Development Host path (it must start with /).
-	ErrHostDirectory = errors.New("directory must be an absolute path on the Development Host")
+	// ErrEmptyDirectory and ErrHostDirectory are the Remembered Auto-forward
+	// directory errors; the file adapter re-exports the core values so CLI
+	// tests can match them without importing identity helpers.
+	ErrEmptyDirectory = core.ErrEmptyDirectory
+	ErrHostDirectory  = core.ErrHostDirectory
 )
 
 // SavePolicies writes policies.jsonc atomically in the file shape.
@@ -278,51 +275,31 @@ func loadPoliciesOrEmpty(path string) ([]core.ForwardingPolicy, error) {
 	return policies, err
 }
 
-// AddAutoForwardPort remembers a remote port: when a service listens there,
-// it is forwarded. Returns false when that port rule already exists.
+// AddAutoForwardPort remembers a remote port into policies.jsonc.
 func AddAutoForwardPort(path string, port uint16) (bool, error) {
 	policies, err := loadPoliciesOrEmpty(path)
 	if err != nil {
 		return false, err
 	}
-	if portAutoForwardIndex(policies, port) >= 0 {
+	updated, changed := core.RememberPort(policies, port)
+	if !changed {
 		return false, nil
 	}
-	policies = append(policies, core.ForwardingPolicy{
-		ID:       fmt.Sprintf("port-%d", port),
-		Priority: cliPolicyPriority,
-		Action:   core.PolicyAutoForward,
-		Conditions: []core.PolicyCondition{{
-			RemotePorts: &core.PortRange{From: port, To: port},
-		}},
-	})
-	return true, SavePolicies(path, policies)
+	return true, SavePolicies(path, updated)
 }
 
-// AddAutoForwardDir remembers a Development Host working-directory tree:
-// listeners whose process cwd is in that tree are forwarded. The returned
-// string is the stored path (trailing slashes stripped except for "/").
+// AddAutoForwardDir remembers a Development Host working-directory tree
+// into policies.jsonc. The returned string is the stored path.
 func AddAutoForwardDir(path, dir string) (bool, string, error) {
-	dir, err := normalizeHostDir(dir)
-	if err != nil {
-		return false, "", err
-	}
 	policies, err := loadPoliciesOrEmpty(path)
 	if err != nil {
 		return false, "", err
 	}
-	if dirAutoForwardIndex(policies, dir) >= 0 {
-		return false, dir, nil
+	updated, stored, changed, err := core.RememberDirectory(policies, dir)
+	if err != nil || !changed {
+		return changed, stored, err
 	}
-	policies = append(policies, core.ForwardingPolicy{
-		ID:       "dir-" + dir,
-		Priority: cliPolicyPriority,
-		Action:   core.PolicyAutoForward,
-		Conditions: []core.PolicyCondition{{
-			WorkingDirectoryTree: &dir,
-		}},
-	})
-	return true, dir, SavePolicies(path, policies)
+	return true, stored, SavePolicies(path, updated)
 }
 
 // RemoveAutoForwardPort drops the simple port Auto-forward written by add.
@@ -331,83 +308,24 @@ func RemoveAutoForwardPort(path string, port uint16) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	index := portAutoForwardIndex(policies, port)
-	if index < 0 {
+	updated, changed := core.ForgetPort(policies, port)
+	if !changed {
 		return false, nil
 	}
-	policies = append(policies[:index], policies[index+1:]...)
-	return true, SavePolicies(path, policies)
+	return true, SavePolicies(path, updated)
 }
 
 // RemoveAutoForwardDir drops the simple directory Auto-forward written by add.
 func RemoveAutoForwardDir(path, dir string) (bool, string, error) {
-	dir, err := normalizeHostDir(dir)
-	if err != nil {
-		return false, "", err
-	}
 	policies, err := loadPoliciesOrEmpty(path)
 	if err != nil {
 		return false, "", err
 	}
-	index := dirAutoForwardIndex(policies, dir)
-	if index < 0 {
-		return false, dir, nil
+	updated, stored, changed, err := core.ForgetDirectory(policies, dir)
+	if err != nil || !changed {
+		return changed, stored, err
 	}
-	policies = append(policies[:index], policies[index+1:]...)
-	return true, dir, SavePolicies(path, policies)
-}
-
-func normalizeHostDir(dir string) (string, error) {
-	dir = strings.TrimSpace(dir)
-	if dir == "" {
-		return "", ErrEmptyDirectory
-	}
-	if !strings.HasPrefix(dir, "/") {
-		return "", ErrHostDirectory
-	}
-	if dir != "/" {
-		dir = strings.TrimSuffix(dir, "/")
-	}
-	return dir, nil
-}
-
-func portAutoForwardIndex(policies []core.ForwardingPolicy, port uint16) int {
-	for index, policy := range policies {
-		if !simpleAutoForward(policy) {
-			continue
-		}
-		ports := policy.Conditions[0].RemotePorts
-		if ports != nil && ports.From == port && ports.To == port {
-			return index
-		}
-	}
-	return -1
-}
-
-func dirAutoForwardIndex(policies []core.ForwardingPolicy, dir string) int {
-	for index, policy := range policies {
-		if !simpleAutoForward(policy) {
-			continue
-		}
-		tree := policy.Conditions[0].WorkingDirectoryTree
-		if tree != nil && *tree == dir {
-			return index
-		}
-	}
-	return -1
-}
-
-func simpleAutoForward(policy core.ForwardingPolicy) bool {
-	if policy.Action != core.PolicyAutoForward || len(policy.Conditions) != 1 {
-		return false
-	}
-	condition := policy.Conditions[0]
-	portOnly := condition.RemotePorts != nil && condition.WorkingDirectoryTree == nil
-	dirOnly := condition.WorkingDirectoryTree != nil && condition.RemotePorts == nil
-	if !portOnly && !dirOnly {
-		return false
-	}
-	return condition.BindScope == nil && condition.Executable == nil && condition.AncestorExecutable == nil
+	return true, stored, SavePolicies(path, updated)
 }
 
 // stripJSONC removes line comments, block comments, and trailing commas

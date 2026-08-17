@@ -13,7 +13,6 @@ import (
 
 type forwardSpec struct {
 	ID                 ForwardID
-	Kind               ForwardKind
 	Remote             netip.AddrPort
 	PreferredLocalPort uint16
 }
@@ -65,7 +64,6 @@ type proxyOwnedForward struct {
 func (f *proxyOwnedForward) Projection() ForwardSnapshot {
 	return ForwardSnapshot{
 		ID:                 f.spec.ID,
-		Kind:               f.spec.Kind,
 		RemotePort:         f.spec.Remote.Port(),
 		RemoteFamily:       familyForAddress(f.spec.Remote.Addr()),
 		AllocatedLocalPort: f.endpoint.LocalPort(),
@@ -129,16 +127,13 @@ type managedForwardEntry struct {
 	key remoteListenerKey
 }
 
-// managedForwardsLocked lists the Managed Forward entries in one pass, with
-// no cloning or sorting: the reconciliation worker iterates this instead of
-// the full table snapshot (Manual Forwards are irrelevant to its delta).
+// managedForwardsLocked lists Managed Forward entries in one pass, with no
+// cloning or sorting: the reconciliation worker iterates this instead of
+// the full table snapshot.
 func (t *forwardTable) managedForwardsLocked() []managedForwardEntry {
 	entries := make([]managedForwardEntry, 0, len(t.entries))
 	for _, entry := range t.entries {
 		projection := entry.owner.Projection()
-		if projection.Kind != ForwardManaged {
-			continue
-		}
 		if managedKey, known := managedForwardKey(projection.ID); known {
 			entries = append(entries, managedForwardEntry{id: projection.ID, key: managedKey})
 		}

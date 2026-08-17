@@ -22,16 +22,11 @@ type managerOptions struct {
 	publishHost      func(HostSnapshot)
 	retryDelay       func(int) time.Duration
 	retryWait        func(context.Context, time.Duration) bool
-	// policies is the Forwarding Policy source seam (slice 5): the
-	// reconciliation path refreshes its policy cache from this function
-	// outside the Manager lock. nil means no policies (unmatched listeners
-	// are not forwarded).
+	// policies is the Forwarding Policy source seam: the reconciliation
+	// path refreshes its policy cache from this function outside the
+	// Manager lock. nil means no policies (unmatched listeners are not
+	// forwarded).
 	policies func() []ForwardingPolicy
-	// now is the wall-clock seam for the reconciliation path's
-	// five-second removal floor (decision recorded in
-	// implementation-sequence.md slice 5). The Listener Lifetime tracker
-	// never uses it. nil defaults to time.Now.
-	now func() time.Time
 }
 
 type manager struct {
@@ -89,10 +84,6 @@ func newManager(options managerOptions) *manager {
 	if allocator == nil {
 		allocator = proxyForwardAllocator{dialer: dialer}
 	}
-	now := options.now
-	if now == nil {
-		now = time.Now
-	}
 	policySource := options.policies
 	if policySource == nil {
 		policySource = func() []ForwardingPolicy { return nil }
@@ -102,7 +93,7 @@ func newManager(options managerOptions) *manager {
 		forwardAllocator: allocator,
 		forwards:         newForwardTable(),
 		watchers:         make(map[uint64]*snapshotStream),
-		reconciler:       newReconciler(policySource, now),
+		reconciler:       newReconciler(policySource),
 		hostSnapshot:     emptyHostSnapshot(options.host),
 		ctx:              ctx,
 		cancel:           cancel,

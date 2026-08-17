@@ -60,11 +60,6 @@ func marshalManagerError(err error) error {
 		return internalError()
 	}
 	switch domainError.Kind {
-	case core.ErrorLocalPortConflict:
-		return (&jrpc2.Error{
-			Code:    -32012,
-			Message: "no permitted Local Endpoint port is available",
-		}).WithData(errorData{Kind: string(domainError.Kind), Retryable: domainError.Retryable})
 	case core.ErrorManagerClosed:
 		return (&jrpc2.Error{
 			Code:    -32014,
@@ -84,7 +79,6 @@ func marshalForward(forward core.ForwardSnapshot) wireForward {
 	}
 	return wireForward{
 		ID:                 string(forward.ID),
-		Kind:               string(forward.Kind),
 		RemotePort:         forward.RemotePort,
 		RemoteFamily:       string(forward.RemoteFamily),
 		AllocatedLocalPort: forward.AllocatedLocalPort,
@@ -127,16 +121,6 @@ func marshalSnapshot(snapshot core.Snapshot) wireSnapshot {
 	for observationIndex, observation := range host.ListenerObservations {
 		observations[observationIndex] = marshalListenerObservation(observation)
 	}
-	lifetimes := make([]wireListenerLifetime, len(host.ListenerLifetimes))
-	for lifetimeIndex, lifetime := range host.ListenerLifetimes {
-		lifetimes[lifetimeIndex] = wireListenerLifetime{
-			Family:       string(lifetime.Family),
-			BindScope:    string(lifetime.BindScope),
-			RemotePort:   lifetime.RemotePort,
-			Status:       string(lifetime.Status),
-			PostBaseline: lifetime.PostBaseline,
-		}
-	}
 	return wireSnapshot{
 		Revision: uint64(snapshot.Revision),
 		Host: &wireHost{
@@ -144,7 +128,6 @@ func marshalSnapshot(snapshot core.Snapshot) wireSnapshot {
 			Connection:           string(host.Connection),
 			Discovery:            marshalDiscovery(host.Discovery),
 			ListenerObservations: observations,
-			ListenerLifetimes:    lifetimes,
 			Forwards:             forwards,
 		},
 	}

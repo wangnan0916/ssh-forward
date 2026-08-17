@@ -19,9 +19,8 @@ func TestUnmarshalSnapshotInvertsMarshal(t *testing.T) {
 				SocketIdentities: []core.SocketIdentity{"socket:one"},
 				Processes:        []core.ProcessChain{{Processes: []core.ProcessMetadata{{PID: 42, Executable: "/usr/bin/python3", WorkingDirectory: "/workspace", Arguments: []string{"python3", "app.py"}}}}},
 			}},
-			ListenerLifetimes: []core.ListenerLifetimeSnapshot{{Family: core.FamilyIPv4, BindScope: core.BindLoopback, RemotePort: 8080, Status: core.LifetimeContinuous, PostBaseline: true}},
 			Forwards: []core.ForwardSnapshot{{
-				ID: core.ForwardID("managed:ipv4:loopback:8080"), Kind: core.ForwardManaged,
+				ID:         core.ForwardID("managed:ipv4:loopback:8080"),
 				RemotePort: 8080, RemoteFamily: core.FamilyIPv4, AllocatedLocalPort: 8081,
 				LocalFamilies: []core.AddressFamily{core.FamilyIPv4, core.FamilyIPv6},
 			}},

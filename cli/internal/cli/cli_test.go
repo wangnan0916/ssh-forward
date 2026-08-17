@@ -68,14 +68,9 @@ func snapshotWithHost() core.Snapshot {
 				{Family: core.FamilyIPv4, BindScope: core.BindLoopback, RemotePort: 8080},
 				{Family: core.FamilyIPv6, BindScope: core.BindLoopback, RemotePort: 9090},
 			},
-			ListenerLifetimes: []core.ListenerLifetimeSnapshot{
-				{Family: core.FamilyIPv4, BindScope: core.BindLoopback, RemotePort: 8080, Status: core.LifetimeContinuous, PostBaseline: true},
-				{Family: core.FamilyIPv6, BindScope: core.BindLoopback, RemotePort: 9090, Status: core.LifetimeNew, PostBaseline: true},
-			},
 			Forwards: []core.ForwardSnapshot{
 				{
 					ID:                 core.ForwardID("managed:ipv4:loopback:8080"),
-					Kind:               core.ForwardManaged,
 					RemotePort:         8080,
 					RemoteFamily:       core.FamilyIPv4,
 					AllocatedLocalPort: 8080,
@@ -95,7 +90,7 @@ func TestStatusHuman(t *testing.T) {
 		"Host: development — connected",
 		"Discovery: healthy (baseline true, scanner v1)",
 		"New remote ports: 9090 (ssh-forward add PORT)",
-		"managed:ipv4:loopback:8080 (managed) → ipv4:8080 (local 8080)",
+		"managed:ipv4:loopback:8080 → ipv4:8080 (local 8080)",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("status output missing %q:\n%s", want, output)
@@ -108,13 +103,11 @@ func TestStatusJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status --json: %v", err)
 	}
-	// The --json shape is the wire shape: the listener lifetime
-	// post_baseline flag rides along.
+	// The --json shape is the wire Snapshot.
 	for _, want := range []string{
 		`"revision":5`,
 		`"alias":"development"`,
-		`"post_baseline":true`,
-		`"kind":"managed"`,
+		`"remote_port":8080`,
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("status --json missing %q:\n%s", want, output)
@@ -347,7 +340,7 @@ func TestStatusShowsForwardsAndNewPorts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if !strings.Contains(output, "managed:ipv4:loopback:8080 (managed) → ipv4:8080 (local 8080)") {
+	if !strings.Contains(output, "managed:ipv4:loopback:8080 → ipv4:8080 (local 8080)") {
 		t.Fatalf("status missing the forward:\n%s", output)
 	}
 	if !strings.Contains(output, "New remote ports: 9090") {

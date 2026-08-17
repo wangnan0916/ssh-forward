@@ -71,7 +71,7 @@ The first complete set of Listener Observations after connecting to a Developmen
 _Avoid_: Saved state, Forwarding Policy
 
 **Listener Lifetime**:
-The period during which a Remote Listener retains continuity across successful observations, including a short disappearance grace period. It ends when the endpoint disappears or all previously observed Socket Identities are replaced, even if the same remote port remains occupied.
+The period during which a Remote Listener retains continuity across successful observations, based on Socket Identity rather than port or PID alone.
 _Avoid_: Process lifetime, Forwarding Session
 
 **Listener Process**:
@@ -93,6 +93,10 @@ _Avoid_: Policy, Process Metadata
 **Forwarding Policy**:
 A saved, prioritized rule whose conditions evaluate a Listener Observation and yield `Auto-forward` or `Ignore`. Conditions within a policy all must match; no matching policy leaves the listener unforwarded.
 _Avoid_: Forward, Active Forward
+
+**Remembered Auto-forward**:
+A simple Auto-forward Forwarding Policy for one remote port or one Development Host working-directory tree. It is persistent intent, not an Active Forward.
+_Avoid_: Manual Forward, one-off tunnel, remembered rule
 
 **Managed Forward**:
 A Forward created from a Listener Observation by a Forwarding Policy. Its lifetime is reconciled with the corresponding Remote Listener.

@@ -6,15 +6,15 @@ The completed throwaway spike validated one system `ssh -T -D … sh -s` connect
 
 ## Vertical slices
 
-Slices 1–6 are complete. One Forwarding Session carries the fixed versioned scanner plus SOCKS traffic. The Manager publishes canonical complete Snapshots with Discovery evidence, Listener Lifetime verdicts, and policy-reconciled Managed Forwards. Capability-negotiated JSON-RPC clients can Watch those Snapshots. The CLI is the public command surface: it auto-spawns a per-user manager and speaks the v1 wire.
+Slices 1–6 are complete. One Forwarding Session carries the fixed versioned scanner plus SOCKS traffic. The Manager publishes canonical complete Snapshots with Discovery evidence and policy-reconciled Managed Forwards. Capability-negotiated JSON-RPC clients can Watch those Snapshots. The CLI is the public command surface: it auto-spawns a per-user manager and speaks the v1 wire.
 
-Slice 5 resolved two named decisions. (a) Wall clock: the "two consecutive observations and five seconds" removal bound (discovery-and-policy.md) is implemented with both conditions ANDed — observation cycles come from the actor's fact stream, and the five-second floor comes through an injected clock seam (`managerOptions.now`, defaulting to `time.Now`). The Listener Lifetime tracker stays clock-free (`lifetime.go`) — wall time reaches only the reconciliation path, never verdicts. (b) Session outage: an outage freezes the tracker (it advances only on ObservationSets) and does not count toward disappearance grace. Both readings are pinned by tests.
+Slice 5's removal hysteresis is two consecutive observations. Session outage does not count as disappearance: the reconciler advances only on ObservationSets.
 
 1. Initialize the new local repository and preserve the accepted design baseline.
 2. Establish the Go module, disposable Linux integration harness, Manager Interface, and JSON-RPC hello/status path.
 3. Deliver one-host forwarding end to end.
 4. Add agentless discovery and Snapshot Watch.
-5. Add Policy, Listener Lifetime, and continuous reconciliation.
+5. Add Policy and continuous reconciliation.
 6. Complete the domain-oriented CLI.
 7. Build the TUI (after the CLI is ready).
 8. Build the macOS desktop (after the TUI is ready), then packaging, signing, notarization, and release checks.

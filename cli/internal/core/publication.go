@@ -63,9 +63,6 @@ func cloneSnapshot(snapshot Snapshot) Snapshot {
 	if snapshot.Host.ListenerObservations != nil {
 		host.ListenerObservations = cloneListenerObservations(snapshot.Host.ListenerObservations)
 	}
-	if snapshot.Host.ListenerLifetimes != nil {
-		host.ListenerLifetimes = append([]ListenerLifetimeSnapshot(nil), snapshot.Host.ListenerLifetimes...)
-	}
 	if snapshot.Host.Forwards != nil {
 		host.Forwards = make([]ForwardSnapshot, len(snapshot.Host.Forwards))
 		for forwardIndex, forward := range snapshot.Host.Forwards {

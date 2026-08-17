@@ -127,11 +127,21 @@ type ListenerObservation struct {
 	Processes        []ProcessChain
 }
 
-type ForwardKind string
+type ForwardSnapshot struct {
+	ID                 ForwardID
+	RemotePort         uint16
+	RemoteFamily       AddressFamily
+	AllocatedLocalPort uint16
+	LocalFamilies      []AddressFamily
+}
 
-const (
-	ForwardManaged ForwardKind = "managed"
-)
+type HostSnapshot struct {
+	Alias                HostAlias
+	Connection           ConnectionState
+	Discovery            DiscoverySnapshot
+	ListenerObservations []ListenerObservation
+	Forwards             []ForwardSnapshot
+}
 
 type ErrorKind string
 
@@ -148,24 +158,6 @@ type DomainError struct {
 
 func (e *DomainError) Error() string {
 	return string(e.Kind)
-}
-
-type ForwardSnapshot struct {
-	ID                 ForwardID
-	Kind               ForwardKind
-	RemotePort         uint16
-	RemoteFamily       AddressFamily
-	AllocatedLocalPort uint16
-	LocalFamilies      []AddressFamily
-}
-
-type HostSnapshot struct {
-	Alias                HostAlias
-	Connection           ConnectionState
-	Discovery            DiscoverySnapshot
-	ListenerObservations []ListenerObservation
-	ListenerLifetimes    []ListenerLifetimeSnapshot
-	Forwards             []ForwardSnapshot
 }
 
 // Snapshot is the complete Manager state for its one Development Host.

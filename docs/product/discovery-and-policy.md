@@ -20,17 +20,17 @@ If a Remote Listener has multiple attributable Listener Processes, automatic act
 
 ## Local port allocation
 
-A Forward first attempts to bind its Preferred Local Port. On address-in-use failure it atomically attempts each port from `remotePort + 1` through `remotePort + 100`, without a separate check-then-bind step. The Allocated Local Port remains stable for the current Listener Lifetime and is shown explicitly whenever it differs from the remote port. Exhausting the permitted range produces Local Port Conflict; the product never terminates the process occupying a candidate port. Implemented: core/forward_ownership.go (ADR-0008). A policy field `requireSamePort: true` that would disable the fallback is specified but not implemented.
+A Forward first attempts to bind its Preferred Local Port. On address-in-use failure it atomically attempts each port from `remotePort + 1` through `remotePort + 100`, without a separate check-then-bind step. The Allocated Local Port remains stable while the Managed Forward exists and is shown explicitly whenever it differs from the remote port. Exhausting the permitted range produces Local Port Conflict; the product never terminates the process occupying a candidate port. Implemented: core/forward_ownership.go (ADR-0008). A policy field `requireSamePort: true` that would disable the fallback is specified but not implemented.
 
 ## Listener continuity
 
-Listener Lifetime continuity is based on observed sockets rather than port number or PID alone. Hot reload that inherits an existing socket keeps the Lifetime. If every previously observed socket disappears and replacement sockets occupy the same port, a new Lifetime begins. Absent listeners pass through a disappearance grace before the Lifetime ends: three observation cycles of tolerance plus the ending scan, i.e. four consecutive absences, about eight seconds at the scanner's two-second cadence. Implemented: Listener Lifetime verdicts on the wire (core/lifetime.go; listener_lifetimes in the Watch snapshot).
+Listener continuity is based on observed sockets rather than port number or PID alone. Socket Identities travel with each Listener Observation. Replacement on the same port is a new observation of that Remote Listener; Auto-forward policies re-evaluate it like any other generation.
 
 ## Continuous policy reconciliation
 
-Slice 5 adds Policy reconciliation. Persistent Forwarding Policies are reevaluated on every valid observation. A determinate policy mismatch or change to `Ignore` removes its Managed Forward after two consecutive observations and five seconds. A saved change is previewed before commit, then reconciles immediately.
+Slice 5 adds Policy reconciliation. Persistent Forwarding Policies are reevaluated on every valid observation. A determinate policy mismatch or change to `Ignore` removes its Managed Forward after two consecutive observations. A saved change is previewed before commit, then reconciles immediately.
 
-Missing Process Metadata is distinct from scanner failure. A new listener lacking required Policy Evidence is not forwarded. An existing policy-managed Forward is retained briefly, then removed after two successful observations and five seconds without the required evidence. SSH or scanner failure never counts toward that threshold.
+Missing Process Metadata is distinct from scanner failure. A new listener lacking required Policy Evidence is not forwarded. An existing policy-managed Forward is retained briefly, then removed after two successful observations without the required evidence. SSH or scanner failure never counts toward that threshold.
 
 ## Service protocol and action (desktop surfaces)
 
@@ -38,4 +38,4 @@ A Forwarding Policy separates its forwarding decision from post-forward behavior
 
 ## Disappearance and cleanup
 
-A Managed Forward is removed only after two consecutive successful scans omit its Remote Listener and at least five seconds have elapsed. Connection loss and scanner failure do not count as disappearance. Reconnection obtains a complete observation before cleanup resumes.
+A Managed Forward is removed only after two consecutive successful scans omit its Remote Listener. Connection loss and scanner failure do not count as disappearance. Reconnection obtains a complete observation before cleanup resumes.

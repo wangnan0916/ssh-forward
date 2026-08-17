@@ -161,7 +161,7 @@ func waitForManagedForward(t *testing.T, manager Manager, port uint16) ForwardSn
 		last = snapshot
 		if snapshot.Host != nil {
 			for _, forward := range snapshot.Host.Forwards {
-				if forward.Kind == ForwardManaged && forward.RemotePort == port {
+				if forward.RemotePort == port {
 					return forward
 				}
 			}

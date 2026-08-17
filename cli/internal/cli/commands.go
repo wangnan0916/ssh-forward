@@ -24,8 +24,8 @@ func (a *App) writeStatusHuman(snapshot core.Snapshot) error {
 	if len(host.Forwards) != 0 {
 		builder.WriteString("Forwards:\n")
 		for _, forward := range host.Forwards {
-			fmt.Fprintf(&builder, "  %s (%s) → %s:%d (local %d)\n",
-				forward.ID, forward.Kind, forward.RemoteFamily, forward.RemotePort, forward.AllocatedLocalPort)
+			fmt.Fprintf(&builder, "  %s → %s:%d (local %d)\n",
+				forward.ID, forward.RemoteFamily, forward.RemotePort, forward.AllocatedLocalPort)
 		}
 	}
 

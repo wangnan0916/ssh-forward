@@ -32,10 +32,9 @@ type hostActorOptions struct {
 }
 
 // hostActor owns one Development Host's Forwarding Session, Discovery State,
-// and reconnect scheduling. It is the per-host seam that feeds Listener
-// Lifetime tracking and Policy reconciliation: observation ingestion happens
-// here, outside the Manager state lock, and blocking socket work can be
-// scheduled from the ingestion path without holding either state lock.
+// and reconnect scheduling. Observation ingestion happens here, outside the
+// Manager state lock, and blocking socket work can be scheduled from the
+// ingestion path without holding either state lock.
 type hostActor struct {
 	host       HostAlias
 	connector  hostConnector
@@ -52,7 +51,6 @@ type hostActor struct {
 	state                   HostSnapshot
 	lastObservationSequence uint64
 
-	tracker       *lifetimeTracker
 	lastPublished HostSnapshot
 	done          chan struct{}
 }
@@ -68,7 +66,6 @@ func newHostActor(options hostActorOptions, retryDelay func(int) time.Duration, 
 		retryWait:  retryWait,
 		ctx:        options.ctx,
 		state:      emptyHostSnapshot(options.host),
-		tracker:    newLifetimeTracker(defaultListenerGraceCycles),
 		done:       make(chan struct{}),
 	}
 }
@@ -248,25 +245,12 @@ func (a *hostActor) applyObservationSet(set ObservationSet) {
 		// produced it); budget drift is instead rejected in-band.
 		ScannerChecksum: set.ScannerChecksum,
 	}
-	// The tracker always advances: absent listeners accrue grace even when
-	// the observation set itself is unchanged, and only crossing the grace
-	// threshold changes a verdict. publishLocked deduplicates the no-change
-	// publication, so lifetime progression and publish suppression coexist.
-	verdicts := a.tracker.advance(observations)
-	// The first complete observation establishes the Discovery Baseline;
-	// later listeners are classified against it. The mark
-	// comes after advance so the baseline generation's own Listeners stay
-	// pre-baseline; the mark itself is idempotent.
-	if complete && !a.state.Discovery.BaselineEstablished {
-		a.tracker.markBaseline()
-	}
 	if gapped {
 		discovery.State = DiscoveryDegraded
 		discovery.Diagnostic = "observation_resync"
 	}
 	a.state.Discovery = discovery
 	a.state.ListenerObservations = observations
-	a.state.ListenerLifetimes = verdicts
 	a.publishLocked()
 	if a.onObserve != nil {
 		a.onObserve()
@@ -336,9 +320,7 @@ func (a *hostActor) publishConnectionFailure() {
 // publishLocked publishes one per-host snapshot and is the single place that
 // suppresses no-change publications: it compares against the last snapshot it
 // handed to the Manager. Callers mutate state and publish unconditionally, so
-// new state fields (for example Policy reconciliation verdicts) get dedup for
-// free. The tracker's unconditional advance above is unaffected: it is a side
-// effect on the actor, not a publication.
+// new state fields get dedup for free.
 func (a *hostActor) publishLocked() {
 	if reflect.DeepEqual(a.lastPublished, a.state) {
 		return

@@ -6,46 +6,32 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 )
 
-// managedRemoval tracks the removal hysteresis for one Managed Forward: it
-// is removed after two consecutive observations without it AND five seconds
-// of wall time (decision recorded in implementation-sequence.md slice 5).
-// The five-second floor is the only place wall time reaches the core; the
-// observation count comes from the actor's fact stream.
-type managedRemoval struct {
-	absentObservations int
-	absentSince        time.Time
-}
-
-// reconciler owns the Forwarding Policy subsystem's state (slice 5): the
-// policy cache and source, the creation and removal hysteresis, and the
-// worker's wake-up signal. Like forwardTable, it holds no lock of its own —
-// the Manager lock guards it, and its methods are called only while that
-// lock is held, with one exception: the policy source is a user-injected
-// function (file-backed in production) and the reconciliation worker
-// invokes it before taking any lock. The worker goroutine is the only
-// writer of the hysteresis state.
+// reconciler owns the Forwarding Policy subsystem's state: the policy cache
+// and source, the creation and removal hysteresis, and the worker's wake-up
+// signal. Like forwardTable, it holds no lock of its own — the Manager lock
+// guards it, and its methods are called only while that lock is held, with
+// one exception: the policy source is a user-injected function (file-backed
+// in production) and the reconciliation worker invokes it before taking any
+// lock. The worker goroutine is the only writer of the hysteresis state.
 type reconciler struct {
 	policyCache  []ForwardingPolicy
 	evaluated    []ForwardingPolicy
 	policySource func() []ForwardingPolicy
-	now          func() time.Time
 	createState  map[remoteListenerKey]int
-	removalState map[ForwardID]*managedRemoval
+	removalState map[ForwardID]int
 	reconcile    chan struct{}
 }
 
-func newReconciler(policySource func() []ForwardingPolicy, now func() time.Time) *reconciler {
+func newReconciler(policySource func() []ForwardingPolicy) *reconciler {
 	initial := policySource()
 	return &reconciler{
 		policyCache:  initial,
 		evaluated:    sortPolicies(initial),
 		policySource: policySource,
-		now:          now,
 		createState:  make(map[remoteListenerKey]int),
-		removalState: make(map[ForwardID]*managedRemoval),
+		removalState: make(map[ForwardID]int),
 		reconcile:    make(chan struct{}, 8),
 	}
 }
@@ -101,22 +87,18 @@ func (r *reconciler) createReady(key remoteListenerKey, hasManaged bool) bool {
 // removalStep advances the removal hysteresis for one Managed Forward that
 // is no longer desired, reporting whether the removal is due now. desired
 // keeps the forward and clears the count; otherwise two consecutive
-// observations AND five seconds make the removal due.
+// observations make the removal due.
 func (r *reconciler) removalStep(id ForwardID, desired bool) bool {
 	if desired {
 		delete(r.removalState, id)
 		return false
 	}
-	record := r.removalState[id]
-	if record == nil {
-		record = &managedRemoval{}
-		r.removalState[id] = record
+	r.removalState[id]++
+	if r.removalState[id] < 2 {
+		return false
 	}
-	record.absentObservations++
-	if record.absentObservations == 1 {
-		record.absentSince = r.now()
-	}
-	return record.absentObservations >= 2 && !record.absentSince.Add(5*time.Second).After(r.now())
+	delete(r.removalState, id)
+	return true
 }
 
 // reconcileLoop is the Manager's single reconciliation worker. The actor
@@ -253,7 +235,6 @@ func (m *manager) reconcileOnce() {
 func managedForwardSpec(key remoteListenerKey) forwardSpec {
 	return forwardSpec{
 		ID:                 ForwardID("managed:" + managedForwardToken(key)),
-		Kind:               ForwardManaged,
 		Remote:             loopbackTarget(key.family, key.port),
 		PreferredLocalPort: key.port,
 	}

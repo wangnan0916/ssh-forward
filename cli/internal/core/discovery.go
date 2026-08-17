@@ -253,18 +253,6 @@ func listenerKey(observation ListenerObservation) remoteListenerKey {
 	}
 }
 
-// lifetimeKey recovers the Remote Listener identity a Listener Lifetime
-// verdict describes. The identity triple (family, bind scope, port) is the
-// one shared by observations, verdicts, and Managed Forward tokens; this is
-// its single construction from a verdict.
-func lifetimeKey(verdict ListenerLifetimeSnapshot) remoteListenerKey {
-	return remoteListenerKey{
-		family: verdict.Family,
-		scope:  verdict.BindScope,
-		port:   verdict.RemotePort,
-	}
-}
-
 func canonicalListenerObservations(observations []ListenerObservation) []ListenerObservation {
 	canonical := cloneListenerObservations(observations)
 	for index := range canonical {
