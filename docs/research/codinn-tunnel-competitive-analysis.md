@@ -4,6 +4,8 @@
 
 **Primary-source access date:** 2026-08-14
 
+**Later product decisions:** Ask, one-time approval, and Manual Forward were dropped. Policies are Auto-forward or Ignore. Remembered Auto-forward is `add` / `remove`. Unmatched listeners appear as a `status` heads-up, not an Ask prompt.
+
 **Research constraints:** Public first-party material only. The proprietary app was not downloaded or executed; no account was created and no purchase was made. “Not documented” means the reviewed first-party sources did not substantiate the capability, not that the capability definitely does not exist.
 
 ## Executive assessment
@@ -142,10 +144,10 @@ Legend: **Yes** = first-party verified; **Planned** = supplied `ssh-forward` pro
 | Local/remote/dynamic forwarding | **Yes** ([product](https://codinn.com/tunnel/)) | Local forwards with same-port preference and bounded fallback | Core Tunnel is broader |
 | Remote loopback listener discovery | **ND** ([documented proposition](https://codinn.com/tunnel/)) | **Planned** | Core differentiation |
 | Remote process metadata | **ND** ([documented proposition](https://codinn.com/tunnel/)) | **Planned** | Core differentiation |
-| Auto/Ask/Ignore policy | **ND** ([documented proposition](https://codinn.com/tunnel/)) | **Planned** | Core differentiation |
+| Auto/Ask/Ignore policy | **ND** ([documented proposition](https://codinn.com/tunnel/)) | Auto-forward / Ignore (no Ask) | Core differentiation |
 | Directory/command/process policies | **ND** ([documented proposition](https://codinn.com/tunnel/)) | **Planned via process metadata** | Core differentiation |
 | Auto-connect saved tunnel | **Yes** ([App Store](https://apps.apple.com/us/app/core-tunnel/id1354318707)) | Policy-driven | Similar outcome, different trigger |
-| Discovery prompt | **ND** | **Planned** | Core differentiation |
+| Discovery prompt | **ND** | `status` heads-up, not Ask | Core differentiation |
 | Same local/remote port default | Configurable but no same-port promise documented ([product](https://codinn.com/tunnel/)) | Preferred, with deterministic `+1…+100` fallback and optional strict mode | Predictable conflict policy |
 | Conflict handling | **ND** | Required design area | Opportunity if explicit/predictable |
 | Connection status/monitoring | **Yes** ([product](https://codinn.com/tunnel/)) | **Planned** | Direct overlap |
@@ -178,7 +180,7 @@ Both products reduce command-line tunnel management, use OpenSSH semantics, need
 ### Defensible differentiation — inference grounded in the sourced gap
 
 1. **Discovery, not configuration:** detect current-user loopback listeners on the development host instead of requiring saved tunnel definitions. No such capability is documented in Core Tunnel’s first-party proposition ([product page](https://codinn.com/tunnel/)).
-2. **Explainable intent policies:** process/executable/directory-aware Auto/Ask/Ignore rules make ephemeral dev servers manageable without becoming a profile inventory.
+2. **Explainable intent policies:** process/executable/directory-aware Auto-forward / Ignore rules make ephemeral dev servers manageable without becoming a profile inventory.
 3. **Editor independence:** reproduce the useful VS Code Ports experience across terminals and editors.
 4. **Least credential responsibility:** invoke system OpenSSH and store no SSH credentials, unlike Core Tunnel’s optional Keychain and imported-key handling ([privacy policy](https://community.codinn.com/t/privacy-policy-core-series-apps/275)).
 5. **System-patched SSH:** inherit the user/platform’s OpenSSH configuration and patch cadence rather than bundling an embedded engine ([Core Tunnel 3.10 notes](https://community.codinn.com/t/core-shell-tunnel-3-10-x-openssh-9-8/4652)).

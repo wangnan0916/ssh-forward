@@ -24,7 +24,7 @@ A Forward first attempts to bind its Preferred Local Port. On address-in-use fai
 
 ## Listener continuity
 
-Listener continuity is based on observed sockets rather than port number or PID alone. Socket Identities travel with each Listener Observation. Replacement on the same port is a new observation of that Remote Listener; Auto-forward policies re-evaluate it like any other generation.
+A Remote Listener is identified by Development Host, address family, bind scope, and remote port. Socket Identities travel with each Listener Observation as evidence, not as that identity. Replacement on the same port is a new observation of that Remote Listener; Auto-forward policies re-evaluate it like any other generation.
 
 ## Continuous policy reconciliation
 

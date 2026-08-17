@@ -71,8 +71,8 @@ The first complete set of Listener Observations after connecting to a Developmen
 _Avoid_: Saved state, Forwarding Policy
 
 **Listener Lifetime**:
-The period during which a Remote Listener retains continuity across successful observations, based on Socket Identity rather than port or PID alone.
-_Avoid_: Process lifetime, Forwarding Session
+The period during which a Remote Listener remains the same endpoint across successful observations, identified by Development Host, address family, bind scope, and remote port. Socket Identity is observation evidence, not that identity.
+_Avoid_: Process lifetime, Forwarding Session, Socket Identity as listener identity
 
 **Listener Process**:
 Any process observed holding a socket associated with a Remote Listener. A listener may have zero, one, or multiple Listener Processes.

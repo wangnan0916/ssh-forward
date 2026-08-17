@@ -80,7 +80,7 @@ Use standard [`log/slog`](https://pkg.go.dev/log/slog) with `JSONHandler` for ma
 
 Use pinned [`github.com/creachadair/jrpc2`](https://github.com/creachadair/jrpc2) with its newline channel for Go-side JSON-RPC 2.0 validation, dispatch, request correlation, standard errors, concurrent calls, notifications, serialized writes, and cancellation plumbing. It is transport-neutral, has a stable v1 Interface, and is BSD-3-Clause licensed. Unix sockets and `go-winio` named pipes provide the byte stream; Swift implements only the product's small peer with Foundation `Codable`.
 
-JSON-RPC does not define stream framing, version negotiation, semantic idempotency, subscriptions, backpressure, revision replay, or resynchronization. The project therefore owns `system.hello`, capability negotiation, `operation_id`, typed error data, bounded newline frames, and `manager.execute`/`snapshot`/`watch` semantics. Keep wire DTOs separate from Manager domain types and verify Go/Swift behavior with shared golden transcripts. Do **not** use standard `net/rpc/jsonrpc`: it implements JSON-RPC 1.0 and `net/rpc` is frozen ([docs](https://pkg.go.dev/net/rpc/jsonrpc)).
+JSON-RPC does not define stream framing, version negotiation, semantic idempotency, subscriptions, backpressure, revision replay, or resynchronization. The project therefore owns `system.hello`, capability negotiation, typed error data, bounded newline frames, and `manager.snapshot`/`watch`/`unwatch` semantics. Keep wire DTOs separate from Manager domain types and verify Go/Swift behavior with shared golden transcripts. Do **not** use standard `net/rpc/jsonrpc`: it implements JSON-RPC 1.0 and `net/rpc` is frozen ([docs](https://pkg.go.dev/net/rpc/jsonrpc)).
 
 ### Tests and performance measurements
 

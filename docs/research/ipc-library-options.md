@@ -1,6 +1,6 @@
 # IPC protocol/library options for `ssh-forward`
 
-_Scope: one user-local Go Manager; Go CLI and native Swift client; Unix-domain streams and `go-winio` named pipes. Evidence checked against upstream specifications, repositories, package docs, module files, licenses, and repository activity on 2026-08-14._
+_Scope: one user-local Go Manager; Go CLI and native Swift client; Unix-domain streams and `go-winio` named pipes. Evidence checked against upstream specifications, repositories, package docs, module files, licenses, and repository activity on 2026-08-14. Later: the Manager Interface is `Snapshot`, `Watch`, and `Close` — there is no `manager.execute`; persistent intent lives in JSONC files (docs/design/ipc-protocol.md)._
 
 ## Recommendation
 
@@ -69,7 +69,7 @@ The cost is not merely four structs. The project would own duplicate-ID handling
 
 ## Minimal dependency and wire sketch
 
-**Go dependencies:** standard `context`, `encoding/json`, `net`; pinned `github.com/creachadair/jrpc2`; Windows-only `github.com/Microsoft/go-winio`. The IPC adapter translates explicit wire DTOs to/from `Manager.Execute`, `Snapshot`, `Watch`, and `Close`; domain packages do not import `jrpc2`.
+**Go dependencies:** standard `context`, `encoding/json`, `net`; pinned `github.com/creachadair/jrpc2`; Windows-only `github.com/Microsoft/go-winio`. The IPC adapter translates explicit wire DTOs to/from `Manager.Snapshot`, `Watch`, and `Close`; domain packages do not import `jrpc2`.
 
 **Transport/framing:** one authenticated user-local stream; one compact UTF-8 JSON-RPC object per LF; reject frames over a documented limit; exactly one write owner. JSON strings may contain escaped `\n`, never a literal framing newline.
 
@@ -77,21 +77,21 @@ The cost is not merely four structs. The project would own duplicate-ID handling
 {"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"client":"macos","capabilities":["cancel-v1","watch-snapshot-v1"]}}
 {"jsonrpc":"2.0","id":"1","result":{"protocol":{"major":1,"minor":0},"session_id":"…","max_frame_bytes":1048576}}
 
-{"jsonrpc":"2.0","id":"2","method":"manager.execute","params":{"operation_id":"01J…","command":{"kind":"approve_once","listener_id":"…"}}}
-{"jsonrpc":"2.0","id":"2","error":{"code":-32020,"message":"local port conflict","data":{"kind":"local_port_conflict","retryable":false,"details":{}}}}
+{"jsonrpc":"2.0","id":"2","method":"manager.snapshot","params":{"scope":{"kind":"all"}}}
+{"jsonrpc":"2.0","id":"2","result":{"snapshot":{"revision":0}}}
 
-{"jsonrpc":"2.0","id":"3","method":"manager.watch","params":{"after_revision":41}}
-{"jsonrpc":"2.0","id":"3","result":{"watch_id":"w1","revision":42,"snapshot":{}}}
-{"jsonrpc":"2.0","method":"manager.snapshot","params":{"watch_id":"w1","revision":45,"snapshot":{}}}
-{"jsonrpc":"2.0","method":"manager.resync_required","params":{"watch_id":"w1","current_revision":58}}
+{"jsonrpc":"2.0","id":"3","method":"manager.watch","params":{"scope":{"kind":"all"}}}
+{"jsonrpc":"2.0","id":"3","result":{"watch_id":"w1","snapshot":{"revision":42}}}
+{"jsonrpc":"2.0","method":"manager.snapshot","params":{"watch_id":"w1","snapshot":{"revision":45}}}
+{"jsonrpc":"2.0","method":"manager.resync_required","params":{"watch_id":"w1","reason":"…"}}
 ```
 
 Rules to freeze in the protocol document and cross-language fixtures:
 
 1. `system.hello` is the first request; incompatible majors fail and close, while minor features use explicit capabilities.
-2. JSON-RPC `id` correlates one attempt. `operation_id` is the stable idempotency key retained across retries and deduplicated by the Manager.
+2. JSON-RPC `id` correlates one attempt. Persistent intent is not an RPC command: Forwarding Policies live in `policies.jsonc`.
 3. Errors use stable numeric codes plus a typed `data.kind`; prose is diagnostic only. Never expose Go error or domain struct JSON directly.
 4. A successful `manager.watch` returns the initial full snapshot. Later notifications are full, monotonically revised snapshots. Revisions may skip because updates are coalesced.
-5. Each watcher has bounded latest-value buffering. If correctness cannot be restored from the next full snapshot, send `resync_required` or close; reconnect with `after_revision` always permits a fresh full snapshot.
+5. Each watcher has bounded latest-value buffering. If correctness cannot be restored from the next full snapshot, send `resync_required` or close; reconnect for a fresh full snapshot.
 6. Cancellation uses one explicitly versioned notification shape proven against `jrpc2` and Swift. Cancellation is best-effort; the response/error and idempotency rules define races.
 7. Keep golden request/response/error/cancel/watch transcripts shared by Go and Swift, plus malformed-frame, slow-reader, reconnect, and version-mismatch tests.

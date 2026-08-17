@@ -28,7 +28,7 @@ Enforced today:
 - Local Endpoints remain allocated across a transport disconnect; new client connections fail promptly; in-flight proxies end on EOF/reset with a bounded post-half-close drain (proxy/).
 - Reconnection uses exponential backoff with jitter through injectable clock/random behavior (core/manager.go, core/actor.go).
 - Authentication and host-key failures are classified from bounded OpenSSH diagnostics (core/actor.go sessionDisposition).
-- The tracker advances on every valid ObservationSet, partial and degraded included (core/actor.go).
+- ObservationSets advance policy reconciliation; session outage does not count toward Managed Forward disappearance (core/actor.go, core/reconcile.go).
 
 Lands with later slices:
 
