@@ -3,22 +3,12 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/app"
 )
 
 func (a *App) runHostList(jsonOutput bool) error {
-	path := a.SSHConfigPath
-	if path == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-		path = filepath.Join(home, ".ssh", "config")
-	}
-	hosts, err := app.ConfiguredHosts(path)
+	hosts, err := app.ConfiguredHosts(app.SSHConfigPath(a.SSHConfigPath))
 	if err != nil {
 		return err
 	}

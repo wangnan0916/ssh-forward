@@ -21,7 +21,7 @@ Do not add a TCP-proxy package, a heavier RPC stack, a daemon framework, an embe
 
 Go's [`flag`](https://pkg.go.dev/flag) package is enough for a handful of global flags, but the product now has nested commands (`policy list`, `host list`, `manager serve`) and needs the help shape users expect from a mainstream CLI: a command list, per-command `--help`, and flags that may precede or follow the positional port. Hand-rolled `FlagSet` dispatch plus a custom interspersed-flag parser duplicated that work and still produced a help page that did not match the command tree.
 
-[Cobra](https://github.com/spf13/cobra) is Apache-2.0 licensed ([license](https://github.com/spf13/cobra/blob/main/LICENSE.txt)) and uses `pflag` (and, on Windows, `mousetrap`). It owns the command tree and generated help. Composition — host resolution, auto-spawn, and the OpenSSH adapter — stays in `main`, which injects `Bind` / `Assemble` / `ServeManager` so tests can still drive `App.Run` with a fake Manager.
+[Cobra](https://github.com/spf13/cobra) is Apache-2.0 licensed ([license](https://github.com/spf13/cobra/blob/main/LICENSE.txt)) and uses `pflag` (and, on Windows, `mousetrap`). It owns the command tree and generated help. Composition — host naming, auto-spawn, and the OpenSSH adapter — lives in `app` (`Connect`, `Serve`, `ResolveHost`). Tests inject a Manager into `App` or call `app` through that interface.
 
 ### SOCKS5 client into `ssh -D`: require cancellable half-close
 

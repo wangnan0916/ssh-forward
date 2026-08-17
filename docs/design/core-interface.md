@@ -35,7 +35,7 @@ The Implementation hides system `ssh -G` and `ssh -T -D`, scanner validation, SO
 - **Clock/random Seam — in-process controllability:** real and deterministic Adapters drive reconnect tests.
 - **Configuration — local-substitutable:** tests use temporary directories and the real JSONC implementation; no filesystem Interface leaks through the external Seam.
 - **Loopback networking — local-substitutable:** tests use real loopback sockets except narrowly scripted allocation failures where an internal Adapter earns its keep.
-- **IPC — external Adapter:** Unix sockets/named pipes and `creachadair/jrpc2` translate project-owned JSON-RPC methods into Snapshots; wire DTOs remain separate from domain types.
+- **IPC — external Adapter:** `app.Connect` / `app.Serve` own the per-user singleton lifecycle; the Unix-socket adapter dials and listens; `jsonrpc` translates project-owned JSON-RPC methods into Snapshots. Wire DTOs remain separate from domain types. Client and server share one newline framing implementation.
 
 Tests exercise behavior through the Manager Interface. Separate Adapter tests verify OpenSSH argv/environment/exit classification and IPC framing; they do not duplicate Manager reconciliation tests.
 

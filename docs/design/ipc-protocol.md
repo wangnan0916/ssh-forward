@@ -2,7 +2,7 @@
 
 ## Transport and framing
 
-The manager accepts a current-user-only Unix domain socket on macOS/Linux and named pipe on Windows. Go uses pinned `github.com/creachadair/jrpc2`; every frame is one bounded, compact UTF-8 JSON-RPC 2.0 object followed by LF. Swift uses Foundation `Codable` and the same golden wire fixtures. Domain types never marshal directly onto the wire.
+The manager accepts a current-user-only Unix domain socket on macOS/Linux and named pipe on Windows. Go uses pinned `github.com/creachadair/jrpc2` on the server; the client and server share one bounded newline-framing implementation. Every frame is one bounded, compact UTF-8 JSON-RPC 2.0 object followed by LF. Swift uses Foundation `Codable` and the same golden wire fixtures. Domain types never marshal directly onto the wire.
 
 ## Session handshake
 

@@ -1,0 +1,139 @@
+package app
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+)
+
+// ErrNoHost reports that neither --host nor config.jsonc named a
+// Development Host, and the SSH client configuration did not yield one.
+var ErrNoHost = errors.New("no --host given and no config.jsonc default host")
+
+// ResolutionError is a Development Host naming failure that the CLI
+// reports as usage (exit 2).
+type ResolutionError struct {
+	err error
+}
+
+func (e *ResolutionError) Error() string { return e.err.Error() }
+func (e *ResolutionError) Unwrap() error { return e.err }
+
+// IsResolution reports whether err is a Development Host naming failure.
+func IsResolution(err error) bool {
+	var resolved *ResolutionError
+	return errors.As(err, &resolved)
+}
+
+func resolution(err error) error {
+	if err == nil {
+		return nil
+	}
+	var resolved *ResolutionError
+	if errors.As(err, &resolved) {
+		return err
+	}
+	return &ResolutionError{err: err}
+}
+
+// ResolveOptions names a Development Host from the flag, pinned default,
+// SSH client configuration, and an optional terminal pick.
+type ResolveOptions struct {
+	HostFlag      string
+	ConfigPath    string
+	SSHConfigPath string
+	Interactive   bool
+	Stdin         io.Reader
+	Stdout        io.Writer
+}
+
+// ResolveHost names the Development Host, in order: --host, then
+// config.jsonc's default_host, then — when the SSH client configuration
+// names exactly one literal Host alias — that host. A corrupt config is
+// diagnosed, not bypassed; ambiguous choices are reported with the
+// candidates, or prompted when Interactive.
+func ResolveHost(opts ResolveOptions) (string, error) {
+	if opts.HostFlag != "" {
+		return opts.HostFlag, nil
+	}
+	configPath := opts.ConfigPath
+	if configPath == "" {
+		configPath = DefaultLayout().Config
+	}
+	if host, err := pinnedHost(configPath); err == nil {
+		return host, nil
+	} else if !errors.Is(err, ErrNoHost) {
+		return "", resolution(err)
+	}
+	hosts, err := ConfiguredHosts(SSHConfigPath(opts.SSHConfigPath))
+	if err != nil {
+		return "", resolution(err)
+	}
+	switch len(hosts) {
+	case 0:
+		return "", resolution(ErrNoHost)
+	case 1:
+		return hosts[0], nil
+	default:
+		if opts.Interactive {
+			host, err := pickHost(hosts, opts.Stdin, opts.Stdout)
+			if err != nil {
+				return "", resolution(err)
+			}
+			return host, nil
+		}
+		return "", resolution(fmt.Errorf("no host selected; configured hosts: %s (pass one with --host, or set one with: ssh-forward default <alias>)", strings.Join(hosts, ", ")))
+	}
+}
+
+func pinnedHost(path string) (string, error) {
+	config, err := LoadConfig(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", ErrNoHost
+	}
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", path, err)
+	}
+	if config.DefaultHost == "" {
+		return "", ErrNoHost
+	}
+	return config.DefaultHost, nil
+}
+
+func pickHost(hosts []string, stdin io.Reader, stdout io.Writer) (string, error) {
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	fmt.Fprintln(stdout, "Multiple Development Hosts are configured; pick one:")
+	for index, host := range hosts {
+		fmt.Fprintf(stdout, "  %d) %s\n", index+1, host)
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		fmt.Fprint(stdout, "> ")
+		var line string
+		if _, err := fmt.Fscanln(stdin, &line); err != nil {
+			break
+		}
+		var choice int
+		if _, err := fmt.Sscanf(line, "%d", &choice); err == nil && choice >= 1 && choice <= len(hosts) {
+			return hosts[choice-1], nil
+		}
+		fmt.Fprintln(stdout, "invalid choice; pick a number from the list")
+	}
+	return "", errors.New("no host selected (set one with: ssh-forward default <alias>)")
+}
+
+// IsTerminal reports whether the reader is an interactive terminal.
+func IsTerminal(reader io.Reader) bool {
+	file, ok := reader.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
+}

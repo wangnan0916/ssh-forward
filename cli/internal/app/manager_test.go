@@ -65,3 +65,16 @@ func TestNewManagerWiresPolicySource(t *testing.T) {
 		t.Fatalf("policies mismatch (-got +want):\n%s", diff)
 	}
 }
+
+func TestNewOpenSSHAdapterResolvesRelativeConfig(t *testing.T) {
+	if _, err := exec.LookPath("ssh"); err != nil {
+		t.Skip("no ssh binary")
+	}
+	adapter, err := NewOpenSSHAdapter("relative/config")
+	if err != nil {
+		t.Fatalf("NewOpenSSHAdapter: %v", err)
+	}
+	if adapter == nil {
+		t.Fatal("NewOpenSSHAdapter returned nil")
+	}
+}

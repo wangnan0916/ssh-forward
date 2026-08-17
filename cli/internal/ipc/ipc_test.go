@@ -37,18 +37,8 @@ func servingManager(t *testing.T) (string, core.Manager) {
 	t.Cleanup(cancel)
 	served := make(chan error, 1)
 	go func() { served <- Serve(ctx, path, manager) }()
-	// Wait for the listener to accept connections.
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		conn, err := net.DialTimeout("unix", path, 100*time.Millisecond)
-		if err == nil {
-			_ = conn.Close()
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("manager socket never became ready: %v", err)
-		}
-		time.Sleep(5 * time.Millisecond)
+	if err := Wait(context.Background(), path, 3*time.Second); err != nil {
+		t.Fatalf("manager socket never became ready: %v", err)
 	}
 	t.Cleanup(func() {
 		cancel()
@@ -101,6 +91,13 @@ func TestDialWatchStreamsInitialSnapshot(t *testing.T) {
 	}
 	if err := client.Close(context.Background()); err != nil {
 		t.Fatalf("client Close: %v", err)
+	}
+}
+
+func TestWaitReadyOnLiveSocket(t *testing.T) {
+	path, _ := servingManager(t)
+	if err := Wait(context.Background(), path, time.Second); err != nil {
+		t.Fatalf("Wait: %v", err)
 	}
 }
 

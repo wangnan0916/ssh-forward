@@ -1,7 +1,6 @@
 package jsonrpc
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -10,21 +9,23 @@ import (
 	"net"
 	"sync"
 
+	"github.com/creachadair/jrpc2/channel"
+
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 // Dial negotiates a JSON-RPC v1 session on conn and returns a Manager
 // whose operations are remote calls. The returned Manager owns conn.
 func Dial(ctx context.Context, conn net.Conn) (core.Manager, error) {
+	frames := &serializedChannel{Channel: newBoundedLineChannel(conn, maxFrameBytes)}
 	client := &managerClient{
-		conn:    conn,
-		reader:  bufio.NewReaderSize(conn, 64*1024),
+		frames:  frames,
 		pending: make(map[uint64]chan wireResponse),
 		watches: make(map[string]*socketStream),
 	}
 	client.startReadLoop()
 	if err := client.hello(ctx); err != nil {
-		_ = conn.Close()
+		_ = frames.Close()
 		return nil, err
 	}
 	return client, nil
@@ -34,10 +35,7 @@ func Dial(ctx context.Context, conn net.Conn) (core.Manager, error) {
 // request/response call correlated by ID, Watch subscribes to server
 // notifications, and Close tears the connection down.
 type managerClient struct {
-	conn   net.Conn
-	reader *bufio.Reader
-
-	writeMu sync.Mutex
+	frames channel.Channel
 
 	mu      sync.Mutex
 	nextID  uint64
@@ -49,27 +47,9 @@ type managerClient struct {
 }
 
 type wireResponse struct {
-	ID     json.RawMessage `json:"id"`
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  *wireErrorShape `json:"error,omitempty"`
-}
-
-type wireErrorShape struct {
-	Code    int             `json:"code"`
-	Message string          `json:"message"`
-	Data    json.RawMessage `json:"data,omitempty"`
-}
-
-type wireRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id,omitempty"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
-}
-
-type wireNotification struct {
-	Method string          `json:"method"`
-	Params json.RawMessage `json:"params"`
+	ID     json.RawMessage
+	Result json.RawMessage
+	Error  *wireError
 }
 
 func (c *managerClient) hello(ctx context.Context) error {
@@ -78,12 +58,7 @@ func (c *managerClient) hello(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("manager hello: %w", err)
 	}
-	var hello struct {
-		Protocol struct {
-			Major int `json:"major"`
-		} `json:"protocol"`
-		MaxFrameBytes int `json:"max_frame_bytes"`
-	}
+	var hello helloResult
 	if err := json.Unmarshal(result, &hello); err != nil {
 		return fmt.Errorf("manager hello: malformed result: %w", err)
 	}
@@ -95,7 +70,12 @@ func (c *managerClient) hello(ctx context.Context) error {
 
 func (c *managerClient) call(ctx context.Context, method string, params []byte, id uint64) (json.RawMessage, error) {
 	response := c.beginCall(id)
-	if err := c.write(wireRequest{JSONRPC: "2.0", ID: json.RawMessage(fmt.Sprintf(`%d`, id)), Method: method, Params: params}); err != nil {
+	if err := c.write(requestEnvelope{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(fmt.Sprintf(`%d`, id)),
+		Method:  method,
+		Params:  params,
+	}); err != nil {
 		c.finishCall(id)
 		return nil, err
 	}
@@ -131,26 +111,18 @@ func (c *managerClient) newID() uint64 {
 	return c.nextID
 }
 
-func (c *managerClient) write(request wireRequest) error {
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
+func (c *managerClient) write(request requestEnvelope) error {
 	encoded, err := json.Marshal(request)
 	if err != nil {
 		return err
 	}
-	if len(encoded) > maxFrameBytes || len(encoded)+1 > maxFrameBytes {
-		return errors.New("outbound frame exceeds the protocol bound")
-	}
-	if _, err := c.conn.Write(append(encoded, '\n')); err != nil {
-		return err
-	}
-	return nil
+	return c.frames.Send(encoded)
 }
 
 func (c *managerClient) startReadLoop() {
 	go func() {
 		for {
-			line, err := c.readFrame()
+			line, err := c.frames.Recv()
 			if err != nil {
 				c.failAll(err)
 				return
@@ -160,34 +132,23 @@ func (c *managerClient) startReadLoop() {
 	}()
 }
 
-func (c *managerClient) readFrame() ([]byte, error) {
-	line, err := c.reader.ReadBytes('\n')
-	if err != nil {
-		return nil, err
-	}
-	line = bytes.TrimSuffix(line, []byte{'\n'})
-	if len(line) > maxFrameBytes {
-		return nil, errors.New("inbound frame exceeds the protocol bound")
-	}
-	return line, nil
-}
-
 func (c *managerClient) dispatch(line []byte) {
-	var shape struct {
-		ID     json.RawMessage `json:"id"`
-		Method string          `json:"method"`
-	}
-	if err := json.Unmarshal(line, &shape); err != nil {
+	shape, ok := decodeEnvelopeShape(line)
+	if !ok {
 		return
 	}
-	if len(shape.ID) > 0 && string(shape.ID) != "null" {
-		var response wireResponse
-		if json.Unmarshal(line, &response) != nil {
-			return
-		}
+	if shape.HasID && !bytes.Equal(bytes.TrimSpace(shape.ID), []byte("null")) && shape.Method == nil {
 		var id uint64
 		if json.Unmarshal(shape.ID, &id) != nil {
 			return
+		}
+		reply := wireResponse{ID: shape.ID, Result: shape.Result}
+		if len(shape.Error) > 0 && !bytes.Equal(bytes.TrimSpace(shape.Error), []byte("null")) {
+			var parsed wireError
+			if json.Unmarshal(shape.Error, &parsed) != nil {
+				return
+			}
+			reply.Error = &parsed
 		}
 		c.mu.Lock()
 		waiting, found := c.pending[id]
@@ -196,24 +157,26 @@ func (c *managerClient) dispatch(line []byte) {
 		}
 		c.mu.Unlock()
 		if found {
-			waiting <- response
+			waiting <- reply
 		}
 		return
 	}
-	var notification wireNotification
-	if shape.Method == methodSnapshot && json.Unmarshal(line, &notification) == nil {
-		var payload struct {
-			WatchID  string          `json:"watch_id"`
-			Snapshot json.RawMessage `json:"snapshot"`
-		}
-		if json.Unmarshal(notification.Params, &payload) == nil {
-			c.mu.Lock()
-			stream := c.watches[payload.WatchID]
-			c.mu.Unlock()
-			if stream != nil {
-				stream.push(payload.Snapshot)
-			}
-		}
+	var method string
+	if json.Unmarshal(shape.Method, &method) != nil || method != methodSnapshot {
+		return
+	}
+	var payload struct {
+		WatchID  string          `json:"watch_id"`
+		Snapshot json.RawMessage `json:"snapshot"`
+	}
+	if json.Unmarshal(shape.Params, &payload) != nil {
+		return
+	}
+	c.mu.Lock()
+	stream := c.watches[payload.WatchID]
+	c.mu.Unlock()
+	if stream != nil {
+		stream.push(payload.Snapshot)
 	}
 }
 
@@ -226,7 +189,7 @@ func (c *managerClient) failAll(err error) {
 	c.closed = true
 	c.readErr = err
 	for id, waiting := range c.pending {
-		waiting <- wireResponse{Error: &wireErrorShape{Message: err.Error()}}
+		waiting <- wireResponse{Error: &wireError{Message: err.Error()}}
 		delete(c.pending, id)
 	}
 	for id, stream := range c.watches {
@@ -283,7 +246,7 @@ func (c *managerClient) Close(context.Context) error {
 			delete(c.watches, id)
 		}
 	}
-	return c.conn.Close()
+	return c.frames.Close()
 }
 
 // socketStream is one Watch over the wire. The subscription Snapshot is
@@ -382,14 +345,15 @@ func (c *managerClient) unwatch(watchID string) {
 	_, _ = c.call(context.Background(), methodUnwatch, params, c.newID())
 }
 
-func decodeServerError(wire *wireErrorShape) error {
-	if len(wire.Data) > 0 {
-		var data struct {
-			Kind      string `json:"kind"`
-			Retryable bool   `json:"retryable"`
-		}
-		if json.Unmarshal(wire.Data, &data) == nil && data.Kind != "" {
-			return &core.DomainError{Kind: core.ErrorKind(data.Kind), Retryable: data.Retryable}
+func decodeServerError(wire *wireError) error {
+	if wire == nil {
+		return errors.New("empty error")
+	}
+	if data, ok := wire.Data.(map[string]any); ok {
+		kind, _ := data["kind"].(string)
+		retryable, _ := data["retryable"].(bool)
+		if kind != "" {
+			return &core.DomainError{Kind: core.ErrorKind(kind), Retryable: retryable}
 		}
 	}
 	return errors.New(wire.Message)

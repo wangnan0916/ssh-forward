@@ -19,10 +19,9 @@ var ErrNeedCommand = errors.New("missing command")
 // ErrUsage marks a flag or host-resolution failure that should exit 2.
 var ErrUsage = errors.New("usage")
 
-// App is the CLI surface's testable core: it owns the Manager reference
-// and the output streams, and its Run method parses one command line.
-// The main package is a thin shell that fills default paths, builds the
-// real Manager, and delegates here.
+// App is the CLI surface: it parses one command line and talks to the
+// per-user Manager through app.Connect / app.Serve. Tests inject Manager
+// directly and skip Connect.
 type App struct {
 	Manager      core.Manager
 	Host         core.HostAlias
@@ -35,18 +34,13 @@ type App struct {
 	PolicyReader  *app.FilePolicyReader
 	SSHConfigPath string
 	ConfigPath    string
+	Layout        app.Layout
 	Version       string
+	Stdin         io.Reader
 	Stdout        io.Writer
 	Stderr        io.Writer
-	// Bind fills default paths after flags parse. Main uses it so the
-	// command tree does not need to know the product config directory.
-	Bind func()
-	// Assemble wires the Manager for commands that need one. Tests leave
-	// it nil and inject Manager directly.
-	Assemble func() error
-	// ServeManager runs the singleton in the foreground. Main provides
-	// it; tests do not.
-	ServeManager func(ctx context.Context) error
+
+	sessionOwned bool
 }
 
 // UsageError wraps err so the process exits 2 without changing the
@@ -82,7 +76,17 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	} else {
 		command.SetErr(io.Discard)
 	}
-	return command.ExecuteContext(ctx)
+	err := command.ExecuteContext(ctx)
+	a.closeSession()
+	return err
+}
+
+func (a *App) closeSession() {
+	if !a.sessionOwned || a.Manager == nil {
+		return
+	}
+	_ = a.Manager.Close(context.Background())
+	a.sessionOwned = false
 }
 
 func (a *App) bindGlobalFlags(cmd *cobra.Command) {
@@ -92,6 +96,32 @@ func (a *App) bindGlobalFlags(cmd *cobra.Command) {
 	}
 	if sshConfig, _ := cmd.Flags().GetString("ssh-config"); sshConfig != "" {
 		a.SSHConfigPath = sshConfig
+	}
+}
+
+func (a *App) bindDefaults() {
+	if a.Layout.Dir == "" {
+		a.Layout = app.DefaultLayout()
+	}
+	if a.PoliciesPath == "" {
+		a.PoliciesPath = a.Layout.Policies
+	}
+	if a.ConfigPath == "" {
+		a.ConfigPath = a.Layout.Config
+	}
+}
+
+func (a *App) options() app.Options {
+	return app.Options{
+		Layout:        a.Layout,
+		HostFlag:      a.HostFlag,
+		SSHConfigPath: a.SSHConfigPath,
+		PoliciesPath:  a.PoliciesPath,
+		ConfigPath:    a.ConfigPath,
+		Interactive:   app.IsTerminal(a.Stdin),
+		Stdin:         a.Stdin,
+		Stdout:        a.Stdout,
+		Stderr:        a.Stderr,
 	}
 }
 
@@ -110,13 +140,22 @@ func needsManager(cmd *cobra.Command) bool {
 
 func (a *App) prepareCommand(cmd *cobra.Command) error {
 	a.bindGlobalFlags(cmd)
-	if a.Bind != nil {
-		a.Bind()
-	}
-	if a.Manager != nil || a.Assemble == nil || !needsManager(cmd) {
+	a.bindDefaults()
+	if a.Manager != nil || !needsManager(cmd) {
 		return nil
 	}
-	return a.Assemble()
+	session, err := app.Connect(cmd.Context(), a.options())
+	if err != nil {
+		if app.IsResolution(err) {
+			return UsageError(err)
+		}
+		return err
+	}
+	a.Manager = session.Manager
+	a.Host = session.Host
+	a.PolicyReader = session.PolicyReader
+	a.sessionOwned = true
+	return nil
 }
 
 func flagError(cmd *cobra.Command, err error) error {

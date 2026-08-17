@@ -2,7 +2,7 @@
 
 ## Status
 
-The command surface below is implemented (slice 6, implementation-sequence.md): `cli/cmd/ssh-forward/` builds the CLI binary. `status` / `watch` auto-spawn a per-user manager and then run as its JSON-RPC client; `SSH_FORWARD_NO_AUTOSPAWN=1` keeps the in-process fallback for scripts and tests. `add` and `remove` write `policies.jsonc` and do not require a manager or Development Host. The Manager reads `policies.jsonc` (hot-reloaded) and `config.jsonc`'s `default_host`. `SSH_FORWARD_CONFIG_DIR` overrides the product config directory. `app.NewManager` is the composition seam where the CLI, a later TUI, and a later desktop core all land.
+The command surface below is implemented (slice 6, implementation-sequence.md): `cli/cmd/ssh-forward/` builds the CLI binary. `status` / `watch` auto-spawn a per-user manager and then run as its JSON-RPC client; `SSH_FORWARD_NO_AUTOSPAWN=1` keeps the in-process fallback for scripts and tests. `add` and `remove` write `policies.jsonc` and do not require a manager or Development Host. The Manager reads `policies.jsonc` (hot-reloaded) and `config.jsonc`'s `default_host`. `SSH_FORWARD_CONFIG_DIR` overrides the product config directory. `app.Connect` and `app.Serve` are the composition seam where the CLI, a later TUI, and a later desktop core all land; `app.NewManager` is the in-process adapter those paths and integration tests use.
 
 Still planned: comment-preserving HuJSON patches, idle manager exit, Monitor at Login, and revisioned configuration writes.
 
@@ -39,7 +39,7 @@ The product persists the `default_host` in `config.jsonc` (set with `ssh-forward
 - Linux: `$XDG_CONFIG_HOME/ssh-forward/`
 - Windows: `%AppData%/ssh-forward/`
 
-`--ssh-config PATH` points the OpenSSH adapter at an explicit client configuration file (default: the user's `~/.ssh/config`); the composition root resolves it to an absolute path. `SSH_FORWARD_CONFIG_DIR` overrides the directory for testing and portable operation. `config.jsonc` stores the default host today (a versioned, strict JSONC file read on startup; a corrupt file is diagnosed precisely, not silently ignored); the rest of the host and product settings surface lands with the desktop slice. `policies.jsonc` stores Forwarding Policies, hot-reloaded on the reconciliation cadence (~2s) — invalid input keeps the last valid set active.
+`--ssh-config PATH` points the OpenSSH adapter at an explicit client configuration file (default: the user's `~/.ssh/config`); `app` resolves it to an absolute path. `SSH_FORWARD_CONFIG_DIR` overrides the directory for testing and portable operation. `config.jsonc` stores the default host today (a versioned, strict JSONC file read on startup; a corrupt file is diagnosed precisely, not silently ignored); the rest of the host and product settings surface lands with the desktop slice. `policies.jsonc` stores Forwarding Policies, hot-reloaded on the reconciliation cadence (~2s) — invalid input keeps the last valid set active.
 
 The planned configuration watch (debounced preview/reconcile of external JSONC edits, revisioned UI writes that refuse to overwrite an external edit, minimal HuJSON patches with atomic replacement and backup) lands with the desktop's configuration surface.
 

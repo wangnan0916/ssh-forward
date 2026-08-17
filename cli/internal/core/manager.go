@@ -59,8 +59,9 @@ func NewManager() Manager {
 
 // NewConfiguredManager is the production seam: it wires the host, the host
 // connector (the OpenSSH Adapter), and the Forwarding Policy source (slice
-// 5; nil means unmatched listeners are not forwarded) into the Manager. app.NewManager is its only
-// production caller; tests inject through managerOptions instead.
+// 5; nil means unmatched listeners are not forwarded) into the Manager.
+// app.NewManager is its only production caller; tests inject through
+// managerOptions instead.
 func NewConfiguredManager(host HostAlias, connector HostConnector, policySources ...func() []ForwardingPolicy) Manager {
 	var policies func() []ForwardingPolicy
 	if len(policySources) != 0 {

@@ -10,9 +10,9 @@ import (
 )
 
 // RootCommand builds the cobra command tree: the command definitions and
-// help text live here (main assembles the Manager and executes). The
-// global flags — --host, --policies, --ssh-config, --version — are
-// persistent flags so they precede any subcommand and appear in help.
+// help text live here. Connect and Serve live in app so TUI and CLI share
+// them. The global flags — --host, --policies, --ssh-config, --version —
+// are persistent flags so they precede any subcommand and appear in help.
 func (a *App) RootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "ssh-forward",
@@ -269,10 +269,11 @@ func (a *App) managerCommand() *cobra.Command {
 		Short: "run the singleton manager in the foreground",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if a.ServeManager == nil {
-				return fmt.Errorf("manager serve is only available from the ssh-forward command")
+			err := app.Serve(cmd.Context(), a.options())
+			if app.IsResolution(err) {
+				return UsageError(err)
 			}
-			return a.ServeManager(cmd.Context())
+			return err
 		},
 	}
 	command.AddCommand(serve)

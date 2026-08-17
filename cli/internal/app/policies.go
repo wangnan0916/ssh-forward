@@ -173,8 +173,6 @@ func reverseCondition(condition core.PolicyCondition) fileCondition {
 	return out
 }
 
-// FilePolicySource returns a policy source for the Manager's reconciliation
-// seam: each call rereads policies.jsonc (the Manager refreshes on every
 // FilePolicyReader is the single read path for the policies file: the
 // Manager's reconciliation source and the CLI's diagnostic read share one
 // last-valid set and one last error, so both surfaces see the same truth.

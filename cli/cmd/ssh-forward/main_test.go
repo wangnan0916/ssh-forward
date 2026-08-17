@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/app"
+	"github.com/wangnan0916/ssh-forward/cli/internal/ipc"
 )
 
 // run() with no host or no command must fail before any Manager is built,
@@ -67,7 +67,7 @@ func TestRunCorruptConfigDiagnosed(t *testing.T) {
 	if code := run(context.Background(), []string{"status"}, &bytes.Buffer{}, &stdout, &stderr); code != 2 {
 		t.Fatalf("corrupt config exit code = %d, want 2", code)
 	}
-	if !strings.Contains(stderr.String(), defaultConfigPath()) {
+	if !strings.Contains(stderr.String(), app.DefaultLayout().Config) {
 		t.Fatalf("stderr = %q, want the config path in the diagnosis", stderr.String())
 	}
 }
@@ -172,7 +172,7 @@ func TestRunManagerSingletonServesClients(t *testing.T) {
 		served <- run(serveCtx, []string{"--host", "development", "--policies", policies, "manager", "serve"}, &bytes.Buffer{}, io.Discard, io.Discard)
 	}()
 	t.Cleanup(serveCancel)
-	waitForEndpoint(t, endpointPath())
+	waitForEndpoint(t, app.DefaultLayout().Socket)
 
 	// First client: status through the singleton.
 	var stdout bytes.Buffer
@@ -211,40 +211,8 @@ func TestRunManagerSingletonServesClients(t *testing.T) {
 
 func waitForEndpoint(t *testing.T, path string) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		conn, err := net.DialTimeout("unix", path, 100*time.Millisecond)
-		if err == nil {
-			_ = conn.Close()
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("manager endpoint never became ready: %v", err)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-}
-
-func TestBuildAdapterResolvesSSHConfigToAbsolute(t *testing.T) {
-	sshPath, err := exec.LookPath("ssh")
-	if err != nil {
-		t.Skip("no ssh binary")
-	}
-	adapter, err := buildAdapter(sshPath, "relative/config")
-	if err != nil {
-		t.Fatalf("buildAdapter: %v", err)
-	}
-	if adapter == nil {
-		t.Fatal("buildAdapter returned nil")
-	}
-	// The composition root resolves the path; the adapter itself refuses
-	// non-absolute config files (its own test pins that).
-	absolute, err := filepath.Abs("relative/config")
-	if err != nil {
+	if err := ipc.Wait(context.Background(), path, 3*time.Second); err != nil {
 		t.Fatal(err)
-	}
-	if adapter == nil || err != nil {
-		t.Fatalf("adapter = %v, abs = %v", adapter, absolute)
 	}
 }
 
@@ -320,7 +288,7 @@ func TestRunAutospawnsTheSingleton(t *testing.T) {
 
 	// The singleton is up, recorded its pid, and answers a second command
 	// without spawning anything new.
-	waitForEndpoint(t, endpointPath())
+	waitForEndpoint(t, app.DefaultLayout().Socket)
 	pidFile := filepath.Join(dir, "manager.pid")
 	raw, err := os.ReadFile(pidFile)
 	if err != nil {
@@ -361,42 +329,6 @@ func TestRunAutospawnsTheSingleton(t *testing.T) {
 	}
 }
 
-// TestResolveHostFallsBackToSSHConfig pins the discovery chain: with no
-// --host and no config, a single literal Host alias in the SSH client
-// configuration names the Development Host — the zero-setup path.
-func TestResolveHostFallsBackToSSHConfig(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), []byte("Host ubuntu\n    User dev\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	host, err := resolveHost("", "", false, nil, io.Discard)
-	if err != nil {
-		t.Fatalf("resolveHost: %v", err)
-	}
-	if host != "ubuntu" {
-		t.Fatalf("host = %q, want ubuntu", host)
-	}
-}
-
-func TestResolveHostReportsAmbiguousSSHHosts(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), []byte("Host ubuntu devbox\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	_, err := resolveHost("", "", false, nil, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "configured hosts: ubuntu, devbox") {
-		t.Fatalf("resolveHost err = %v, want the candidate list", err)
-	}
-}
-
 // TestRunHostList pins the discovery surface: hosts come from the SSH
 // client configuration, the current default is marked, --json is the
 // machine shape.
@@ -426,58 +358,6 @@ func TestRunHostList(t *testing.T) {
 	}
 }
 
-// TestResolveHostInteractivePick pins the ambiguous-host flow: on a
-// terminal the command prompts and the choice applies to this command
-// only — nothing is written to config.jsonc.
-func TestResolveHostInteractivePick(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), []byte("Host ubuntu devbox\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	var prompt bytes.Buffer
-	host, err := resolveHost("", "", true, strings.NewReader("2\n"), &prompt)
-	if err != nil {
-		t.Fatalf("resolveHost: %v", err)
-	}
-	if host != "devbox" {
-		t.Fatalf("host = %q, want devbox (choice 2)", host)
-	}
-	if !strings.Contains(prompt.String(), "1) ubuntu") || !strings.Contains(prompt.String(), "2) devbox") {
-		t.Fatalf("prompt = %q, want the numbered list", prompt.String())
-	}
-	// No auto-learn: config.jsonc was not written.
-	if _, err := app.LoadConfig(defaultConfigPath()); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("config.jsonc after the pick = %v, want it untouched", err)
-	}
-}
-
-func TestResolveHostInteractiveRejectsGarbage(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), []byte("Host ubuntu devbox\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// Garbage, then a valid choice: the prompt retries.
-	var prompt bytes.Buffer
-	host, err := resolveHost("", "", true, strings.NewReader("nope\n1\n"), &prompt)
-	if err != nil {
-		t.Fatalf("resolveHost: %v", err)
-	}
-	if host != "ubuntu" {
-		t.Fatalf("host = %q, want ubuntu after retry", host)
-	}
-	if !strings.Contains(prompt.String(), "invalid choice") {
-		t.Fatalf("prompt = %q, want the invalid-choice retry", prompt.String())
-	}
-}
-
 // TestRunSetDefault pins the explicit default-host command: after
 // ssh-forward default ALIAS, later commands resolve to it without
 // prompting.
@@ -492,11 +372,11 @@ func TestRunSetDefault(t *testing.T) {
 	if !strings.Contains(stdout.String(), "default host set to ubuntu") {
 		t.Fatalf("default output = %q", stdout.String())
 	}
-	host, err := defaultHost()
+	config, err := app.LoadConfig(app.DefaultLayout().Config)
 	if err != nil {
-		t.Fatalf("defaultHost: %v", err)
+		t.Fatalf("LoadConfig: %v", err)
 	}
-	if host != "ubuntu" {
-		t.Fatalf("defaultHost = %q, want ubuntu", host)
+	if config.DefaultHost != "ubuntu" {
+		t.Fatalf("default host = %q, want ubuntu", config.DefaultHost)
 	}
 }
