@@ -10,7 +10,8 @@ The Go CLI is designed independently for this product and has no command, output
 
 ```text
 ssh-forward add 5173                  # forward one remote port
-ssh-forward remove <forward-id>       # tear one down (ID comes from status)
+ssh-forward remove 8000               # tear down by port (the natural counterpart of add)
+ssh-forward remove manual:cli-xxx     # or by explicit forward ID (from status --json)
 ssh-forward approve 8080              # One-time Approval for a Listener
 ssh-forward suppress 8080             # One-time Suppression for a Listener
 ssh-forward default <alias>           # pin the default Development Host
