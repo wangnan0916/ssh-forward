@@ -5,11 +5,12 @@ import (
 	"io"
 	"net"
 	"net/netip"
-	"reflect"
 	"testing"
 	"time"
 
 	"ssh-forward/cli/internal/proxy"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestSOCKS5DialerConnectsToIPv6Loopback(t *testing.T) {
@@ -58,8 +59,8 @@ func TestSOCKS5DialerConnectsToIPv6Loopback(t *testing.T) {
 	want := []byte{5, 1, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0x1f, 0x90}
 	select {
 	case got := <-connectRequest:
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("SOCKS CONNECT request = %v, want %v", got, want)
+		if diff := cmp.Diff(got, want); diff != "" {
+			t.Fatalf("SOCKS CONNECT request mismatch (-got +want):\n%s", diff)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for SOCKS CONNECT request")

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,6 +14,8 @@ import (
 
 	"ssh-forward/cli/internal/core"
 	"ssh-forward/cli/internal/openssh"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestValidateAliasInvokesConfiguredOpenSSH(t *testing.T) {
@@ -38,8 +39,8 @@ func TestValidateAliasInvokesConfiguredOpenSSH(t *testing.T) {
 	}
 	got := strings.Fields(string(contents))
 	want := []string{"-G", "development"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("OpenSSH arguments = %q, want %q", got, want)
+	if diff := cmp.Diff(got, want); diff != "" {
+		t.Fatalf("OpenSSH arguments mismatch (-got +want):\n%s", diff)
 	}
 }
 
@@ -65,8 +66,8 @@ func TestValidateAliasUsesExplicitSSHConfig(t *testing.T) {
 	}
 	got := strings.Fields(string(contents))
 	want := []string{"-F", configPath, "-G", "development"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("OpenSSH arguments = %q, want %q", got, want)
+	if diff := cmp.Diff(got, want); diff != "" {
+		t.Fatalf("OpenSSH arguments mismatch (-got +want):\n%s", diff)
 	}
 }
 
@@ -178,15 +179,15 @@ listener.close()
 		t.Fatalf("OpenSSH arguments = %q, want 12 arguments", arguments)
 	}
 	wantPrefix := []string{"-T", "-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "ExitOnForwardFailure=yes", "-D"}
-	if !reflect.DeepEqual(arguments[:8], wantPrefix) {
-		t.Fatalf("OpenSSH argument prefix = %q, want %q", arguments[:8], wantPrefix)
+	if diff := cmp.Diff(arguments[:8], wantPrefix); diff != "" {
+		t.Fatalf("OpenSSH argument prefix mismatch (-got +want):\n%s", diff)
 	}
 	if !strings.HasPrefix(arguments[8], "127.0.0.1:") || strings.HasSuffix(arguments[8], ":0") {
 		t.Fatalf("dynamic forwarding address = %q, want a private IPv4 loopback port", arguments[8])
 	}
 	wantSuffix := []string{"development", "sh", "-s"}
-	if !reflect.DeepEqual(arguments[9:], wantSuffix) {
-		t.Fatalf("OpenSSH argument suffix = %q, want %q", arguments[9:], wantSuffix)
+	if diff := cmp.Diff(arguments[9:], wantSuffix); diff != "" {
+		t.Fatalf("OpenSSH argument suffix mismatch (-got +want):\n%s", diff)
 	}
 	for _, argument := range arguments {
 		if argument == "ClearAllForwardings=yes" {

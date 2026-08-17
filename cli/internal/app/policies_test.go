@@ -3,11 +3,12 @@ package app
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
 	"ssh-forward/cli/internal/core"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func strptr(value string) *string { return &value }
@@ -119,8 +120,8 @@ func TestLoadPoliciesRoundTrip(t *testing.T) {
 			Conditions: []core.PolicyCondition{{RemotePorts: &core.PortRange{From: 5432, To: 5432}}},
 		},
 	}
-	if !reflect.DeepEqual(policies, want) {
-		t.Fatalf("policies = %#v, want %#v", policies, want)
+	if diff := cmp.Diff(policies, want); diff != "" {
+		t.Fatalf("policies mismatch (-got +want):\n%s", diff)
 	}
 }
 
@@ -167,8 +168,8 @@ func TestFilePolicySourceKeepsLastValidOnInvalidEdit(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := source()
-	if !reflect.DeepEqual(second, first) {
-		t.Fatalf("invalid edit changed the source: got %#v, want %#v", second, first)
+	if diff := cmp.Diff(second, first); diff != "" {
+		t.Fatalf("invalid edit changed the source (-second +first):\n%s", diff)
 	}
 }
 
@@ -230,8 +231,8 @@ func TestMarshalPoliciesRoundTripsThroughLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if !reflect.DeepEqual(loaded, reloaded) {
-		t.Fatalf("round trip = %#v, want %#v", reloaded, loaded)
+	if diff := cmp.Diff(loaded, reloaded); diff != "" {
+		t.Fatalf("round trip mismatch (-loaded +reloaded):\n%s", diff)
 	}
 }
 
@@ -311,8 +312,8 @@ func TestMarshalPoliciesPinsEveryConditionField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if !reflect.DeepEqual(loaded, reloaded) {
-		t.Fatalf("round trip = %#v, want %#v", reloaded, loaded)
+	if diff := cmp.Diff(loaded, reloaded); diff != "" {
+		t.Fatalf("round trip mismatch (-loaded +reloaded):\n%s", diff)
 	}
 	for _, want := range []string{executable, ancestor, tree, scope, `"from":8080`, `"to":8081`} {
 		if !strings.Contains(string(encoded), want) {

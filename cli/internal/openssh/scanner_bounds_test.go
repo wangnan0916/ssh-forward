@@ -6,12 +6,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 
 	"ssh-forward/cli/internal/core"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestScannerRequiresCanonicalDecimalIdentities(t *testing.T) {
@@ -245,8 +246,8 @@ func TestScannerParsesDeclaredBudget(t *testing.T) {
 		}
 	})
 	want := core.ObservationBudget{Listeners: MaxObservedListeners, Sockets: MaxObservedSockets, ProcessRecords: MaxProcessRecords, MetadataBytes: MaxObservationMetadataBytes}
-	if !reflect.DeepEqual(set.Budget, want) {
-		t.Fatalf("declared Budget = %#v, want %#v", set.Budget, want)
+	if diff := cmp.Diff(set.Budget, want); diff != "" {
+		t.Fatalf("declared Budget mismatch (-got +want):\n%s", diff)
 	}
 }
 

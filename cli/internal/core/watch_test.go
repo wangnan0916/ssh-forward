@@ -3,9 +3,11 @@ package core
 import (
 	"context"
 	"errors"
-	"reflect"
 	"testing"
+	"testing/synctest"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestSnapshotStreamHonorsCancellationBeforeReadingAvailableSnapshot(t *testing.T) {
@@ -84,68 +86,75 @@ func TestWatchCoalescesUnreadSnapshotsToLatestRevision(t *testing.T) {
 }
 
 func TestManagerCloseWakesSnapshotStream(t *testing.T) {
-	manager := NewManager()
-	stream, err := manager.Watch(context.Background())
-	if err != nil {
-		t.Fatalf("Watch: %v", err)
-	}
-	if _, err := stream.Next(context.Background()); err != nil {
-		t.Fatalf("initial Next: %v", err)
-	}
-	nextDone := make(chan error, 1)
-	go func() {
-		_, err := stream.Next(context.Background())
-		nextDone <- err
-	}()
-	time.Sleep(10 * time.Millisecond)
-	if err := manager.Close(context.Background()); err != nil {
-		t.Fatalf("Manager.Close: %v", err)
-	}
-	select {
-	case err := <-nextDone:
-		var domainError *DomainError
-		if !errors.As(err, &domainError) || domainError.Kind != ErrorManagerClosed {
-			t.Fatalf("Next after Manager.Close error = %v, want manager_closed", err)
+	synctest.Test(t, func(t *testing.T) {
+		manager := NewManager()
+		stream, err := manager.Watch(t.Context())
+		if err != nil {
+			t.Fatalf("Watch: %v", err)
 		}
-	case <-time.After(time.Second):
-		t.Fatal("Manager.Close did not wake Next")
-	}
+		if _, err := stream.Next(t.Context()); err != nil {
+			t.Fatalf("initial Next: %v", err)
+		}
+		nextDone := make(chan error, 1)
+		go func() {
+			_, err := stream.Next(t.Context())
+			nextDone <- err
+		}()
+		synctest.Wait()
+		if err := manager.Close(t.Context()); err != nil {
+			t.Fatalf("Manager.Close: %v", err)
+		}
+		select {
+		case err := <-nextDone:
+			var domainError *DomainError
+			if !errors.As(err, &domainError) || domainError.Kind != ErrorManagerClosed {
+				t.Fatalf("Next after Manager.Close error = %v, want manager_closed", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("Manager.Close did not wake Next")
+		}
+	})
 }
 
 func TestWatchRejectsConcurrentNextWithoutClosingStream(t *testing.T) {
-	manager := NewManager()
-	t.Cleanup(func() { _ = manager.Close(context.Background()) })
-	stream, err := manager.Watch(context.Background())
-	if err != nil {
-		t.Fatalf("Watch: %v", err)
-	}
-	t.Cleanup(func() { _ = stream.Close() })
-	if _, err := stream.Next(context.Background()); err != nil {
-		t.Fatalf("initial Next: %v", err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		manager := NewManager()
+		defer func() {
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			_ = manager.Close(ctx)
+		}()
+		stream, err := manager.Watch(t.Context())
+		if err != nil {
+			t.Fatalf("Watch: %v", err)
+		}
+		if _, err := stream.Next(t.Context()); err != nil {
+			t.Fatalf("initial Next: %v", err)
+		}
 
-	firstContext, cancelFirst := context.WithCancel(context.Background())
-	firstDone := make(chan error, 1)
-	go func() {
-		_, err := stream.Next(firstContext)
-		firstDone <- err
-	}()
-	time.Sleep(10 * time.Millisecond)
-	secondContext, cancelSecond := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancelSecond()
-	if _, err := stream.Next(secondContext); !errors.Is(err, ErrConcurrentSnapshotNext) {
-		t.Fatalf("concurrent Next error = %v, want ErrConcurrentSnapshotNext", err)
-	}
-	cancelFirst()
-	if err := <-firstDone; !errors.Is(err, context.Canceled) {
-		t.Fatalf("cancelled Next error = %v, want context.Canceled", err)
-	}
+		firstContext, cancelFirst := context.WithCancel(t.Context())
+		firstDone := make(chan error, 1)
+		go func() {
+			_, err := stream.Next(firstContext)
+			firstDone <- err
+		}()
+		synctest.Wait()
+		secondContext, cancelSecond := context.WithTimeout(t.Context(), 100*time.Millisecond)
+		defer cancelSecond()
+		if _, err := stream.Next(secondContext); !errors.Is(err, ErrConcurrentSnapshotNext) {
+			t.Fatalf("concurrent Next error = %v, want ErrConcurrentSnapshotNext", err)
+		}
+		cancelFirst()
+		if err := <-firstDone; !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled Next error = %v, want context.Canceled", err)
+		}
 
-	thirdContext, cancelThird := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancelThird()
-	if _, err := stream.Next(thirdContext); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Next after cancellation error = %v, want context deadline", err)
-	}
+		thirdContext, cancelThird := context.WithTimeout(t.Context(), 10*time.Millisecond)
+		defer cancelThird()
+		if _, err := stream.Next(thirdContext); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Next after cancellation error = %v, want context deadline", err)
+		}
+	})
 }
 
 func TestWatchEnforcesManagerLimitAndReleasesCapacity(t *testing.T) {
@@ -233,8 +242,8 @@ func TestWatchReturnsSubscriptionSnapshotBeforeCoalescedLatest(t *testing.T) {
 			Forwards:             []ForwardSnapshot{},
 		},
 	}
-	if !reflect.DeepEqual(initial, wantInitial) {
-		t.Fatalf("initial Snapshot = %#v, want %#v", initial, wantInitial)
+	if diff := cmp.Diff(initial, wantInitial); diff != "" {
+		t.Fatalf("initial Snapshot mismatch (-got +want):\n%s", diff)
 	}
 
 	latest, err := stream.Next(ctx)
@@ -251,8 +260,8 @@ func TestWatchReturnsSubscriptionSnapshotBeforeCoalescedLatest(t *testing.T) {
 			Forwards:             []ForwardSnapshot{owner.projection},
 		},
 	}
-	if !reflect.DeepEqual(latest, wantLatest) {
-		t.Fatalf("latest Snapshot = %#v, want %#v", latest, wantLatest)
+	if diff := cmp.Diff(latest, wantLatest); diff != "" {
+		t.Fatalf("latest Snapshot mismatch (-got +want):\n%s", diff)
 	}
 
 	latest.Host.Forwards[0].LocalFamilies[0] = FamilyIPv6
@@ -260,7 +269,7 @@ func TestWatchReturnsSubscriptionSnapshotBeforeCoalescedLatest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Snapshot after caller mutation: %v", err)
 	}
-	if !reflect.DeepEqual(current, wantLatest) {
-		t.Fatalf("caller mutation changed canonical Snapshot: %#v", current)
+	if diff := cmp.Diff(current, wantLatest); diff != "" {
+		t.Fatalf("caller mutation changed canonical Snapshot (-got +want):\n%s", diff)
 	}
 }

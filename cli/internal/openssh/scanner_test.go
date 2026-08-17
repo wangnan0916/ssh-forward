@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,6 +14,8 @@ import (
 
 	"ssh-forward/cli/internal/core"
 	"ssh-forward/cli/internal/openssh"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestSessionReturnsValidatedListenerObservation(t *testing.T) {
@@ -130,8 +131,8 @@ listener.close()
 		SocketIdentity:  core.CapabilityFull,
 		ProcessMetadata: core.CapabilityPartial,
 	}
-	if observationSet.Sequence != 1 || !reflect.DeepEqual(observationSet.Capability, wantCapability) {
-		t.Fatalf("ObservationSet = %#v, want sequence 1 and capability %#v", observationSet, wantCapability)
+	if observationSet.Sequence != 1 || !cmp.Equal(observationSet.Capability, wantCapability) {
+		t.Fatalf("ObservationSet mismatch (-got +want):\n%s", cmp.Diff(observationSet.Capability, wantCapability))
 	}
 	if observationSet.ScannerVersion != 1 || len(observationSet.ScannerChecksum) != 64 {
 		t.Fatalf("scanner identity = version %d checksum %q", observationSet.ScannerVersion, observationSet.ScannerChecksum)
@@ -152,8 +153,8 @@ listener.close()
 		WorkingDirectory: "/workspace",
 		Arguments:        []string{"python3", "fixture.py"},
 	}}}}
-	if !reflect.DeepEqual(observation.Processes, wantProcesses) {
-		t.Fatalf("Process Chains = %#v, want %#v", observation.Processes, wantProcesses)
+	if diff := cmp.Diff(observation.Processes, wantProcesses); diff != "" {
+		t.Fatalf("Process Chains mismatch (-got +want):\n%s", diff)
 	}
 	scanner, err := os.ReadFile(scannerPath)
 	if err != nil {

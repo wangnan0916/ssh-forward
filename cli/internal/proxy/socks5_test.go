@@ -5,11 +5,12 @@ import (
 	"io"
 	"net"
 	"net/netip"
-	"reflect"
 	"testing"
 	"time"
 
 	"ssh-forward/cli/internal/proxy"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestSOCKS5DialerConnectsToIPv4AndPreservesHalfClose(t *testing.T) {
@@ -73,8 +74,8 @@ func TestSOCKS5DialerConnectsToIPv4AndPreservesHalfClose(t *testing.T) {
 	for _, want := range wantRequests {
 		select {
 		case got := <-requests:
-			if !reflect.DeepEqual(got, want) {
-				t.Fatalf("SOCKS request = %v, want %v", got, want)
+			if diff := cmp.Diff(got, want); diff != "" {
+				t.Fatalf("SOCKS request mismatch (-got +want):\n%s", diff)
 			}
 		case <-time.After(time.Second):
 			t.Fatal("timed out waiting for SOCKS request")

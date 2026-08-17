@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"net"
-	"reflect"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 type unusedConnector struct{}
@@ -50,8 +51,8 @@ func TestConfiguredManagerStartsDisconnectedWithoutConnecting(t *testing.T) {
 			Forwards:             []ForwardSnapshot{},
 		},
 	}
-	if !reflect.DeepEqual(snapshot, want) {
-		t.Fatalf("Snapshot = %#v, want %#v", snapshot, want)
+	if diff := cmp.Diff(snapshot, want); diff != "" {
+		t.Fatalf("Snapshot mismatch (-got +want):\n%s", diff)
 	}
 }
 
@@ -92,8 +93,8 @@ func TestAddManualForwardAllocatesEndpointAndConnectsLazily(t *testing.T) {
 		Revision: 1,
 		Forward:  wantForward,
 	}
-	if !reflect.DeepEqual(outcome, wantOutcome) {
-		t.Fatalf("Outcome = %#v, want %#v", outcome, wantOutcome)
+	if diff := cmp.Diff(outcome, wantOutcome); diff != "" {
+		t.Fatalf("Outcome mismatch (-got +want):\n%s", diff)
 	}
 	select {
 	case host := <-connector.started:
@@ -117,8 +118,8 @@ func TestAddManualForwardAllocatesEndpointAndConnectsLazily(t *testing.T) {
 			Forwards:             []ForwardSnapshot{wantForward},
 		},
 	}
-	if !reflect.DeepEqual(snapshot, wantSnapshot) {
-		t.Fatalf("Snapshot = %#v, want %#v", snapshot, wantSnapshot)
+	if diff := cmp.Diff(snapshot, wantSnapshot); diff != "" {
+		t.Fatalf("Snapshot mismatch (-got +want):\n%s", diff)
 	}
 }
 
@@ -196,8 +197,8 @@ func TestAddManualForwardIsIdempotentByCommandID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Execute: %v", err)
 	}
-	if !reflect.DeepEqual(second, first) {
-		t.Fatalf("retried Outcome = %#v, want original %#v", second, first)
+	if diff := cmp.Diff(second, first); diff != "" {
+		t.Fatalf("retried Outcome mismatch (-second +first):\n%s", diff)
 	}
 	snapshot, err := manager.Snapshot(context.Background())
 	if err != nil {
@@ -265,8 +266,8 @@ func TestConcurrentIdenticalCommandsShareOneOutcome(t *testing.T) {
 	if first.err != nil || second.err != nil {
 		t.Fatalf("concurrent Execute errors = %v, %v", first.err, second.err)
 	}
-	if !reflect.DeepEqual(first.outcome, second.outcome) {
-		t.Fatalf("concurrent Outcomes differ: %#v and %#v", first.outcome, second.outcome)
+	if diff := cmp.Diff(first.outcome, second.outcome); diff != "" {
+		t.Fatalf("concurrent Outcomes differ (-first +second):\n%s", diff)
 	}
 	snapshot, err := manager.Snapshot(context.Background())
 	if err != nil {
@@ -344,8 +345,8 @@ func TestRemoveManualForwardReleasesLocalEndpoint(t *testing.T) {
 		Revision: 2,
 		Forward:  added.Forward,
 	}
-	if !reflect.DeepEqual(removed, wantOutcome) {
-		t.Fatalf("remove Outcome = %#v, want %#v", removed, wantOutcome)
+	if diff := cmp.Diff(removed, wantOutcome); diff != "" {
+		t.Fatalf("remove Outcome mismatch (-got +want):\n%s", diff)
 	}
 	snapshot, err := manager.Snapshot(context.Background())
 	if err != nil {

@@ -3,10 +3,11 @@ package core
 import (
 	"context"
 	"net/netip"
-	"reflect"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 type scriptedForwardAllocator struct {
@@ -81,8 +82,8 @@ func TestManagerOwnsForwardAndLocalEndpointAsOneLifetime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add Manual Forward: %v", err)
 	}
-	if !reflect.DeepEqual(added.Forward, owner.projection) {
-		t.Fatalf("added Forward = %#v, want owner projection %#v", added.Forward, owner.projection)
+	if diff := cmp.Diff(added.Forward, owner.projection); diff != "" {
+		t.Fatalf("added Forward mismatch (-got +want):\n%s", diff)
 	}
 	request := <-allocator.requests
 	wantRequest := forwardSpec{
@@ -120,8 +121,8 @@ func TestManagerOwnsForwardAndLocalEndpointAsOneLifetime(t *testing.T) {
 	if result.err != nil {
 		t.Fatalf("remove Manual Forward: %v", result.err)
 	}
-	if !reflect.DeepEqual(result.outcome.Forward, owner.projection) {
-		t.Fatalf("removed Forward = %#v, want owner projection %#v", result.outcome.Forward, owner.projection)
+	if diff := cmp.Diff(result.outcome.Forward, owner.projection); diff != "" {
+		t.Fatalf("removed Forward mismatch (-got +want):\n%s", diff)
 	}
 	snapshot, err = manager.Snapshot(context.Background())
 	if err != nil {

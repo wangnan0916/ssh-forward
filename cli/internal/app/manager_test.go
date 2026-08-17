@@ -5,11 +5,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"testing"
 
 	"ssh-forward/cli/internal/core"
 	"ssh-forward/cli/internal/openssh"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 // TestNewManagerWiresPolicySource pins the composition-root seam (slice 5):
@@ -55,7 +56,7 @@ func TestNewManagerWiresPolicySource(t *testing.T) {
 		Action:     core.PolicyAutoForward,
 		Conditions: []core.PolicyCondition{{RemotePorts: &core.PortRange{From: 8080, To: 8080}}},
 	}}
-	if !reflect.DeepEqual(loaded, want) {
-		t.Fatalf("policies = %#v, want %#v", loaded, want)
+	if diff := cmp.Diff(loaded, want); diff != "" {
+		t.Fatalf("policies mismatch (-got +want):\n%s", diff)
 	}
 }

@@ -10,7 +10,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +17,8 @@ import (
 
 	"ssh-forward/cli/internal/core"
 	managerjsonrpc "ssh-forward/cli/internal/jsonrpc"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 type snapshotManager struct {
@@ -340,8 +341,8 @@ func TestServeExecutesAddManualForward(t *testing.T) {
 	}
 	manager := &snapshotManager{
 		execute: func(_ context.Context, command core.Command) (core.Outcome, error) {
-			if !reflect.DeepEqual(command, wantCommand) {
-				return core.Outcome{}, fmt.Errorf("command = %#v, want %#v", command, wantCommand)
+			if !cmp.Equal(command, wantCommand) {
+				return core.Outcome{}, fmt.Errorf("command mismatch (-got +want):\n%s", cmp.Diff(command, wantCommand))
 			}
 			return core.Outcome{
 				Kind:     core.OutcomeForwardAdded,
@@ -371,8 +372,8 @@ func TestServeExecutesRemoveForward(t *testing.T) {
 	}
 	manager := &snapshotManager{
 		execute: func(_ context.Context, command core.Command) (core.Outcome, error) {
-			if !reflect.DeepEqual(command, wantCommand) {
-				return core.Outcome{}, fmt.Errorf("command = %#v, want %#v", command, wantCommand)
+			if !cmp.Equal(command, wantCommand) {
+				return core.Outcome{}, fmt.Errorf("command mismatch (-got +want):\n%s", cmp.Diff(command, wantCommand))
 			}
 			return core.Outcome{
 				Kind:     core.OutcomeForwardRemoved,
@@ -505,8 +506,8 @@ func TestServeExecutesApproveListener(t *testing.T) {
 	}
 	manager := &snapshotManager{
 		execute: func(_ context.Context, command core.Command) (core.Outcome, error) {
-			if !reflect.DeepEqual(command, wantCommand) {
-				return core.Outcome{}, fmt.Errorf("command = %#v, want %#v", command, wantCommand)
+			if !cmp.Equal(command, wantCommand) {
+				return core.Outcome{}, fmt.Errorf("command mismatch (-got +want):\n%s", cmp.Diff(command, wantCommand))
 			}
 			return core.Outcome{
 				Kind:     core.OutcomeApprovalRecorded,
@@ -537,8 +538,8 @@ func TestServeExecutesSuppressListener(t *testing.T) {
 	}
 	manager := &snapshotManager{
 		execute: func(_ context.Context, command core.Command) (core.Outcome, error) {
-			if !reflect.DeepEqual(command, wantCommand) {
-				return core.Outcome{}, fmt.Errorf("command = %#v, want %#v", command, wantCommand)
+			if !cmp.Equal(command, wantCommand) {
+				return core.Outcome{}, fmt.Errorf("command mismatch (-got +want):\n%s", cmp.Diff(command, wantCommand))
 			}
 			return core.Outcome{Kind: core.OutcomeSuppressionRecorded, Revision: 10}, nil
 		},
@@ -807,7 +808,7 @@ func assertJSONEqual(t *testing.T, got, want []byte) {
 	if err := json.Unmarshal(want, &wantValue); err != nil {
 		t.Fatalf("decode expected response: %v", err)
 	}
-	if !reflect.DeepEqual(gotValue, wantValue) {
-		t.Fatalf("response = %s, want %s", got, want)
+	if diff := cmp.Diff(gotValue, wantValue); diff != "" {
+		t.Fatalf("response mismatch (-got +want):\n%s", diff)
 	}
 }

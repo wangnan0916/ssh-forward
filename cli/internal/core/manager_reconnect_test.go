@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -43,30 +44,44 @@ func (c permanentFailureConnector) Connect(context.Context, HostAlias) (hostSess
 }
 
 func TestManagerSuspendsReconnectAfterPermanentSSHFailure(t *testing.T) {
-	connector := permanentFailureConnector{started: make(chan struct{})}
-	manager := newManager(managerOptions{
-		host:      HostAlias("development"),
-		connector: connector,
-		retryWait: func(context.Context, time.Duration) bool {
-			t.Fatal("permanent failure unexpectedly entered retry backoff")
-			return false
-		},
+	synctest.Test(t, func(t *testing.T) {
+		connector := permanentFailureConnector{started: make(chan struct{})}
+		manager := newManager(managerOptions{
+			host:             HostAlias("development"),
+			connector:        connector,
+			forwardAllocator: &autoAllocator{},
+			retryWait: func(context.Context, time.Duration) bool {
+				t.Fatal("permanent failure unexpectedly entered retry backoff")
+				return false
+			},
+		})
+		defer func() {
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			_ = manager.Close(ctx)
+		}()
+		if _, err := manager.Execute(t.Context(), AddManualForward{
+			CommandID:  CommandID("operation-1"),
+			Host:       HostAlias("development"),
+			RemotePort: freePort(t),
+			Family:     FamilyAuto,
+		}); err != nil {
+			t.Fatalf("add Manual Forward: %v", err)
+		}
+		select {
+		case <-connector.started:
+		case <-time.After(time.Second):
+			t.Fatal("connection attempt did not start")
+		}
+		synctest.Wait()
+		snapshot, err := manager.Snapshot(t.Context())
+		if err != nil {
+			t.Fatalf("Snapshot: %v", err)
+		}
+		if got := snapshot.Host.Connection; got != ConnectionDisconnected || snapshot.Revision != 2 {
+			t.Fatalf("connection = %q revision %d, want disconnected revision 2", got, snapshot.Revision)
+		}
 	})
-	t.Cleanup(func() { _ = manager.Close(context.Background()) })
-	if _, err := manager.Execute(context.Background(), AddManualForward{
-		CommandID:  CommandID("operation-1"),
-		Host:       HostAlias("development"),
-		RemotePort: freePort(t),
-		Family:     FamilyAuto,
-	}); err != nil {
-		t.Fatalf("add Manual Forward: %v", err)
-	}
-	select {
-	case <-connector.started:
-	case <-time.After(time.Second):
-		t.Fatal("connection attempt did not start")
-	}
-	waitForConnectionState(t, manager, ConnectionDisconnected, 2)
 }
 
 func TestManualForwardRetainsEndpointAcrossSessionReplacement(t *testing.T) {
@@ -231,51 +246,65 @@ func (c *countingSuspendConnector) Connect(context.Context, HostAlias) (hostSess
 // A terminal failure must not leave the Manager permanently unable to
 // reconnect: a later command that needs transport re-arms the host actor.
 func TestManagerRearmsConnectionAfterTerminalFailure(t *testing.T) {
-	connector := &countingSuspendConnector{started: make(chan int, 4)}
-	manager := newManager(managerOptions{
-		host:      HostAlias("development"),
-		connector: connector,
-		retryWait: func(context.Context, time.Duration) bool {
-			t.Fatal("terminal failure unexpectedly entered retry backoff")
-			return false
-		},
+	synctest.Test(t, func(t *testing.T) {
+		connector := &countingSuspendConnector{started: make(chan int, 4)}
+		manager := newManager(managerOptions{
+			host:             HostAlias("development"),
+			connector:        connector,
+			forwardAllocator: &autoAllocator{},
+			retryWait: func(context.Context, time.Duration) bool {
+				t.Fatal("terminal failure unexpectedly entered retry backoff")
+				return false
+			},
+		})
+		defer func() {
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			_ = manager.Close(ctx)
+		}()
+
+		if _, err := manager.Execute(t.Context(), AddManualForward{
+			CommandID:  CommandID("operation-1"),
+			Host:       HostAlias("development"),
+			RemotePort: freePort(t),
+			Family:     FamilyAuto,
+		}); err != nil {
+			t.Fatalf("first add Manual Forward: %v", err)
+		}
+		select {
+		case attempt := <-connector.started:
+			if attempt != 1 {
+				t.Fatalf("first connection attempt = %d, want 1", attempt)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("first connection attempt did not start")
+		}
+		synctest.Wait()
+		snapshot, err := manager.Snapshot(t.Context())
+		if err != nil {
+			t.Fatalf("Snapshot: %v", err)
+		}
+		if got := snapshot.Host.Connection; got != ConnectionDisconnected || snapshot.Revision != 2 {
+			t.Fatalf("connection = %q revision %d, want disconnected revision 2", got, snapshot.Revision)
+		}
+
+		if _, err := manager.Execute(t.Context(), AddManualForward{
+			CommandID:  CommandID("operation-2"),
+			Host:       HostAlias("development"),
+			RemotePort: freePort(t),
+			Family:     FamilyAuto,
+		}); err != nil {
+			t.Fatalf("second add Manual Forward: %v", err)
+		}
+		select {
+		case attempt := <-connector.started:
+			if attempt != 2 {
+				t.Fatalf("re-arm connection attempt = %d, want 2", attempt)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("re-arm connection attempt did not start")
+		}
 	})
-	t.Cleanup(func() { _ = manager.Close(context.Background()) })
-
-	if _, err := manager.Execute(context.Background(), AddManualForward{
-		CommandID:  CommandID("operation-1"),
-		Host:       HostAlias("development"),
-		RemotePort: freePort(t),
-		Family:     FamilyAuto,
-	}); err != nil {
-		t.Fatalf("first add Manual Forward: %v", err)
-	}
-	select {
-	case attempt := <-connector.started:
-		if attempt != 1 {
-			t.Fatalf("first connection attempt = %d, want 1", attempt)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("first connection attempt did not start")
-	}
-	waitForConnectionState(t, manager, ConnectionDisconnected, 2)
-
-	if _, err := manager.Execute(context.Background(), AddManualForward{
-		CommandID:  CommandID("operation-2"),
-		Host:       HostAlias("development"),
-		RemotePort: freePort(t),
-		Family:     FamilyAuto,
-	}); err != nil {
-		t.Fatalf("second add Manual Forward: %v", err)
-	}
-	select {
-	case attempt := <-connector.started:
-		if attempt != 2 {
-			t.Fatalf("re-arm connection attempt = %d, want 2", attempt)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("re-arm connection attempt did not start")
-	}
 }
 
 // TestCommandAlwaysAttemptsConnectionAfterTerminalSession pins the arming

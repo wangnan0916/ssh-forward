@@ -2,10 +2,11 @@ package core_test
 
 import (
 	"context"
-	"reflect"
 	"testing"
 
 	"ssh-forward/cli/internal/core"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestNewManagerSnapshotReturnsInitialState(t *testing.T) {
@@ -21,7 +22,7 @@ func TestNewManagerSnapshotReturnsInitialState(t *testing.T) {
 		t.Fatalf("snapshot initial manager state: %v", err)
 	}
 	want := core.Snapshot{Revision: 0}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("initial snapshot = %#v, want %#v", got, want)
+	if diff := cmp.Diff(got, want); diff != "" {
+		t.Fatalf("initial snapshot mismatch (-got +want):\n%s", diff)
 	}
 }
