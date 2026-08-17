@@ -366,3 +366,80 @@ func TestPolicyListMissingFile(t *testing.T) {
 		t.Fatal("policy list on a missing file succeeded")
 	}
 }
+
+// TestRemoveByPort pins the port form of remove: "remove 8000" tears down
+// the Manual Forward on that remote port (the counterpart of add).
+func TestRemoveByPort(t *testing.T) {
+	manager := &fakeManager{
+		snapshot: snapshotWithHost(), // manual:op-1 → ipv4:8080
+		execute: func(_ context.Context, command core.Command) (core.Outcome, error) {
+			remove, ok := command.(core.RemoveForward)
+			if !ok {
+				t.Fatalf("execute got %T, want RemoveForward", command)
+			}
+			if remove.ForwardID != core.ForwardID("manual:op-1") {
+				t.Fatalf("remove target = %q, want manual:op-1", remove.ForwardID)
+			}
+			return core.Outcome{Kind: core.OutcomeForwardRemoved, Revision: 6, Forward: core.ForwardSnapshot{ID: remove.ForwardID}}, nil
+		},
+	}
+	output, err := runApp(t, manager, "remove", "8080")
+	if err != nil {
+		t.Fatalf("remove by port: %v", err)
+	}
+	if !strings.Contains(output, "forward_removed") {
+		t.Fatalf("remove by port output = %q", output)
+	}
+}
+
+// TestRemoveByPortRejectsManagedOnly pins the guard: a port served only
+// by a Managed Forward must not be removed by port — that would fight
+// reconciliation.
+func TestRemoveByPortRejectsManagedOnly(t *testing.T) {
+	manager := &fakeManager{snapshot: core.Snapshot{
+		Revision: 5,
+		Host: &core.HostSnapshot{
+			Alias: "development",
+			Forwards: []core.ForwardSnapshot{
+				{ID: core.ForwardID("managed:ipv4:loopback:8080"), Kind: core.ForwardManaged, RemotePort: 8080},
+			},
+		},
+	}}
+	_, err := runApp(t, manager, "remove", "8080")
+	if err == nil || !strings.Contains(err.Error(), "managed forward") {
+		t.Fatalf("remove err = %v, want the managed-forward guard", err)
+	}
+}
+
+// TestStatusCollapsesQuietListeners pins the focus rule: listeners with
+// no lifetime, no Ask decision, and no forward fold into a summary line.
+func TestStatusCollapsesQuietListeners(t *testing.T) {
+	host := core.HostSnapshot{
+		Alias:      core.HostAlias("development"),
+		Connection: core.ConnectionConnected,
+		Discovery: core.DiscoverySnapshot{
+			State: core.DiscoveryHealthy, BaselineEstablished: true, ScannerVersion: 1,
+		},
+		ListenerObservations: []core.ListenerObservation{
+			{Family: core.FamilyIPv4, BindScope: core.BindLoopback, RemotePort: 8080},
+			{Family: core.FamilyIPv4, BindScope: core.BindLoopback, RemotePort: 631}, // quiet
+			{Family: core.FamilyIPv4, BindScope: core.BindWildcard, RemotePort: 22},  // quiet
+		},
+		ListenerLifetimes: []core.ListenerLifetimeSnapshot{
+			{Family: core.FamilyIPv4, BindScope: core.BindLoopback, RemotePort: 8080, Status: core.LifetimeContinuous, PostBaseline: true},
+		},
+		AskListeners: []core.ListenerAskSnapshot{
+			{Family: core.FamilyIPv4, BindScope: core.BindLoopback, RemotePort: 8080},
+		},
+	}
+	output, err := runApp(t, &fakeManager{snapshot: core.Snapshot{Revision: 1, Host: &host}}, "status")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(output, "and 2 quiet listeners") {
+		t.Fatalf("status output missing the quiet summary:\n%s", output)
+	}
+	if strings.Contains(output, "631/ipv4") || strings.Contains(output, "22/ipv4") {
+		t.Fatalf("quiet listeners leaked into the detail list:\n%s", output)
+	}
+}

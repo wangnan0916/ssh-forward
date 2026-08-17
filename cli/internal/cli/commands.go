@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -65,6 +66,21 @@ func (a *App) writeStatusHuman(snapshot core.Snapshot) error {
 	if host.Discovery.Diagnostic != "" {
 		fmt.Fprintf(&builder, "  diagnostic: %s\n", host.Discovery.Diagnostic)
 	}
+
+	// Forwards first: the things this user's own commands created are
+	// what status is for.
+	if len(host.Forwards) != 0 {
+		builder.WriteString("Forwards:\n")
+		for _, forward := range host.Forwards {
+			fmt.Fprintf(&builder, "  %s (%s) → %s:%d (local %d)\n",
+				forward.ID, forward.Kind, forward.RemoteFamily, forward.RemotePort, forward.AllocatedLocalPort)
+		}
+	}
+
+	// Listeners: every listening endpoint the scanner found on the host.
+	// Quiet ones — no lifetime, no Ask decision, no forward — collapse
+	// into a summary line so the list answers "what needs me" instead of
+	// dumping every system port.
 	if len(host.ListenerObservations) != 0 {
 		statusByID := make(map[listenerID]string, len(host.ListenerLifetimes))
 		for _, lifetime := range host.ListenerLifetimes {
@@ -74,26 +90,38 @@ func (a *App) writeStatusHuman(snapshot core.Snapshot) error {
 		for _, candidate := range host.AskListeners {
 			askByID[listenerID{family: candidate.Family, scope: candidate.BindScope, port: candidate.RemotePort}] = true
 		}
-		builder.WriteString("Listeners:\n")
+		forwardedByID := make(map[listenerID]bool)
+		for _, forward := range host.Forwards {
+			forwardedByID[listenerID{family: forward.RemoteFamily, scope: "", port: forward.RemotePort}] = true
+		}
+		builder.WriteString("Listeners on the host (needing attention):\n")
+		shown := 0
+		quiet := 0
 		for _, listener := range host.ListenerObservations {
 			id := idOfListener(listener)
-			status, tracked := statusByID[id]
-			if !tracked {
-				status = "untracked"
+			ask := askByID[id]
+			_, tracked := statusByID[id]
+			forwarded := forwardedByID[listenerID{family: listener.Family, scope: "", port: listener.RemotePort}]
+			if !tracked && !ask && !forwarded {
+				quiet++
+				continue
 			}
-			ask := ""
-			if askByID[id] {
-				ask = " — Ask"
+			shown++
+			marker := ""
+			switch {
+			case ask:
+				marker = " — Ask"
+			case forwarded:
+				marker = " — forwarded"
 			}
 			fmt.Fprintf(&builder, "  %d/%s %s — %s%s\n",
-				listener.RemotePort, listener.Family, listener.BindScope, status, ask)
+				listener.RemotePort, listener.Family, listener.BindScope, statusByID[id], marker)
 		}
-	}
-	if len(host.Forwards) != 0 {
-		builder.WriteString("Forwards:\n")
-		for _, forward := range host.Forwards {
-			fmt.Fprintf(&builder, "  %s (%s) → %s:%d (local %d)\n",
-				forward.ID, forward.Kind, forward.RemoteFamily, forward.RemotePort, forward.AllocatedLocalPort)
+		if quiet > 0 {
+			fmt.Fprintf(&builder, "  … and %d quiet listeners\n", quiet)
+		}
+		if shown == 0 {
+			builder.WriteString("  (none)\n")
 		}
 	}
 	_, err := io.WriteString(a.Stdout, builder.String())
@@ -129,8 +157,9 @@ func (a *App) runForwardAdd(ctx context.Context, args []string) error {
 	return a.writeOutcome(outcome, *common.jsonOutput)
 }
 
-// runForwardRemove is the top-level "remove" command: the forward ID is
-// the one positional argument (it comes from status).
+// runForwardRemove is the top-level "remove" command. The argument is the
+// port you added ("remove 8000" — the natural counterpart of add), or an
+// explicit forward ID from status for scripts and managed forwards.
 func (a *App) runForwardRemove(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("remove", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -141,16 +170,73 @@ func (a *App) runForwardRemove(ctx context.Context, args []string) error {
 		return err
 	}
 	if len(positional) != 1 {
-		return fmt.Errorf("remove requires one forward ID")
+		return fmt.Errorf("remove requires one port or forward ID")
+	}
+	target := positional[0]
+	if port, ok := parsePort(target); ok {
+		return a.removeByPort(ctx, port, *jsonOutput)
 	}
 	outcome, err := a.Manager.Execute(ctx, core.RemoveForward{
 		CommandID: core.CommandID(operationIDOrRandom(*operationID)),
-		ForwardID: core.ForwardID(positional[0]),
+		ForwardID: core.ForwardID(target),
 	})
 	if err != nil {
 		return err
 	}
 	return a.writeOutcome(outcome, *jsonOutput)
+}
+
+// parsePort reports whether the argument is a plain port number.
+func parsePort(text string) (uint16, bool) {
+	port, err := strconv.ParseUint(text, 10, 16)
+	if err != nil || port == 0 {
+		return 0, false
+	}
+	return uint16(port), true
+}
+
+// removeByPort tears down every Manual Forward on the remote port — the
+// forwards this user's own add commands created. A port served only by a
+// Managed Forward names the policy (or the ID) instead, so reconciliation
+// cannot be fought by accident.
+func (a *App) removeByPort(ctx context.Context, port uint16, jsonOutput bool) error {
+	snapshot, err := a.Manager.Snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	var manualIDs []core.ForwardID
+	var managedID string
+	if snapshot.Host != nil {
+		for _, forward := range snapshot.Host.Forwards {
+			if forward.RemotePort != port {
+				continue
+			}
+			if forward.Kind == core.ForwardManual {
+				manualIDs = append(manualIDs, forward.ID)
+			} else if managedID == "" {
+				managedID = string(forward.ID)
+			}
+		}
+	}
+	if len(manualIDs) == 0 {
+		if managedID != "" {
+			return fmt.Errorf("port %d is served by the managed forward %s; remove it by ID or change the policy", port, managedID)
+		}
+		return fmt.Errorf("no forward on port %d", port)
+	}
+	for _, id := range manualIDs {
+		outcome, err := a.Manager.Execute(ctx, core.RemoveForward{
+			CommandID: core.CommandID(operationIDOrRandom("")),
+			ForwardID: id,
+		})
+		if err != nil {
+			return err
+		}
+		if err := a.writeOutcome(outcome, jsonOutput); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // runListenerApprove is the top-level "approve" command: a One-time
