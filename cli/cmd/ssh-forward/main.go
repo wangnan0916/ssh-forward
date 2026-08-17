@@ -10,12 +10,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"syscall"
+	"time"
 
 	"ssh-forward/cli/internal/app"
 	"ssh-forward/cli/internal/cli"
@@ -66,44 +68,39 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	// Singleton mode (ADR-0016): when the per-user manager runs, every
-	// command becomes a client of its Unix socket. The manager owns the
-	// Development Host; a conflicting --host is a warning, not an error.
+	// command becomes a client of its Unix socket.
 	if clientManager, err := ipc.Dial(ctx, endpointPath()); err == nil {
-		defer func() { _ = clientManager.Close(context.Background()) }()
-		snapshot, err := clientManager.Snapshot(ctx)
-		if err != nil || snapshot.Host == nil {
-			fmt.Fprintln(stderr, "ssh-forward: the running manager has no Development Host configured")
+		return runAsClient(ctx, clientManager, rest, *host, *policies, stdout, stderr)
+	}
+
+	// The host resolves before anything may be spawned: a manager needs
+	// one Development Host.
+	resolvedHost, err := resolveHost(*host)
+	if err != nil {
+		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
+		return 2
+	}
+
+	// Auto-spawn: the first command starts the per-user singleton in the
+	// background (its own executable, by absolute path) and then becomes
+	// its client. SSH_FORWARD_NO_AUTOSPAWN=1 disables this for scripts
+	// and tests.
+	if os.Getenv("SSH_FORWARD_NO_AUTOSPAWN") != "1" {
+		if err := spawnManager(resolvedHost, *policies, *sshConfig); err != nil {
+			fmt.Fprintf(stderr, "ssh-forward: could not start the manager: %v\n", err)
 			return 1
 		}
-		if *host != "" && *host != string(snapshot.Host.Alias) {
-			fmt.Fprintf(stderr, "ssh-forward: warning: --host %s ignored; the running manager owns %s\n", *host, snapshot.Host.Alias)
-		}
-		app := &cli.App{
-			Manager:      clientManager,
-			Host:         snapshot.Host.Alias,
-			PoliciesPath: *policies,
-			Stdout:       stdout,
-			Stderr:       stderr,
-		}
-		if err := app.Run(ctx, rest); err != nil {
+		if err := waitForManagerEndpoint(ctx, endpointPath(), 5*time.Second); err != nil {
 			fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
 			return 1
 		}
-		return 0
+		if clientManager, err := ipc.Dial(ctx, endpointPath()); err == nil {
+			return runAsClient(ctx, clientManager, rest, *host, *policies, stdout, stderr)
+		}
 	}
 
 	// No singleton: run one Manager for this command's lifetime (the
 	// in-process fallback keeps scripts and tests on the old model).
-	resolvedHost := *host
-	if resolvedHost == "" {
-		defaulted, err := defaultHost()
-		if err != nil {
-			fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
-			return 2
-		}
-		resolvedHost = defaulted
-	}
-
 	sshPath, err := exec.LookPath("ssh")
 	if err != nil {
 		fmt.Fprintf(stderr, "ssh-forward: cannot find the OpenSSH client: %v\n", err)
@@ -131,6 +128,101 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// runAsClient executes one command against the running singleton. The
+// manager owns the Development Host; a conflicting --host is a warning,
+// not an error.
+func runAsClient(ctx context.Context, clientManager core.Manager, rest []string, hostFlag, policies string, stdout, stderr io.Writer) int {
+	defer func() { _ = clientManager.Close(context.Background()) }()
+	snapshot, err := clientManager.Snapshot(ctx)
+	if err != nil || snapshot.Host == nil {
+		fmt.Fprintln(stderr, "ssh-forward: the running manager has no Development Host configured")
+		return 1
+	}
+	if hostFlag != "" && hostFlag != string(snapshot.Host.Alias) {
+		fmt.Fprintf(stderr, "ssh-forward: warning: --host %s ignored; the running manager owns %s\n", hostFlag, snapshot.Host.Alias)
+	}
+	app := &cli.App{
+		Manager:      clientManager,
+		Host:         snapshot.Host.Alias,
+		PoliciesPath: policies,
+		Stdout:       stdout,
+		Stderr:       stderr,
+	}
+	if err := app.Run(ctx, rest); err != nil {
+		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+// resolveHost names the Development Host: --host wins, then config.jsonc's
+// default_host.
+func resolveHost(hostFlag string) (string, error) {
+	if hostFlag != "" {
+		return hostFlag, nil
+	}
+	return defaultHost()
+}
+
+// spawnManager starts the per-user singleton in the background: its own
+// executable (never $PATH), detached into its own session, logging to
+// manager.log next to the socket. The caller never waits on it; the
+// manager outlives this command.
+func spawnManager(host, policies, sshConfig string) error {
+	// SSH_FORWARD_MANAGER_BINARY overrides the executable (tests spawn a
+	// real build); production always starts itself by absolute path.
+	executable := os.Getenv("SSH_FORWARD_MANAGER_BINARY")
+	if executable == "" {
+		var err error
+		executable, err = os.Executable()
+		if err != nil {
+			return err
+		}
+	}
+	if err := os.MkdirAll(configDir(), 0o700); err != nil {
+		return err
+	}
+	logFile, err := os.OpenFile(filepath.Join(configDir(), "manager.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return err
+	}
+	args := []string{"--host", host, "--policies", policies, "manager", "serve"}
+	if sshConfig != "" {
+		args = append(args, "--ssh-config", sshConfig)
+	}
+	command := exec.Command(executable, args...)
+	command.Stdin = nil
+	command.Stdout = logFile
+	command.Stderr = logFile
+	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := command.Start(); err != nil {
+		_ = logFile.Close()
+		return err
+	}
+	_ = logFile.Close()
+	return nil
+}
+
+// waitForManagerEndpoint polls the socket until the spawned singleton
+// answers or the deadline passes, pointing failures at the manager log.
+func waitForManagerEndpoint(ctx context.Context, path string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		conn, err := net.DialTimeout("unix", path, 100*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("manager did not start within %s (see %s)", timeout, filepath.Join(configDir(), "manager.log"))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 // configDir resolves the product configuration directory per
@@ -211,6 +303,18 @@ func runManager(ctx context.Context, rest []string, hostFlag, policies, sshConfi
 	policyReader := app.NewFilePolicyReader(policies)
 	manager := app.NewManager(core.HostAlias(resolvedHost), adapter, policyReader.Source())
 	defer func() { _ = manager.Close(context.Background()) }()
+	// The pid file lets clients and scripts find the singleton; it is
+	// removed on a clean stop.
+	if err := os.MkdirAll(configDir(), 0o700); err != nil {
+		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
+		return 1
+	}
+	pidFile := filepath.Join(configDir(), "manager.pid")
+	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
+		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
+		return 1
+	}
+	defer func() { _ = os.Remove(pidFile) }()
 	if err := ipc.Serve(ctx, endpointPath(), manager); err != nil {
 		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
 		return 1

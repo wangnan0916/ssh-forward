@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -18,6 +20,7 @@ import (
 // so these tests never touch the network or the configured Development
 // Host; the command surface itself is tested in cli/internal/cli.
 func TestRunRequiresHost(t *testing.T) {
+	disableAutospawn(t)
 	var stdout, stderr bytes.Buffer
 	if code := run(context.Background(), []string{"status"}, &stdout, &stderr); code == 0 {
 		t.Fatal("run without --host succeeded")
@@ -30,6 +33,7 @@ func TestRunRequiresHost(t *testing.T) {
 // TestRunDefaultHostFromConfig pins the Persistent intent contract: with
 // no --host, config.jsonc's default_host names the Development Host.
 func TestRunDefaultHostFromConfig(t *testing.T) {
+	disableAutospawn(t)
 	configDir := t.TempDir()
 	configPath := filepath.Join(configDir, "config.jsonc")
 	if err := os.WriteFile(configPath, []byte(`{"schema_version": 1, "default_host": "development"}`), 0o600); err != nil {
@@ -51,6 +55,7 @@ func TestRunDefaultHostFromConfig(t *testing.T) {
 // config.jsonc: usage-style failure, not a silent fallback or a runtime
 // error without context.
 func TestRunCorruptConfigDiagnosed(t *testing.T) {
+	disableAutospawn(t)
 	configDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(configDir, "config.jsonc"), []byte(`{"schema_version": 1, "default_host": 7}`), 0o600); err != nil {
 		t.Fatal(err)
@@ -66,6 +71,7 @@ func TestRunCorruptConfigDiagnosed(t *testing.T) {
 }
 
 func TestRunRequiresCommand(t *testing.T) {
+	disableAutospawn(t)
 	var stdout, stderr bytes.Buffer
 	if code := run(context.Background(), []string{"--host", "development"}, &stdout, &stderr); code == 0 {
 		t.Fatal("run without a command succeeded")
@@ -79,6 +85,7 @@ func TestRunRequiresCommand(t *testing.T) {
 // Snapshot: the actor connects lazily on the first command, so a status
 // read never dials the Development Host.
 func TestRunStatusWithoutConnection(t *testing.T) {
+	disableAutospawn(t)
 	var stdout, stderr bytes.Buffer
 	policies := filepath.Join(t.TempDir(), "absent.jsonc")
 	code := run(context.Background(), []string{"--host", "development", "--policies", policies, "status"}, &stdout, &stderr)
@@ -95,6 +102,7 @@ func TestRunStatusWithoutConnection(t *testing.T) {
 }
 
 func TestRunUnknownCommand(t *testing.T) {
+	disableAutospawn(t)
 	var stdout, stderr bytes.Buffer
 	if code := run(context.Background(), []string{"--host", "development", "frobnicate"}, &stdout, &stderr); code != 1 {
 		t.Fatalf("unknown command exit code = %d, want 1", code)
@@ -102,6 +110,37 @@ func TestRunUnknownCommand(t *testing.T) {
 	if !strings.Contains(stderr.String(), "unknown command") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
+}
+
+// managerBinary is a real build of this command, produced once in
+// TestMain: auto-spawn must start the product executable, never the test
+// binary.
+var managerBinary string
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "sf-testbin")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "temp dir: %v\n", err)
+		os.Exit(1)
+	}
+	managerBinary = filepath.Join(dir, "ssh-forward")
+	build := exec.Command("go", "build", "-o", managerBinary, ".")
+	build.Dir = "."
+	if output, err := build.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "go build for autospawn tests: %v\n%s", err, output)
+		os.RemoveAll(dir)
+		os.Exit(1)
+	}
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+// disableAutospawn keeps the in-process fallback for tests: auto-spawn
+// would leave a detached manager owning the endpoint.
+func disableAutospawn(t *testing.T) {
+	t.Helper()
+	t.Setenv("SSH_FORWARD_NO_AUTOSPAWN", "1")
 }
 
 // shortConfigDir makes a real short runtime directory: the manager socket's
@@ -121,6 +160,7 @@ func shortConfigDir(t *testing.T) string {
 // serve owns one Manager; subsequent commands are its clients over the
 // Unix socket and share its state.
 func TestRunManagerSingletonServesClients(t *testing.T) {
+	disableAutospawn(t)
 	dir := shortConfigDir(t)
 	t.Setenv("SSH_FORWARD_CONFIG_DIR", dir)
 	policies := filepath.Join(dir, "absent.jsonc")
@@ -208,11 +248,73 @@ func TestBuildAdapterResolvesSSHConfigToAbsolute(t *testing.T) {
 }
 
 func TestRunVersion(t *testing.T) {
+	disableAutospawn(t)
 	var stdout bytes.Buffer
 	if code := run(context.Background(), []string{"--version"}, &stdout, io.Discard); code != 0 {
 		t.Fatalf("--version exit code = %d", code)
 	}
 	if !strings.Contains(stdout.String(), "ssh-forward 0.1.0") {
 		t.Fatalf("--version output = %q", stdout.String())
+	}
+}
+
+// TestRunAutospawnsTheSingleton pins the zero-setup path: a command with
+// no running manager starts it in the background (its own executable,
+// logging next to the socket) and then executes as its client.
+func TestRunAutospawnsTheSingleton(t *testing.T) {
+	t.Setenv("SSH_FORWARD_MANAGER_BINARY", managerBinary)
+	dir := shortConfigDir(t)
+	t.Setenv("SSH_FORWARD_CONFIG_DIR", dir)
+	policies := filepath.Join(dir, "absent.jsonc")
+
+	var stdout bytes.Buffer
+	code := run(context.Background(), []string{"--host", "development", "--policies", policies, "status"}, &stdout, io.Discard)
+	if code != 0 {
+		t.Fatalf("status with autospawn exit code = %d, output = %s", code, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Host: development — disconnected") {
+		t.Fatalf("status output = %q, want the spawned singleton's host", stdout.String())
+	}
+
+	// The singleton is up, recorded its pid, and answers a second command
+	// without spawning anything new.
+	waitForEndpoint(t, endpointPath())
+	pidFile := filepath.Join(dir, "manager.pid")
+	raw, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("manager.pid: %v", err)
+	}
+	var pid int
+	if _, err := fmt.Sscanf(string(raw), "%d", &pid); err != nil || pid <= 0 {
+		t.Fatalf("manager.pid = %q, want a pid", raw)
+	}
+
+	// A second client reuses the same singleton.
+	var second bytes.Buffer
+	if code := run(context.Background(), []string{"status"}, &second, io.Discard); code != 0 {
+		t.Fatalf("second status exit code = %d", code)
+	}
+	if !strings.Contains(second.String(), "Host: development — disconnected") {
+		t.Fatalf("second status output = %q", second.String())
+	}
+
+	// Stop the spawned singleton cleanly (SIGTERM lets it remove its pid
+	// file and socket).
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		t.Fatalf("FindProcess: %v", err)
+	}
+	if err := process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("SIGTERM the manager: %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, err := os.Stat(pidFile); errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("manager did not stop with SIGTERM")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
