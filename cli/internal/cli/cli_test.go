@@ -18,6 +18,7 @@ import (
 type fakeManager struct {
 	snapshot core.Snapshot
 	execute  func(context.Context, core.Command) (core.Outcome, error)
+	watch    func(context.Context) (core.SnapshotStream, error)
 }
 
 func (m *fakeManager) Execute(ctx context.Context, command core.Command) (core.Outcome, error) {
@@ -31,8 +32,11 @@ func (m *fakeManager) Snapshot(context.Context) (core.Snapshot, error) {
 	return m.snapshot, nil
 }
 
-func (*fakeManager) Watch(context.Context) (core.SnapshotStream, error) {
-	return nil, errors.New("unexpected Watch call")
+func (m *fakeManager) Watch(ctx context.Context) (core.SnapshotStream, error) {
+	if m.watch == nil {
+		return nil, errors.New("unexpected Watch call")
+	}
+	return m.watch(ctx)
 }
 
 func (*fakeManager) Close(context.Context) error { return nil }

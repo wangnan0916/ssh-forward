@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,7 +13,7 @@ import (
 // Host; the command surface itself is tested in cli/internal/cli.
 func TestRunRequiresHost(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"status"}, &stdout, &stderr); code == 0 {
+	if code := run(context.Background(), []string{"status"}, &stdout, &stderr); code == 0 {
 		t.Fatal("run without --host succeeded")
 	}
 	if !strings.Contains(stderr.String(), "--host is required") {
@@ -22,7 +23,7 @@ func TestRunRequiresHost(t *testing.T) {
 
 func TestRunRequiresCommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"--host", "development"}, &stdout, &stderr); code == 0 {
+	if code := run(context.Background(), []string{"--host", "development"}, &stdout, &stderr); code == 0 {
 		t.Fatal("run without a command succeeded")
 	}
 	if !strings.Contains(stderr.String(), "usage:") {
@@ -36,7 +37,7 @@ func TestRunRequiresCommand(t *testing.T) {
 func TestRunStatusWithoutConnection(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	policies := filepath.Join(t.TempDir(), "absent.jsonc")
-	code := run([]string{"--host", "development", "--policies", policies, "status"}, &stdout, &stderr)
+	code := run(context.Background(), []string{"--host", "development", "--policies", policies, "status"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("status exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -51,7 +52,7 @@ func TestRunStatusWithoutConnection(t *testing.T) {
 
 func TestRunUnknownCommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"--host", "development", "frobnicate"}, &stdout, &stderr); code != 1 {
+	if code := run(context.Background(), []string{"--host", "development", "frobnicate"}, &stdout, &stderr); code != 1 {
 		t.Fatalf("unknown command exit code = %d, want 1", code)
 	}
 	if !strings.Contains(stderr.String(), "unknown command") {

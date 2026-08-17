@@ -11,8 +11,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
+	"syscall"
 
 	"ssh-forward/cli/internal/app"
 	"ssh-forward/cli/internal/cli"
@@ -21,10 +23,19 @@ import (
 )
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	// The context is cancellable so watch (and other long-running
+	// surfaces) end on Ctrl-C; the shell convention reports an interrupt
+	// as 128+SIGINT instead of a silent success.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	if code == 0 && ctx.Err() != nil {
+		code = 130
+	}
+	os.Exit(code)
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
+func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("ssh-forward", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	host := flags.String("host", "", "Development Host SSH alias (required)")
@@ -65,7 +76,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		Stdout:       stdout,
 		Stderr:       stderr,
 	}
-	if err := app.Run(context.Background(), rest); err != nil {
+	if err := app.Run(ctx, rest); err != nil {
 		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
 		return 1
 	}
