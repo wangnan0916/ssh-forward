@@ -20,6 +20,7 @@ import (
 	"ssh-forward/cli/internal/app"
 	"ssh-forward/cli/internal/cli"
 	"ssh-forward/cli/internal/core"
+	"ssh-forward/cli/internal/ipc"
 	"ssh-forward/cli/internal/openssh"
 )
 
@@ -47,9 +48,42 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	rest := flags.Args()
 	if len(rest) == 0 {
 		fmt.Fprintln(stderr, "usage: ssh-forward [--host ALIAS] [--policies PATH] COMMAND ...")
-		fmt.Fprintln(stderr, "commands: status, watch, forward add|remove, listener approve|suppress, policy list")
+		fmt.Fprintln(stderr, "commands: manager serve, status, watch, forward add|remove, listener approve|suppress, policy list")
 		return 2
 	}
+	if rest[0] == "manager" {
+		return runManager(ctx, rest[1:], *host, *policies, stdout, stderr)
+	}
+
+	// Singleton mode (ADR-0016): when the per-user manager runs, every
+	// command becomes a client of its Unix socket. The manager owns the
+	// Development Host; a conflicting --host is a warning, not an error.
+	if clientManager, err := ipc.Dial(ctx, endpointPath()); err == nil {
+		defer func() { _ = clientManager.Close(context.Background()) }()
+		snapshot, err := clientManager.Snapshot(ctx)
+		if err != nil || snapshot.Host == nil {
+			fmt.Fprintln(stderr, "ssh-forward: the running manager has no Development Host configured")
+			return 1
+		}
+		if *host != "" && *host != string(snapshot.Host.Alias) {
+			fmt.Fprintf(stderr, "ssh-forward: warning: --host %s ignored; the running manager owns %s\n", *host, snapshot.Host.Alias)
+		}
+		app := &cli.App{
+			Manager:      clientManager,
+			Host:         snapshot.Host.Alias,
+			PoliciesPath: *policies,
+			Stdout:       stdout,
+			Stderr:       stderr,
+		}
+		if err := app.Run(ctx, rest); err != nil {
+			fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
+	// No singleton: run one Manager for this command's lifetime (the
+	// in-process fallback keeps scripts and tests on the old model).
 	resolvedHost := *host
 	if resolvedHost == "" {
 		defaulted, err := defaultHost()
@@ -118,6 +152,47 @@ func configDir() string {
 func defaultPoliciesPath() string { return filepath.Join(configDir(), "policies.jsonc") }
 
 func defaultConfigPath() string { return filepath.Join(configDir(), "config.jsonc") }
+
+// endpointPath is the per-user manager singleton's Unix socket
+// (ADR-0016), next to the configuration files.
+func endpointPath() string { return filepath.Join(configDir(), "manager.sock") }
+
+// runManager executes the manager command family: serve keeps the per-user
+// singleton alive until interrupted, owning the Manager and answering
+// compatible CLI and desktop clients over the socket.
+func runManager(ctx context.Context, rest []string, hostFlag, policies string, stdout, stderr io.Writer) int {
+	if len(rest) != 1 || rest[0] != "serve" {
+		fmt.Fprintln(stderr, "usage: ssh-forward manager serve")
+		return 2
+	}
+	resolvedHost := hostFlag
+	if resolvedHost == "" {
+		defaulted, err := defaultHost()
+		if err != nil {
+			fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
+			return 2
+		}
+		resolvedHost = defaulted
+	}
+	sshPath, err := exec.LookPath("ssh")
+	if err != nil {
+		fmt.Fprintf(stderr, "ssh-forward: cannot find the OpenSSH client: %v\n", err)
+		return 1
+	}
+	adapter, err := openssh.New(openssh.Options{Executable: sshPath})
+	if err != nil {
+		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
+		return 1
+	}
+	policyReader := app.NewFilePolicyReader(policies)
+	manager := app.NewManager(core.HostAlias(resolvedHost), adapter, policyReader.Source())
+	defer func() { _ = manager.Close(context.Background()) }()
+	if err := ipc.Serve(ctx, endpointPath(), manager); err != nil {
+		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
+		return 1
+	}
+	return 0
+}
 
 // defaultHost resolves the Development Host alias: --host wins; otherwise
 // config.jsonc's default_host (the Persistent intent contract). A missing

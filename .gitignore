@@ -22,3 +22,6 @@ xcuserdata/
 # Environment overrides
 .env
 .env.*
+
+# stray build artifact (go build without -o writes to cwd)
+/cli/ssh-forward
