@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -38,7 +39,7 @@ func main() {
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("ssh-forward", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	host := flags.String("host", "", "Development Host SSH alias (required)")
+	host := flags.String("host", "", "Development Host SSH alias (defaults to config.jsonc's default_host)")
 	policies := flags.String("policies", defaultPoliciesPath(), "path to policies.jsonc")
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -46,12 +47,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	rest := flags.Args()
 	if len(rest) == 0 {
 		fmt.Fprintln(stderr, "usage: ssh-forward [--host ALIAS] [--policies PATH] COMMAND ...")
-		fmt.Fprintln(stderr, "commands: status, forward add|remove, listener approve|suppress, policy list")
+		fmt.Fprintln(stderr, "commands: status, watch, forward add|remove, listener approve|suppress, policy list")
 		return 2
 	}
-	if *host == "" {
-		fmt.Fprintln(stderr, "ssh-forward: --host is required")
-		return 2
+	resolvedHost := *host
+	if resolvedHost == "" {
+		defaulted, err := defaultHost()
+		if err != nil {
+			fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
+			return 2
+		}
+		resolvedHost = defaulted
 	}
 
 	sshPath, err := exec.LookPath("ssh")
@@ -65,12 +71,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	policyReader := app.NewFilePolicyReader(*policies)
-	manager := app.NewManager(core.HostAlias(*host), adapter, policyReader.Source())
+	manager := app.NewManager(core.HostAlias(resolvedHost), adapter, policyReader.Source())
 	defer func() { _ = manager.Close(context.Background()) }()
 
 	app := &cli.App{
 		Manager:      manager,
-		Host:         core.HostAlias(*host),
+		Host:         core.HostAlias(resolvedHost),
 		PoliciesPath: *policies,
 		PolicyReader: policyReader,
 		Stdout:       stdout,
@@ -83,12 +89,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// defaultPoliciesPath resolves the product configuration directory per
+// configDir resolves the product configuration directory per
 // cli-and-state.md: SSH_FORWARD_CONFIG_DIR overrides it, then the platform
-// application-support locations.
-func defaultPoliciesPath() string {
+// application-support locations. Both config.jsonc and policies.jsonc live
+// here.
+func configDir() string {
 	if override := os.Getenv("SSH_FORWARD_CONFIG_DIR"); override != "" {
-		return filepath.Join(override, "policies.jsonc")
+		return override
 	}
 	var base string
 	switch runtime.GOOS {
@@ -105,5 +112,27 @@ func defaultPoliciesPath() string {
 	default:
 		base = "."
 	}
-	return filepath.Join(base, "policies.jsonc")
+	return base
+}
+
+func defaultPoliciesPath() string { return filepath.Join(configDir(), "policies.jsonc") }
+
+func defaultConfigPath() string { return filepath.Join(configDir(), "config.jsonc") }
+
+// defaultHost resolves the Development Host alias: --host wins; otherwise
+// config.jsonc's default_host (the Persistent intent contract). A missing
+// config or a missing default_host is a usage error like a missing flag; a
+// corrupt config is diagnosed precisely.
+func defaultHost() (string, error) {
+	config, err := app.LoadConfig(defaultConfigPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return "", errors.New("no --host given and no config.jsonc default host")
+	}
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", defaultConfigPath(), err)
+	}
+	if config.DefaultHost == "" {
+		return "", errors.New("no --host given and config.jsonc has no default_host")
+	}
+	return config.DefaultHost, nil
 }

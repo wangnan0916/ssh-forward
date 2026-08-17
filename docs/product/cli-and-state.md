@@ -9,15 +9,14 @@ The command surface below is implemented (slice 6, implementation-sequence.md): 
 The Go CLI is designed independently for this product and has no command, output, file, socket, or runtime-compatibility obligation to the pre-existing shell utility. Its command surface follows the product domain:
 
 ```text
-ssh-forward host ...
-ssh-forward listener ...
-ssh-forward forward ...
-ssh-forward policy ...
 ssh-forward status
-ssh-forward manager ...
+ssh-forward watch [--json]
+ssh-forward forward add|remove [--json]
+ssh-forward listener approve|suppress [--json]
+ssh-forward policy list [--json]
 ```
 
-There are no legacy numeric shorthands or compatibility aliases. Human-readable output is not an automation contract; every resource command supports structured `--json` output for scripts and desktop clients.
+`status` prints the current snapshot; `watch` streams snapshots until interrupted (`--json` emits one wire-shaped snapshot per line — JSONL, the stream contract desktop and scripts consume). The `host` and `manager` command families are planned with the full configuration persistence surface (below) and are not part of the current command set. There are no legacy numeric shorthands or compatibility aliases. Human-readable output is not an automation contract; every resource command supports structured `--json` output for scripts and desktop clients.
 
 ## Manual Forward
 
@@ -25,7 +24,7 @@ A Manual Forward targets only loopback on one Development Host; it cannot name a
 
 ## Persistent intent
 
-The product persists Development Host aliases, default-host selection, `Monitor at Login`, Forwarding Policies, and product settings. Manual Forwards, One-time Approvals, One-time Suppressions, Listener Observations, Active Forwards, and live connection state remain runtime-only. After restart, policy-driven state is reconstructed from fresh observations rather than restored from a stale runtime snapshot.
+The product persists Development Host aliases (the `default_host` in `config.jsonc` is read today and names the host when `--host` is absent), `Monitor at Login`, Forwarding Policies, and product settings. The remaining write paths — host lists, settings, and the revisioned configuration updates — land with the desktop slice. Manual Forwards, One-time Approvals, One-time Suppressions, Listener Observations, Active Forwards, and live connection state remain runtime-only. After restart, policy-driven state is reconstructed from fresh observations rather than restored from a stale runtime snapshot.
 
 ## Configuration locations
 
@@ -33,9 +32,9 @@ The product persists Development Host aliases, default-host selection, `Monitor 
 - Linux: `$XDG_CONFIG_HOME/ssh-forward/`
 - Windows: `%AppData%/ssh-forward/`
 
-`SSH_FORWARD_CONFIG_DIR` overrides the directory for testing and portable operation. `config.jsonc` stores host and product settings; `policies.jsonc` stores Forwarding Policies.
+`SSH_FORWARD_CONFIG_DIR` overrides the directory for testing and portable operation. `config.jsonc` stores the default host today (a versioned, strict JSONC file read on startup; a corrupt file is diagnosed precisely, not silently ignored); the rest of the host and product settings surface lands with the desktop slice. `policies.jsonc` stores Forwarding Policies, hot-reloaded on the reconciliation cadence (~2s) — invalid input keeps the last valid set active.
 
-The manager watches external JSONC changes with debounce. A valid change is previewed and reconciled; invalid input leaves the last valid configuration active and surfaces precise diagnostics. UI writes carry a configuration revision and refuse to overwrite an external edit. Product writes use minimal HuJSON patches, atomic replacement, and backup.
+The planned configuration watch (debounced preview/reconcile of external JSONC edits, revisioned UI writes that refuse to overwrite an external edit, minimal HuJSON patches with atomic replacement and backup) lands with the desktop's configuration surface.
 
 ## Manager ownership
 
