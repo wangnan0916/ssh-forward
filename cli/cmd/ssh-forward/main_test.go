@@ -206,3 +206,13 @@ func TestBuildAdapterResolvesSSHConfigToAbsolute(t *testing.T) {
 		t.Fatalf("adapter = %v, abs = %v", adapter, absolute)
 	}
 }
+
+func TestRunVersion(t *testing.T) {
+	var stdout bytes.Buffer
+	if code := run(context.Background(), []string{"--version"}, &stdout, io.Discard); code != 0 {
+		t.Fatalf("--version exit code = %d", code)
+	}
+	if !strings.Contains(stdout.String(), "ssh-forward 0.1.0") {
+		t.Fatalf("--version output = %q", stdout.String())
+	}
+}

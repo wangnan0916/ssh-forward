@@ -24,6 +24,10 @@ import (
 	"ssh-forward/cli/internal/openssh"
 )
 
+// buildVersion is the product version, bumped with each release tag; the
+// formula's test and the brew audit both key off it.
+const buildVersion = "0.1.0"
+
 func main() {
 	// The context is cancellable so watch (and other long-running
 	// surfaces) end on Ctrl-C; the shell convention reports an interrupt
@@ -43,8 +47,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	host := flags.String("host", "", "Development Host SSH alias (defaults to config.jsonc's default_host)")
 	policies := flags.String("policies", defaultPoliciesPath(), "path to policies.jsonc")
 	sshConfig := flags.String("ssh-config", "", "SSH client config file (default: the user's ~/.ssh/config)")
+	showVersion := flags.Bool("version", false, "print the version and exit")
 	if err := flags.Parse(args); err != nil {
 		return 2
+	}
+	if *showVersion {
+		fmt.Fprintf(stdout, "ssh-forward %s\n", buildVersion)
+		return 0
 	}
 	rest := flags.Args()
 	if len(rest) == 0 {
