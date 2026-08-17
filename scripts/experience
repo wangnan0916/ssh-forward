@@ -106,7 +106,7 @@ managed_id=$(grep -o '"id":"managed:[^"]*"' "$state_dir/watch.jsonl" | head -1 |
 printf 'managed forward: %s\n' "${managed_id:-not seen yet}"
 if [ -n "$managed_id" ]; then
     step "client forward remove $managed_id"
-    SSH_FORWARD_CONFIG_DIR="$config_dir" "$binary" forward remove --forward-id "$managed_id"
+    SSH_FORWARD_CONFIG_DIR="$config_dir" "$binary" remove "$managed_id"
 fi
 
 step "client status after removal"

@@ -51,3 +51,28 @@ func TestLoadConfigMissingFile(t *testing.T) {
 		t.Fatal("LoadConfig on a missing file succeeded")
 	}
 }
+
+func TestSetDefaultHostWritesAndLoadsBack(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.jsonc")
+	if err := SetDefaultHost(path, "ubuntu"); err != nil {
+		t.Fatalf("SetDefaultHost: %v", err)
+	}
+	config, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if config.DefaultHost != "ubuntu" {
+		t.Fatalf("DefaultHost = %q, want ubuntu", config.DefaultHost)
+	}
+	// Overwriting is atomic and idempotent.
+	if err := SetDefaultHost(path, "devbox"); err != nil {
+		t.Fatalf("second SetDefaultHost: %v", err)
+	}
+	config, err = LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig after overwrite: %v", err)
+	}
+	if config.DefaultHost != "devbox" {
+		t.Fatalf("DefaultHost = %q, want devbox", config.DefaultHost)
+	}
+}

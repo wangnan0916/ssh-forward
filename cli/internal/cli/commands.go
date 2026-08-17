@@ -100,32 +100,17 @@ func (a *App) writeStatusHuman(snapshot core.Snapshot) error {
 	return err
 }
 
-// runForward executes the forward command family: add and remove.
-func (a *App) runForward(ctx context.Context, args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("forward needs a subcommand (add, remove)")
-	}
-	switch args[0] {
-	case "add":
-		return a.runForwardAdd(ctx, args[1:])
-	case "remove":
-		return a.runForwardRemove(ctx, args[1:])
-	default:
-		return fmt.Errorf("unknown forward subcommand %q (add, remove)", args[0])
-	}
-}
-
+// runForwardAdd is the top-level "add" command: forward one remote port.
 func (a *App) runForwardAdd(ctx context.Context, args []string) error {
-	flags := flag.NewFlagSet("forward add", flag.ContinueOnError)
+	flags := flag.NewFlagSet("add", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	common := newCommandFlags(flags)
-	if err := flags.Parse(args); err != nil {
+	positional, err := parseResourceFlags(flags, args)
+	if err != nil {
 		return err
 	}
-	if flags.NArg() != 0 {
-		return fmt.Errorf("forward add takes no positional arguments")
-	}
-	if err := common.requireRemotePort(); err != nil {
+	port, err := positionalPort(positional, "add")
+	if err != nil {
 		return err
 	}
 	family, err := common.family()
@@ -135,7 +120,7 @@ func (a *App) runForwardAdd(ctx context.Context, args []string) error {
 	outcome, err := a.Manager.Execute(ctx, core.AddManualForward{
 		CommandID:  common.operationIDOrRandom(),
 		Host:       a.Host,
-		RemotePort: uint16(*common.remotePort),
+		RemotePort: port,
 		Family:     family,
 	})
 	if err != nil {
@@ -144,21 +129,23 @@ func (a *App) runForwardAdd(ctx context.Context, args []string) error {
 	return a.writeOutcome(outcome, *common.jsonOutput)
 }
 
+// runForwardRemove is the top-level "remove" command: the forward ID is
+// the one positional argument (it comes from status).
 func (a *App) runForwardRemove(ctx context.Context, args []string) error {
-	flags := flag.NewFlagSet("forward remove", flag.ContinueOnError)
+	flags := flag.NewFlagSet("remove", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	jsonOutput := flags.Bool("json", false, "emit the wire-shaped outcome")
-	forwardID := flags.String("forward-id", "", "forward ID to remove")
 	operationID := flags.String("operation-id", "", "stable operation ID for retries")
-	if err := flags.Parse(args); err != nil {
+	positional, err := parseResourceFlags(flags, args)
+	if err != nil {
 		return err
 	}
-	if *forwardID == "" {
-		return fmt.Errorf("forward remove requires --forward-id")
+	if len(positional) != 1 {
+		return fmt.Errorf("remove requires one forward ID")
 	}
 	outcome, err := a.Manager.Execute(ctx, core.RemoveForward{
 		CommandID: core.CommandID(operationIDOrRandom(*operationID)),
-		ForwardID: core.ForwardID(*forwardID),
+		ForwardID: core.ForwardID(positional[0]),
 	})
 	if err != nil {
 		return err
@@ -166,29 +153,18 @@ func (a *App) runForwardRemove(ctx context.Context, args []string) error {
 	return a.writeOutcome(outcome, *jsonOutput)
 }
 
-// runListener executes the listener decision family: approve and suppress.
-func (a *App) runListener(ctx context.Context, args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("listener needs a subcommand (approve, suppress)")
-	}
-	switch args[0] {
-	case "approve":
-		return a.runListenerApprove(ctx, args[1:])
-	case "suppress":
-		return a.runListenerSuppress(ctx, args[1:])
-	default:
-		return fmt.Errorf("unknown listener subcommand %q (approve, suppress)", args[0])
-	}
-}
-
+// runListenerApprove is the top-level "approve" command: a One-time
+// Approval for the Listener on the given remote port.
 func (a *App) runListenerApprove(ctx context.Context, args []string) error {
-	flags := flag.NewFlagSet("listener approve", flag.ContinueOnError)
+	flags := flag.NewFlagSet("approve", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	common := newCommandFlags(flags)
-	if err := flags.Parse(args); err != nil {
+	positional, err := parseResourceFlags(flags, args)
+	if err != nil {
 		return err
 	}
-	if err := common.requireRemotePort(); err != nil {
+	port, err := positionalPort(positional, "approve")
+	if err != nil {
 		return err
 	}
 	family, err := common.family()
@@ -198,7 +174,7 @@ func (a *App) runListenerApprove(ctx context.Context, args []string) error {
 	outcome, err := a.Manager.Execute(ctx, core.ApproveListener{
 		CommandID:  common.operationIDOrRandom(),
 		Host:       a.Host,
-		RemotePort: uint16(*common.remotePort),
+		RemotePort: port,
 		Family:     family,
 	})
 	if err != nil {
@@ -207,14 +183,18 @@ func (a *App) runListenerApprove(ctx context.Context, args []string) error {
 	return a.writeOutcome(outcome, *common.jsonOutput)
 }
 
+// runListenerSuppress is the top-level "suppress" command: a One-time
+// Suppression for the Listener on the given remote port.
 func (a *App) runListenerSuppress(ctx context.Context, args []string) error {
-	flags := flag.NewFlagSet("listener suppress", flag.ContinueOnError)
+	flags := flag.NewFlagSet("suppress", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	common := newCommandFlags(flags)
-	if err := flags.Parse(args); err != nil {
+	positional, err := parseResourceFlags(flags, args)
+	if err != nil {
 		return err
 	}
-	if err := common.requireRemotePort(); err != nil {
+	port, err := positionalPort(positional, "suppress")
+	if err != nil {
 		return err
 	}
 	family, err := common.family()
@@ -224,7 +204,7 @@ func (a *App) runListenerSuppress(ctx context.Context, args []string) error {
 	outcome, err := a.Manager.Execute(ctx, core.SuppressListener{
 		CommandID:  common.operationIDOrRandom(),
 		Host:       a.Host,
-		RemotePort: uint16(*common.remotePort),
+		RemotePort: port,
 		Family:     family,
 	})
 	if err != nil {

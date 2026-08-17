@@ -9,14 +9,19 @@ The command surface below is implemented (slice 6, implementation-sequence.md): 
 The Go CLI is designed independently for this product and has no command, output, file, socket, or runtime-compatibility obligation to the pre-existing shell utility. Its command surface follows the product domain:
 
 ```text
-ssh-forward status
-ssh-forward watch [--json]
-ssh-forward forward add|remove [--json]
-ssh-forward listener approve|suppress [--json]
+ssh-forward add 5173                  # forward one remote port
+ssh-forward remove <forward-id>       # tear one down (ID comes from status)
+ssh-forward approve 8080              # One-time Approval for a Listener
+ssh-forward suppress 8080             # One-time Suppression for a Listener
+ssh-forward default <alias>           # pin the default Development Host
+ssh-forward status [--json]
+ssh-forward watch [--json]            # stream snapshots (JSONL with --json)
 ssh-forward policy list [--json]
+ssh-forward host list [--json]        # hosts from the SSH client config
+ssh-forward manager serve             # run the singleton in the foreground
 ```
 
-`status` prints the current snapshot; `watch` streams snapshots until interrupted (`--json` emits one wire-shaped snapshot per line — JSONL, the stream contract desktop and scripts consume). The `host` and `manager` command families are planned with the full configuration persistence surface (below) and are not part of the current command set. There are no legacy numeric shorthands or compatibility aliases. Human-readable output is not an automation contract; every resource command supports structured `--json` output for scripts and desktop clients.
+The commands are verbs: `add` can only name a remote port, so the port is a positional argument (flags may precede or follow it). The Development Host resolves in order: `--host`, then `config.jsonc`'s `default_host` (set with `ssh-forward default ALIAS`), then the single literal Host alias in the SSH client configuration; with several hosts and no default, a terminal prompts for one per command, and a non-terminal run lists the candidates in the error. There are no legacy numeric shorthands or compatibility aliases. Human-readable output is not an automation contract; every resource command supports structured `--json` output for scripts and desktop clients.
 
 ## Manual Forward
 

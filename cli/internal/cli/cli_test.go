@@ -135,7 +135,7 @@ func TestStatusNoHost(t *testing.T) {
 	}
 }
 
-func TestForwardAdd(t *testing.T) {
+func TestAdd(t *testing.T) {
 	wantCommand := core.AddManualForward{
 		CommandID:  core.CommandID("op-1"),
 		Host:       core.HostAlias("development"),
@@ -160,7 +160,7 @@ func TestForwardAdd(t *testing.T) {
 			}, nil
 		},
 	}
-	output, err := runApp(t, manager, "forward", "add", "--remote-port", "8080", "--operation-id", "op-1")
+	output, err := runApp(t, manager, "add", "--operation-id", "op-1", "8080")
 	if err != nil {
 		t.Fatalf("forward add: %v", err)
 	}
@@ -169,13 +169,13 @@ func TestForwardAdd(t *testing.T) {
 	}
 }
 
-func TestForwardAddJSON(t *testing.T) {
+func TestAddJSON(t *testing.T) {
 	manager := &fakeManager{
 		execute: func(context.Context, core.Command) (core.Outcome, error) {
 			return core.Outcome{Kind: core.OutcomeForwardAdded, Revision: 6}, nil
 		},
 	}
-	output, err := runApp(t, manager, "forward", "add", "--remote-port", "8080", "--json")
+	output, err := runApp(t, manager, "add", "--json", "8080")
 	if err != nil {
 		t.Fatalf("forward add --json: %v", err)
 	}
@@ -193,13 +193,13 @@ func TestForwardAddJSON(t *testing.T) {
 	}
 }
 
-func TestForwardAddRequiresPort(t *testing.T) {
-	if _, err := runApp(t, &fakeManager{}, "forward", "add"); err == nil {
-		t.Fatal("forward add without --remote-port succeeded")
+func TestAddRequiresPort(t *testing.T) {
+	if _, err := runApp(t, &fakeManager{}, "add"); err == nil {
+		t.Fatal("add without a port succeeded")
 	}
 }
 
-func TestForwardRemove(t *testing.T) {
+func TestRemove(t *testing.T) {
 	manager := &fakeManager{
 		execute: func(_ context.Context, command core.Command) (core.Outcome, error) {
 			remove, ok := command.(core.RemoveForward)
@@ -209,7 +209,7 @@ func TestForwardRemove(t *testing.T) {
 			return core.Outcome{Kind: core.OutcomeForwardRemoved, Revision: 7}, nil
 		},
 	}
-	output, err := runApp(t, manager, "forward", "remove", "--forward-id", "manual:op-1")
+	output, err := runApp(t, manager, "remove", "manual:op-1")
 	if err != nil {
 		t.Fatalf("forward remove: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestForwardRemove(t *testing.T) {
 	}
 }
 
-func TestListenerApprove(t *testing.T) {
+func TestApprove(t *testing.T) {
 	manager := &fakeManager{
 		execute: func(_ context.Context, command core.Command) (core.Outcome, error) {
 			approve, ok := command.(core.ApproveListener)
@@ -228,7 +228,7 @@ func TestListenerApprove(t *testing.T) {
 			return core.Outcome{Kind: core.OutcomeApprovalRecorded, Revision: 8}, nil
 		},
 	}
-	output, err := runApp(t, manager, "listener", "approve", "--remote-port", "8080")
+	output, err := runApp(t, manager, "approve", "8080")
 	if err != nil {
 		t.Fatalf("listener approve: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestListenerApprove(t *testing.T) {
 	}
 }
 
-func TestListenerSuppress(t *testing.T) {
+func TestSuppress(t *testing.T) {
 	manager := &fakeManager{
 		execute: func(_ context.Context, command core.Command) (core.Outcome, error) {
 			suppress, ok := command.(core.SuppressListener)
@@ -247,7 +247,7 @@ func TestListenerSuppress(t *testing.T) {
 			return core.Outcome{Kind: core.OutcomeSuppressionRecorded, Revision: 9}, nil
 		},
 	}
-	output, err := runApp(t, manager, "listener", "suppress", "--remote-port", "8080")
+	output, err := runApp(t, manager, "suppress", "8080")
 	if err != nil {
 		t.Fatalf("listener suppress: %v", err)
 	}
@@ -256,10 +256,10 @@ func TestListenerSuppress(t *testing.T) {
 	}
 }
 
-func TestListenerApproveRejectsInvalidFamily(t *testing.T) {
+func TestApproveRejectsInvalidFamily(t *testing.T) {
 	// The wire adapter rejects a bad family as invalid parameters; the
 	// CLI must say the same instead of a misleading Listener-not-found.
-	_, err := runApp(t, &fakeManager{}, "listener", "approve", "--remote-port", "8080", "--family", "bogus")
+	_, err := runApp(t, &fakeManager{}, "approve", "8080", "--family", "bogus")
 	if err == nil || !strings.Contains(err.Error(), "--family") {
 		t.Fatalf("invalid family err = %v, want --family error", err)
 	}

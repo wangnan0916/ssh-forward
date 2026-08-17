@@ -31,7 +31,7 @@ type App struct {
 // command supports --json structured output.
 func (a *App) Run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("missing command (status, watch, forward, listener, policy)")
+		return fmt.Errorf("missing command (add, remove, approve, suppress, status, watch, policy)")
 	}
 	command, rest := args[0], args[1:]
 	switch command {
@@ -39,13 +39,17 @@ func (a *App) Run(ctx context.Context, args []string) error {
 		return a.runStatus(ctx, rest)
 	case "watch":
 		return a.runWatch(ctx, rest)
-	case "forward":
-		return a.runForward(ctx, rest)
-	case "listener":
-		return a.runListener(ctx, rest)
+	case "add":
+		return a.runForwardAdd(ctx, rest)
+	case "remove":
+		return a.runForwardRemove(ctx, rest)
+	case "approve":
+		return a.runListenerApprove(ctx, rest)
+	case "suppress":
+		return a.runListenerSuppress(ctx, rest)
 	case "policy":
 		return a.runPolicy(ctx, rest)
 	default:
-		return fmt.Errorf("unknown command %q (status, watch, forward, listener, policy)", command)
+		return fmt.Errorf("unknown command %q (add, remove, approve, suppress, status, watch, policy)", command)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // configSchemaVersion is the config.jsonc schema version (ADR-0005's
@@ -42,4 +43,37 @@ func LoadConfig(path string) (configFile, error) {
 		return configFile{}, fmt.Errorf("config.jsonc: unsupported schema_version %d (want %d)", config.SchemaVersion, configSchemaVersion)
 	}
 	return config, nil
+}
+
+// SetDefaultHost writes config.jsonc with the given default host,
+// replacing the file atomically. The schema today has exactly two fields;
+// future fields land with the desktop's configuration surface.
+func SetDefaultHost(path, host string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	config := configFile{SchemaVersion: configSchemaVersion, DefaultHost: host}
+	encoded, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+	encoded = append(encoded, '\n')
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(encoded); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }

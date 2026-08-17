@@ -38,14 +38,14 @@ func main() {
 	// as 128+SIGINT instead of a silent success.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	code := run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
 	if code == 0 && ctx.Err() != nil {
 		code = 130
 	}
 	os.Exit(code)
 }
 
-func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("ssh-forward", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	host := flags.String("host", "", "Development Host SSH alias (defaults to config.jsonc's default_host)")
@@ -62,7 +62,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	rest := flags.Args()
 	if len(rest) == 0 {
 		fmt.Fprintln(stderr, "usage: ssh-forward [--host ALIAS] [--policies PATH] [--ssh-config PATH] COMMAND ...")
-		fmt.Fprintln(stderr, "commands: manager serve, status, watch, forward add|remove, listener approve|suppress, policy list")
+		fmt.Fprintln(stderr, "commands: add PORT, remove ID, approve PORT, suppress PORT, default ALIAS, status, watch, policy list, host list, manager serve")
 		return 2
 	}
 	if rest[0] == "manager" {
@@ -75,6 +75,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 		return runHostList(ctx, rest[2:], *sshConfig, stdout, stderr)
 	}
+	if rest[0] == "default" {
+		return runSetDefault(ctx, rest[1:], stdout, stderr)
+	}
 
 	// Singleton mode (ADR-0016): when the per-user manager runs, every
 	// command becomes a client of its Unix socket.
@@ -84,7 +87,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	// The host resolves before anything may be spawned: a manager needs
 	// one Development Host.
-	resolvedHost, err := resolveHost(*host, *sshConfig)
+	resolvedHost, err := resolveHost(*host, *sshConfig, isTerminal(stdin), stdin, stdout)
 	if err != nil {
 		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
 		return 2
@@ -171,7 +174,7 @@ func runAsClient(ctx context.Context, clientManager core.Manager, rest []string,
 // names exactly one literal Host alias — that host. A corrupt config is
 // diagnosed, not bypassed; ambiguous choices are reported with the
 // candidates.
-func resolveHost(hostFlag, sshConfigPath string) (string, error) {
+func resolveHost(hostFlag, sshConfigPath string, interactive bool, stdin io.Reader, stdout io.Writer) (string, error) {
 	if hostFlag != "" {
 		return hostFlag, nil
 	}
@@ -193,8 +196,45 @@ func resolveHost(hostFlag, sshConfigPath string) (string, error) {
 	case 1:
 		return hosts[0], nil
 	default:
-		return "", fmt.Errorf("no host selected; configured hosts: %s (pass one with --host, or set \"default_host\" in config.jsonc)", strings.Join(hosts, ", "))
+		if interactive {
+			return chooseHost(hosts, stdin, stdout)
+		}
+		return "", fmt.Errorf("no host selected; configured hosts: %s (pass one with --host, or set one with: ssh-forward default <alias>)", strings.Join(hosts, ", "))
 	}
+}
+
+// chooseHost prompts on the terminal for one of the configured hosts.
+func chooseHost(hosts []string, stdin io.Reader, stdout io.Writer) (string, error) {
+	fmt.Fprintln(stdout, "Multiple Development Hosts are configured; pick one:")
+	for index, host := range hosts {
+		fmt.Fprintf(stdout, "  %d) %s\n", index+1, host)
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		fmt.Fprint(stdout, "> ")
+		var line string
+		if _, err := fmt.Fscanln(stdin, &line); err != nil {
+			break
+		}
+		var choice int
+		if _, err := fmt.Sscanf(line, "%d", &choice); err == nil && choice >= 1 && choice <= len(hosts) {
+			return hosts[choice-1], nil
+		}
+		fmt.Fprintln(stdout, "invalid choice; pick a number from the list")
+	}
+	return "", errors.New("no host selected (set one with: ssh-forward default <alias>)")
+}
+
+// isTerminal reports whether the reader is an interactive terminal.
+func isTerminal(reader io.Reader) bool {
+	file, ok := reader.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }
 
 // errNoDefaultHost reports that neither --host nor config.jsonc named a
@@ -255,6 +295,21 @@ func runHostList(ctx context.Context, rest []string, sshConfigPath string, stdou
 		}
 		fmt.Fprintf(stdout, "%s%s\n", marker, host)
 	}
+	return 0
+}
+
+// runSetDefault pins the Development Host: ssh-forward default <alias>
+// writes config.jsonc's default_host.
+func runSetDefault(ctx context.Context, rest []string, stdout, stderr io.Writer) int {
+	if len(rest) != 1 {
+		fmt.Fprintln(stderr, "usage: ssh-forward default ALIAS")
+		return 2
+	}
+	if err := app.SetDefaultHost(defaultConfigPath(), rest[0]); err != nil {
+		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "default host set to %s\n", rest[0])
 	return 0
 }
 
@@ -373,7 +428,7 @@ func runManager(ctx context.Context, rest []string, hostFlag, policies, sshConfi
 		fmt.Fprintln(stderr, "usage: ssh-forward manager serve")
 		return 2
 	}
-	resolvedHost, err := resolveHost(hostFlag, sshConfig)
+	resolvedHost, err := resolveHost(hostFlag, sshConfig, false, nil, stdout) // serve never prompts
 	if err != nil {
 		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
 		return 2

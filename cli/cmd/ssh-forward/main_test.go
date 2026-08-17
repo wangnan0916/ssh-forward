@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"ssh-forward/cli/internal/app"
 )
 
 // run() with no host or no command must fail before any Manager is built,
@@ -22,7 +24,7 @@ import (
 func TestRunRequiresHost(t *testing.T) {
 	isolateUserEnv(t)
 	var stdout, stderr bytes.Buffer
-	if code := run(context.Background(), []string{"status"}, &stdout, &stderr); code == 0 {
+	if code := run(context.Background(), []string{"status"}, &bytes.Buffer{}, &stdout, &stderr); code == 0 {
 		t.Fatal("run without --host succeeded")
 	}
 	if !strings.Contains(stderr.String(), "no --host given") {
@@ -42,7 +44,7 @@ func TestRunDefaultHostFromConfig(t *testing.T) {
 	t.Setenv("SSH_FORWARD_CONFIG_DIR", configDir)
 	var stdout, stderr bytes.Buffer
 	policies := filepath.Join(configDir, "absent.jsonc")
-	code := run(context.Background(), []string{"--policies", policies, "status"}, &stdout, &stderr)
+	code := run(context.Background(), []string{"--policies", policies, "status"}, &bytes.Buffer{}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("status with default host exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -62,7 +64,7 @@ func TestRunCorruptConfigDiagnosed(t *testing.T) {
 	}
 	t.Setenv("SSH_FORWARD_CONFIG_DIR", configDir)
 	var stdout, stderr bytes.Buffer
-	if code := run(context.Background(), []string{"status"}, &stdout, &stderr); code != 2 {
+	if code := run(context.Background(), []string{"status"}, &bytes.Buffer{}, &stdout, &stderr); code != 2 {
 		t.Fatalf("corrupt config exit code = %d, want 2", code)
 	}
 	if !strings.Contains(stderr.String(), defaultConfigPath()) {
@@ -73,7 +75,7 @@ func TestRunCorruptConfigDiagnosed(t *testing.T) {
 func TestRunRequiresCommand(t *testing.T) {
 	isolateUserEnv(t)
 	var stdout, stderr bytes.Buffer
-	if code := run(context.Background(), []string{"--host", "development"}, &stdout, &stderr); code == 0 {
+	if code := run(context.Background(), []string{"--host", "development"}, &bytes.Buffer{}, &stdout, &stderr); code == 0 {
 		t.Fatal("run without a command succeeded")
 	}
 	if !strings.Contains(stderr.String(), "usage:") {
@@ -88,7 +90,7 @@ func TestRunStatusWithoutConnection(t *testing.T) {
 	isolateUserEnv(t)
 	var stdout, stderr bytes.Buffer
 	policies := filepath.Join(t.TempDir(), "absent.jsonc")
-	code := run(context.Background(), []string{"--host", "development", "--policies", policies, "status"}, &stdout, &stderr)
+	code := run(context.Background(), []string{"--host", "development", "--policies", policies, "status"}, &bytes.Buffer{}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("status exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -104,7 +106,7 @@ func TestRunStatusWithoutConnection(t *testing.T) {
 func TestRunUnknownCommand(t *testing.T) {
 	isolateUserEnv(t)
 	var stdout, stderr bytes.Buffer
-	if code := run(context.Background(), []string{"--host", "development", "frobnicate"}, &stdout, &stderr); code != 1 {
+	if code := run(context.Background(), []string{"--host", "development", "frobnicate"}, &bytes.Buffer{}, &stdout, &stderr); code != 1 {
 		t.Fatalf("unknown command exit code = %d, want 1", code)
 	}
 	if !strings.Contains(stderr.String(), "unknown command") {
@@ -171,14 +173,14 @@ func TestRunManagerSingletonServesClients(t *testing.T) {
 	serveCtx, serveCancel := context.WithCancel(context.Background())
 	served := make(chan int, 1)
 	go func() {
-		served <- run(serveCtx, []string{"--host", "development", "--policies", policies, "manager", "serve"}, io.Discard, io.Discard)
+		served <- run(serveCtx, []string{"--host", "development", "--policies", policies, "manager", "serve"}, &bytes.Buffer{}, io.Discard, io.Discard)
 	}()
 	t.Cleanup(serveCancel)
 	waitForEndpoint(t, endpointPath())
 
 	// First client: status through the singleton.
 	var stdout bytes.Buffer
-	if code := run(context.Background(), []string{"--policies", policies, "status"}, &stdout, io.Discard); code != 0 {
+	if code := run(context.Background(), []string{"--policies", policies, "status"}, &bytes.Buffer{}, &stdout, io.Discard); code != 0 {
 		t.Fatalf("client status exit code = %d, output = %s", code, stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "Host: development — disconnected") {
@@ -186,13 +188,13 @@ func TestRunManagerSingletonServesClients(t *testing.T) {
 	}
 
 	// The singleton is one: a second serve is refused.
-	if code := run(context.Background(), []string{"--host", "development", "manager", "serve"}, io.Discard, io.Discard); code == 0 {
+	if code := run(context.Background(), []string{"--host", "development", "manager", "serve"}, &bytes.Buffer{}, io.Discard, io.Discard); code == 0 {
 		t.Fatal("second manager serve succeeded")
 	}
 
 	// Clients must not contradict the singleton's host.
 	var warning bytes.Buffer
-	if code := run(context.Background(), []string{"--host", "other", "status"}, io.Discard, &warning); code != 0 {
+	if code := run(context.Background(), []string{"--host", "other", "status"}, &bytes.Buffer{}, io.Discard, &warning); code != 0 {
 		t.Fatalf("conflicting-host status exit code = %d", code)
 	}
 	if !strings.Contains(warning.String(), "ignored") {
@@ -253,7 +255,7 @@ func TestBuildAdapterResolvesSSHConfigToAbsolute(t *testing.T) {
 func TestRunVersion(t *testing.T) {
 	isolateUserEnv(t)
 	var stdout bytes.Buffer
-	if code := run(context.Background(), []string{"--version"}, &stdout, io.Discard); code != 0 {
+	if code := run(context.Background(), []string{"--version"}, &bytes.Buffer{}, &stdout, io.Discard); code != 0 {
 		t.Fatalf("--version exit code = %d", code)
 	}
 	if !strings.Contains(stdout.String(), "ssh-forward 0.1.0") {
@@ -271,7 +273,7 @@ func TestRunAutospawnsTheSingleton(t *testing.T) {
 	policies := filepath.Join(dir, "absent.jsonc")
 
 	var stdout bytes.Buffer
-	code := run(context.Background(), []string{"--host", "development", "--policies", policies, "status"}, &stdout, io.Discard)
+	code := run(context.Background(), []string{"--host", "development", "--policies", policies, "status"}, &bytes.Buffer{}, &stdout, io.Discard)
 	if code != 0 {
 		t.Fatalf("status with autospawn exit code = %d, output = %s", code, stdout.String())
 	}
@@ -294,7 +296,7 @@ func TestRunAutospawnsTheSingleton(t *testing.T) {
 
 	// A second client reuses the same singleton.
 	var second bytes.Buffer
-	if code := run(context.Background(), []string{"status"}, &second, io.Discard); code != 0 {
+	if code := run(context.Background(), []string{"status"}, &bytes.Buffer{}, &second, io.Discard); code != 0 {
 		t.Fatalf("second status exit code = %d", code)
 	}
 	if !strings.Contains(second.String(), "Host: development — disconnected") {
@@ -334,7 +336,7 @@ func TestResolveHostFallsBackToSSHConfig(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), []byte("Host ubuntu\n    User dev\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	host, err := resolveHost("", "")
+	host, err := resolveHost("", "", false, nil, io.Discard)
 	if err != nil {
 		t.Fatalf("resolveHost: %v", err)
 	}
@@ -352,7 +354,7 @@ func TestResolveHostReportsAmbiguousSSHHosts(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), []byte("Host ubuntu devbox\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := resolveHost("", "")
+	_, err := resolveHost("", "", false, nil, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "configured hosts: ubuntu, devbox") {
 		t.Fatalf("resolveHost err = %v, want the candidate list", err)
 	}
@@ -371,7 +373,7 @@ func TestRunHostList(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout bytes.Buffer
-	if code := run(context.Background(), []string{"host", "list"}, &stdout, io.Discard); code != 0 {
+	if code := run(context.Background(), []string{"host", "list"}, &bytes.Buffer{}, &stdout, io.Discard); code != 0 {
 		t.Fatalf("host list exit code = %d", code)
 	}
 	output := stdout.String()
@@ -379,10 +381,85 @@ func TestRunHostList(t *testing.T) {
 		t.Fatalf("host list output = %q", output)
 	}
 	var jsonOut bytes.Buffer
-	if code := run(context.Background(), []string{"host", "list", "--json"}, &jsonOut, io.Discard); code != 0 {
+	if code := run(context.Background(), []string{"host", "list", "--json"}, &bytes.Buffer{}, &jsonOut, io.Discard); code != 0 {
 		t.Fatalf("host list --json exit code = %d", code)
 	}
 	if !strings.Contains(jsonOut.String(), `"ubuntu"`) || !strings.Contains(jsonOut.String(), `"devbox"`) {
 		t.Fatalf("host list --json output = %q", jsonOut.String())
+	}
+}
+
+// TestResolveHostInteractivePick pins the ambiguous-host flow: on a
+// terminal the command prompts and the choice applies to this command
+// only — nothing is written to config.jsonc.
+func TestResolveHostInteractivePick(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), []byte("Host ubuntu devbox\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var prompt bytes.Buffer
+	host, err := resolveHost("", "", true, strings.NewReader("2\n"), &prompt)
+	if err != nil {
+		t.Fatalf("resolveHost: %v", err)
+	}
+	if host != "devbox" {
+		t.Fatalf("host = %q, want devbox (choice 2)", host)
+	}
+	if !strings.Contains(prompt.String(), "1) ubuntu") || !strings.Contains(prompt.String(), "2) devbox") {
+		t.Fatalf("prompt = %q, want the numbered list", prompt.String())
+	}
+	// No auto-learn: config.jsonc was not written.
+	if _, err := app.LoadConfig(defaultConfigPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("config.jsonc after the pick = %v, want it untouched", err)
+	}
+}
+
+func TestResolveHostInteractiveRejectsGarbage(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), []byte("Host ubuntu devbox\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Garbage, then a valid choice: the prompt retries.
+	var prompt bytes.Buffer
+	host, err := resolveHost("", "", true, strings.NewReader("nope\n1\n"), &prompt)
+	if err != nil {
+		t.Fatalf("resolveHost: %v", err)
+	}
+	if host != "ubuntu" {
+		t.Fatalf("host = %q, want ubuntu after retry", host)
+	}
+	if !strings.Contains(prompt.String(), "invalid choice") {
+		t.Fatalf("prompt = %q, want the invalid-choice retry", prompt.String())
+	}
+}
+
+// TestRunSetDefault pins the explicit default-host command: after
+// ssh-forward default ALIAS, later commands resolve to it without
+// prompting.
+func TestRunSetDefault(t *testing.T) {
+	dir := shortConfigDir(t)
+	t.Setenv("SSH_FORWARD_CONFIG_DIR", dir)
+	isolateUserEnv(t)
+	var stdout bytes.Buffer
+	if code := run(context.Background(), []string{"default", "ubuntu"}, &bytes.Buffer{}, &stdout, io.Discard); code != 0 {
+		t.Fatalf("default exit code = %d, output = %s", code, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "default host set to ubuntu") {
+		t.Fatalf("default output = %q", stdout.String())
+	}
+	host, err := defaultHost()
+	if err != nil {
+		t.Fatalf("defaultHost: %v", err)
+	}
+	if host != "ubuntu" {
+		t.Fatalf("defaultHost = %q, want ubuntu", host)
 	}
 }
