@@ -1,0 +1,115 @@
+#!/bin/sh
+
+# experience: run the product hands-on against a disposable Development
+# Host (a one-shot Docker container with sshd and echo fixtures), without
+# touching the real ~/.ssh or any configured host.
+#
+#   scripts/experience [--keep]
+#
+# Starts the singleton manager (manager serve), then drives it with socket
+# clients: manual forward, policy reconciliation, watch, removal. The
+# container, its network, image, and state directory are torn down on
+# exit — even on failure. --keep leaves the environment up (for manual
+# poking) and prints the SSH config path.
+#
+# Exit codes follow the script family dialect: 0 success, 1 runtime, 2 usage.
+
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+
+keep=0
+case "${1:-}" in
+    '') ;;
+    --keep) keep=1 ;;
+    *) printf 'usage: scripts/experience [--keep]\n' >&2; exit 2 ;;
+esac
+
+if ! docker version >/dev/null 2>&1; then
+    printf 'experience: Docker is required (disposable Development Host)\n' >&2
+    exit 1
+fi
+
+run_id=exp-$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')
+export SSH_FORWARD_TEST_RUN_ID=$run_id
+export SSH_FORWARD_TEST_DOCKER_CONTEXT=$(docker context show)
+ssh_config=$(./scripts/internal/test-host-up | tail -1)
+
+state_dir="$root/.tmp/integration/$run_id"
+run_dir=$state_dir/run
+config_dir=$run_dir/config
+mkdir -p "$config_dir"
+printf '{"schema_version": 1, "policies": [{"id": "fixture", "priority": 10, "action": "auto_forward", "conditions": [{"remote_ports": {"from": 38080, "to": 38080}}]}]}\n' > "$config_dir/policies.jsonc"
+printf '{"schema_version": 1, "default_host": "ssh-forward-test-host"}\n' > "$config_dir/config.jsonc"
+
+cleanup() {
+    status=$?
+    trap - 0 HUP INT TERM
+    cleanup_status=0
+    if [ "$keep" -eq 0 ]; then
+        ./scripts/internal/test-host-down || cleanup_status=1
+        if [ "$cleanup_status" -ne 0 ]; then
+            printf 'experience: cleanup failed; inspect with: docker ps -a | grep ssh-forward\n' >&2
+        fi
+    else
+        printf 'experience: kept the environment (--keep)\n'
+        printf '  SSH config: %s\n' "$ssh_config"
+        printf '  run ID:     %s\n' "$run_id"
+        printf '  stop it:    SSH_FORWARD_TEST_RUN_ID=%s ./scripts/internal/test-host-down\n' "$run_id"
+    fi
+    if [ "$status" -eq 0 ] && [ "$cleanup_status" -ne 0 ]; then status=1; fi
+    exit "$status"
+}
+trap cleanup 0
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+server_pid=''
+stop_server() {
+    if [ -n "$server_pid" ]; then
+        kill -TERM "$server_pid" 2>/dev/null || true
+        wait "$server_pid" 2>/dev/null || true
+    fi
+}
+trap 'stop_server; exit 130' INT
+trap 'stop_server; exit 143' TERM
+
+binary="$root/.tmp/experience/ssh-forward"
+mkdir -p "$(dirname "$binary")"
+(cd "$root/cli" && go build -o "$binary" ./cmd/ssh-forward)
+
+SSH_FORWARD_CONFIG_DIR="$config_dir" "$binary" --host ssh-forward-test-host --ssh-config "$ssh_config" manager serve > "$state_dir/serve.log" 2>&1 &
+server_pid=$!
+sleep 2
+
+step() { printf '\n== %s ==\n' "$1"; }
+
+step "client status (through the singleton)"
+SSH_FORWARD_CONFIG_DIR="$config_dir" "$binary" status
+
+step "client forward add 38080 (lives in the singleton)"
+add_output=$(SSH_FORWARD_CONFIG_DIR="$config_dir" "$binary" forward add --remote-port 38080)
+printf '%s\n' "$add_output"
+forward_id=$(printf '%s\n' "$add_output" | sed -n 's/.*manual:\([^ ]*\).*/\1/p')
+
+step "manual forward round-trips to the Development Host"
+printf 'hello-manual\n' | nc -w 3 127.0.0.1 38080 || printf '(nc unavailable; the forward still holds the port)\n'
+
+step "policy reconciliation creates the managed forward (watch sample)"
+SSH_FORWARD_CONFIG_DIR="$config_dir" "$binary" watch --json > "$state_dir/watch.jsonl" 2>/dev/null &
+watch_pid=$!
+sleep 6
+kill -INT "$watch_pid" 2>/dev/null || true
+wait "$watch_pid" 2>/dev/null || true
+managed_id=$(grep -o '"id":"managed:[^"]*"' "$state_dir/watch.jsonl" | head -1 | sed 's/"id":"//;s/"//')
+printf 'managed forward: %s\n' "${managed_id:-not seen yet}"
+if [ -n "$managed_id" ]; then
+    step "client forward remove $managed_id"
+    SSH_FORWARD_CONFIG_DIR="$config_dir" "$binary" forward remove --forward-id "$managed_id"
+fi
+
+step "client status after removal"
+SSH_FORWARD_CONFIG_DIR="$config_dir" "$binary" status | sed -n '1,4p'
+
+step "DONE"
