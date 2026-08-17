@@ -77,52 +77,15 @@ func (a *App) writeStatusHuman(snapshot core.Snapshot) error {
 		}
 	}
 
-	// Listeners: every listening endpoint the scanner found on the host.
-	// Quiet ones — no lifetime, no Ask decision, no forward — collapse
-	// into a summary line so the list answers "what needs me" instead of
-	// dumping every system port.
-	if len(host.ListenerObservations) != 0 {
-		statusByID := make(map[listenerID]string, len(host.ListenerLifetimes))
-		for _, lifetime := range host.ListenerLifetimes {
-			statusByID[listenerID{family: lifetime.Family, scope: lifetime.BindScope, port: lifetime.RemotePort}] = string(lifetime.Status)
-		}
-		askByID := make(map[listenerID]bool, len(host.AskListeners))
+	// Listeners stay out of the human view: the user asked for the active
+	// forwards, not a port dump. Only listeners needing a decision get a
+	// one-line heads-up — that is the Ask flow's only surface.
+	if len(host.AskListeners) != 0 {
+		ports := make([]string, 0, len(host.AskListeners))
 		for _, candidate := range host.AskListeners {
-			askByID[listenerID{family: candidate.Family, scope: candidate.BindScope, port: candidate.RemotePort}] = true
+			ports = append(ports, fmt.Sprintf("%d", candidate.RemotePort))
 		}
-		forwardedByID := make(map[listenerID]bool)
-		for _, forward := range host.Forwards {
-			forwardedByID[listenerID{family: forward.RemoteFamily, scope: "", port: forward.RemotePort}] = true
-		}
-		builder.WriteString("Listeners on the host (needing attention):\n")
-		shown := 0
-		quiet := 0
-		for _, listener := range host.ListenerObservations {
-			id := idOfListener(listener)
-			ask := askByID[id]
-			_, tracked := statusByID[id]
-			forwarded := forwardedByID[listenerID{family: listener.Family, scope: "", port: listener.RemotePort}]
-			if !tracked && !ask && !forwarded {
-				quiet++
-				continue
-			}
-			shown++
-			marker := ""
-			switch {
-			case ask:
-				marker = " — Ask"
-			case forwarded:
-				marker = " — forwarded"
-			}
-			fmt.Fprintf(&builder, "  %d/%s %s — %s%s\n",
-				listener.RemotePort, listener.Family, listener.BindScope, statusByID[id], marker)
-		}
-		if quiet > 0 {
-			fmt.Fprintf(&builder, "  … and %d quiet listeners\n", quiet)
-		}
-		if shown == 0 {
-			builder.WriteString("  (none)\n")
-		}
+		fmt.Fprintf(&builder, "Listeners needing a decision: %s (approve or suppress them)\n", strings.Join(ports, ", "))
 	}
 	_, err := io.WriteString(a.Stdout, builder.String())
 	return err
@@ -140,6 +103,10 @@ func (a *App) runForwardAdd(ctx context.Context, args []string) error {
 	port, err := positionalPort(positional, "add")
 	if err != nil {
 		return err
+	}
+	if existing, found := a.existingManualForward(ctx, port); found {
+		fmt.Fprintf(a.Stdout, "port %d already forwarded (local %d)\n", port, existing.AllocatedLocalPort)
+		return nil
 	}
 	family, err := common.family()
 	if err != nil {
@@ -184,6 +151,22 @@ func (a *App) runForwardRemove(ctx context.Context, args []string) error {
 		return err
 	}
 	return a.writeOutcome(outcome, *jsonOutput)
+}
+
+// existingManualForward reports an active Manual Forward on the remote
+// port: add is idempotent, so repeating "add 5173" never creates a second
+// forward (the local port would silently shift — surprising).
+func (a *App) existingManualForward(ctx context.Context, port uint16) (core.ForwardSnapshot, bool) {
+	snapshot, err := a.Manager.Snapshot(ctx)
+	if err != nil || snapshot.Host == nil {
+		return core.ForwardSnapshot{}, false
+	}
+	for _, forward := range snapshot.Host.Forwards {
+		if forward.RemotePort == port && forward.Kind == core.ForwardManual {
+			return forward, true
+		}
+	}
+	return core.ForwardSnapshot{}, false
 }
 
 // parsePort reports whether the argument is a plain port number.

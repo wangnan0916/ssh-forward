@@ -98,8 +98,7 @@ func TestStatusHuman(t *testing.T) {
 	for _, want := range []string{
 		"Host: development — connected",
 		"Discovery: healthy (baseline true, scanner v1)",
-		"8080/ipv4 loopback — continuous",
-		"8080/ipv6 loopback — new — Ask",
+		"Listeners needing a decision: 8080",
 		"manual:op-1 (manual) → ipv4:8080 (local 8081)",
 	} {
 		if !strings.Contains(output, want) {
@@ -413,33 +412,37 @@ func TestRemoveByPortRejectsManagedOnly(t *testing.T) {
 
 // TestStatusCollapsesQuietListeners pins the focus rule: listeners with
 // no lifetime, no Ask decision, and no forward fold into a summary line.
-func TestStatusCollapsesQuietListeners(t *testing.T) {
-	host := core.HostSnapshot{
-		Alias:      core.HostAlias("development"),
-		Connection: core.ConnectionConnected,
-		Discovery: core.DiscoverySnapshot{
-			State: core.DiscoveryHealthy, BaselineEstablished: true, ScannerVersion: 1,
-		},
-		ListenerObservations: []core.ListenerObservation{
-			{Family: core.FamilyIPv4, BindScope: core.BindLoopback, RemotePort: 8080},
-			{Family: core.FamilyIPv4, BindScope: core.BindLoopback, RemotePort: 631}, // quiet
-			{Family: core.FamilyIPv4, BindScope: core.BindWildcard, RemotePort: 22},  // quiet
-		},
-		ListenerLifetimes: []core.ListenerLifetimeSnapshot{
-			{Family: core.FamilyIPv4, BindScope: core.BindLoopback, RemotePort: 8080, Status: core.LifetimeContinuous, PostBaseline: true},
-		},
-		AskListeners: []core.ListenerAskSnapshot{
-			{Family: core.FamilyIPv4, BindScope: core.BindLoopback, RemotePort: 8080},
+func TestAddIsIdempotent(t *testing.T) {
+	manager := &fakeManager{
+		snapshot: snapshotWithHost(), // manual:op-1 → ipv4:8080
+		execute: func(context.Context, core.Command) (core.Outcome, error) {
+			t.Fatal("add executed despite an existing forward on the port")
+			return core.Outcome{}, nil
 		},
 	}
-	output, err := runApp(t, &fakeManager{snapshot: core.Snapshot{Revision: 1, Host: &host}}, "status")
+	output, err := runApp(t, manager, "add", "8080")
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if !strings.Contains(output, "already forwarded (local 8081)") {
+		t.Fatalf("add output = %q, want the already-forwarded notice", output)
+	}
+}
+
+// TestStatusShowsForwardsAndAskSummary pins the focused human view: no
+// listener dump, just the active forwards and a one-line Ask heads-up.
+func TestStatusShowsForwardsAndAskSummary(t *testing.T) {
+	output, err := runApp(t, &fakeManager{snapshot: snapshotWithHost()}, "status")
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if !strings.Contains(output, "and 2 quiet listeners") {
-		t.Fatalf("status output missing the quiet summary:\n%s", output)
+	if !strings.Contains(output, "manual:op-1 (manual) → ipv4:8080 (local 8081)") {
+		t.Fatalf("status missing the forward:\n%s", output)
 	}
-	if strings.Contains(output, "631/ipv4") || strings.Contains(output, "22/ipv4") {
-		t.Fatalf("quiet listeners leaked into the detail list:\n%s", output)
+	if !strings.Contains(output, "Listeners needing a decision: 8080") {
+		t.Fatalf("status missing the Ask summary:\n%s", output)
+	}
+	if strings.Contains(output, "continuous") || strings.Contains(output, "631/") {
+		t.Fatalf("status leaked the listener dump:\n%s", output)
 	}
 }
