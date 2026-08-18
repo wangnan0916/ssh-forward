@@ -183,6 +183,13 @@ type wireHost struct {
 	Discovery            wireDiscovery             `json:"discovery"`
 	ListenerObservations []wireListenerObservation `json:"listener_observations"`
 	Forwards             []wireForward             `json:"forwards"`
+	LocalPortConflicts   []wireLocalPortConflict   `json:"local_port_conflicts,omitempty"`
+}
+
+type wireLocalPortConflict struct {
+	RemotePort   uint16 `json:"remote_port"`
+	RemoteFamily string `json:"remote_family"`
+	BindScope    string `json:"bind_scope"`
 }
 
 type wireDiscovery struct {

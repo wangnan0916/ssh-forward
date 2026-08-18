@@ -37,7 +37,7 @@ func TestNewManagerWiresPolicySource(t *testing.T) {
 	]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	manager := NewManager(core.HostAlias("development"), adapter, FilePolicySource(path))
+	manager := NewManager(core.HostAlias("development"), adapter, NewFilePolicyReader(path).Source())
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 
 	snapshot, err := manager.Snapshot(context.Background())

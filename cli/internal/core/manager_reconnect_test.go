@@ -11,12 +11,12 @@ import (
 type sequenceConnector struct {
 	mu       sync.Mutex
 	next     int
-	sessions []hostSession
+	sessions []HostSession
 	releases []<-chan struct{}
 	started  chan int
 }
 
-func (c *sequenceConnector) Connect(ctx context.Context, _ HostAlias) (hostSession, error) {
+func (c *sequenceConnector) Connect(ctx context.Context, _ HostAlias) (HostSession, error) {
 	c.mu.Lock()
 	index := c.next
 	c.next++
@@ -34,7 +34,7 @@ type permanentFailureConnector struct {
 	started chan struct{}
 }
 
-func (c permanentFailureConnector) Connect(context.Context, HostAlias) (hostSession, error) {
+func (c permanentFailureConnector) Connect(context.Context, HostAlias) (HostSession, error) {
 	close(c.started)
 	return nil, &SessionError{Disposition: SessionSuspend, Reason: SessionReasonAuthentication}
 }

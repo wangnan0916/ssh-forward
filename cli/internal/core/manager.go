@@ -17,8 +17,9 @@ import (
 // freeze window, production must never.
 type managerOptions struct {
 	host             HostAlias
-	connector        hostConnector
-	forwardAllocator forwardAllocator
+	connector        HostConnector
+	forwardAllocator ForwardAllocator
+	newAllocator     func(Dialer) ForwardAllocator
 	publishHost      func(HostSnapshot)
 	retryDelay       func(int) time.Duration
 	retryWait        func(context.Context, time.Duration) bool
@@ -27,13 +28,17 @@ type managerOptions struct {
 	// Manager lock. nil means no policies (unmatched listeners are not
 	// forwarded).
 	policies func() []ForwardingPolicy
+	// policyPoll, when > 0, re-reads the policy source on this interval so
+	// a saved Remembered Auto-forward applies against the current
+	// observations without waiting for the next scan.
+	policyPoll time.Duration
 }
 
 type manager struct {
 	mu               sync.RWMutex
 	closed           bool
 	host             HostAlias
-	forwardAllocator forwardAllocator
+	forwardAllocator ForwardAllocator
 	revision         Revision
 	hostSnapshot     HostSnapshot
 	actor            *hostActor
@@ -52,22 +57,29 @@ type manager struct {
 // NewManager builds a Manager with no host and no connector: it exists for
 // wire-level tests (jsonrpc fixtures) and core tests that exercise Snapshot
 // and Watch without a host. Production assembly goes through
-// NewConfiguredManager via app.NewManager.
+// NewConfiguredManager.
 func NewManager() Manager {
 	return newManager(managerOptions{})
 }
 
+const defaultPolicyPoll = 250 * time.Millisecond
+
 // NewConfiguredManager is the production seam: it wires the host, the host
-// connector (the OpenSSH Adapter), and the Forwarding Policy source (slice
-// 5; nil means unmatched listeners are not forwarded) into the Manager.
-// app.NewManager is its only production caller; tests inject through
-// managerOptions instead.
-func NewConfiguredManager(host HostAlias, connector HostConnector, policySources ...func() []ForwardingPolicy) Manager {
+// connector, the Local Endpoint allocator factory, and the Forwarding Policy
+// source into the Manager. app.Connect / app.Serve are its production callers;
+// tests inject through managerOptions instead.
+func NewConfiguredManager(host HostAlias, connector HostConnector, newAlloc func(Dialer) ForwardAllocator, policySources ...func() []ForwardingPolicy) Manager {
 	var policies func() []ForwardingPolicy
 	if len(policySources) != 0 {
 		policies = policySources[0]
 	}
-	return newManager(managerOptions{host: host, connector: connector, policies: policies})
+	return newManager(managerOptions{
+		host:         host,
+		connector:    connector,
+		newAllocator: newAlloc,
+		policies:     policies,
+		policyPoll:   defaultPolicyPoll,
+	})
 }
 
 func newManager(options managerOptions) *manager {
@@ -82,8 +94,11 @@ func newManager(options managerOptions) *manager {
 	}
 	dialer := &currentDialer{}
 	allocator := options.forwardAllocator
+	if allocator == nil && options.newAllocator != nil {
+		allocator = options.newAllocator(dialer)
+	}
 	if allocator == nil {
-		allocator = proxyForwardAllocator{dialer: dialer}
+		allocator = refusingAllocator{}
 	}
 	policySource := options.policies
 	if policySource == nil {
@@ -101,6 +116,10 @@ func newManager(options managerOptions) *manager {
 	}
 	m.workers.Add(1)
 	go m.reconcileLoop()
+	if options.policyPoll > 0 {
+		m.workers.Add(1)
+		go m.policyPollLoop(options.policyPoll)
+	}
 	publishHost := m.publishHostState
 	if options.publishHost != nil {
 		publishHost = options.publishHost
@@ -132,27 +151,6 @@ func emptyHostSnapshot(host HostAlias) HostSnapshot {
 	}
 }
 
-// publishHostState is the actor's publication path into the Manager's mirror:
-// it replaces the mirror wholesale and publishes. ensureConnected is the
-// startup path's declaration — it patches the mirror to Connecting under the
-// Manager lock and publishes once, so the transition is visible before the
-// actor's connect loop runs. Both write under the Manager lock and both treat
-// HostSnapshot as the single state structure; the actor takes over state
-// evolution from Connected on.
-// beginConnectionLocked is the Connecting declaration: it patches the
-// mirror under the Manager lock. This is the one place the Manager writes
-// the mirror directly — structurally forced by lock order (the actor lock
-// can never be taken inside the Manager lock) and no-wait arming. The guard
-// reads the actor's own armed() projection instead of the mirror state.
-func (m *manager) beginConnectionLocked() {
-	if m.actor.armed() {
-		return
-	}
-	declared := m.hostSnapshot
-	declared.Connection = ConnectionConnecting
-	m.hostSnapshot = declared
-}
-
 func (m *manager) publishHostState(state HostSnapshot) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -163,14 +161,10 @@ func (m *manager) publishHostState(state HostSnapshot) {
 	m.publishLocked()
 }
 
-// ensureConnected declares Connecting and arms the actor. Production
-// managers do this at construction so discovery and Auto-forward run
-// without a separate command.
+// ensureConnected arms the host actor. The actor publishes Connecting
+// before returning so the transition is visible without a separate write
+// on the Manager mirror.
 func (m *manager) ensureConnected() {
-	m.mu.Lock()
-	m.beginConnectionLocked()
-	m.publishLocked()
-	m.mu.Unlock()
 	m.actor.startIfNeeded()
 }
 

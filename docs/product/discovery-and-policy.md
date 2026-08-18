@@ -28,7 +28,7 @@ A Remote Listener is identified by Development Host, address family, bind scope,
 
 ## Continuous policy reconciliation
 
-Slice 5 adds Policy reconciliation. Persistent Forwarding Policies are reevaluated on every valid observation. A determinate policy mismatch or change to `Ignore` removes its Managed Forward after two consecutive observations. A saved change is previewed before commit, then reconciles immediately.
+Slice 5 adds Policy reconciliation. Persistent Forwarding Policies are reevaluated on every valid observation. On that observation path, a determinate policy mismatch removes its Managed Forward after two consecutive observations. A saved policy edit — including a change to `Ignore` — applies against the current observations immediately and resets hysteresis; it does not wait for the next scan. Desktop preview-before-commit lands with the configuration surface.
 
 Missing Process Metadata is distinct from scanner failure. A new listener lacking required Policy Evidence is not forwarded. An existing policy-managed Forward is retained briefly, then removed after two successful observations without the required evidence. SSH or scanner failure never counts toward that threshold.
 

@@ -2,7 +2,6 @@ package jsonrpc
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -72,109 +71,15 @@ func marshalManagerError(err error) error {
 	}
 }
 
-func marshalForward(forward core.ForwardSnapshot) wireForward {
-	families := make([]string, len(forward.LocalFamilies))
-	for index, family := range forward.LocalFamilies {
-		families[index] = string(family)
-	}
-	return wireForward{
-		ID:                 string(forward.ID),
-		RemotePort:         forward.RemotePort,
-		RemoteFamily:       string(forward.RemoteFamily),
-		AllocatedLocalPort: forward.AllocatedLocalPort,
-		LocalFamilies:      families,
-	}
-}
-
 func handleSnapshot(ctx context.Context, request *jrpc2.Request, manager core.Manager) (any, error) {
-	var params snapshotParams
-	if paramsText := request.ParamString(); paramsText == "" || json.Unmarshal([]byte(paramsText), &params) != nil {
-		return nil, errInvalidParameters
-	}
-	if params.Scope.Kind != "all" {
-		return nil, errInvalidScope
+	if err := parseSnapshotParams(request); err != nil {
+		return nil, err
 	}
 	snapshot, err := manager.Snapshot(ctx)
 	if err != nil {
 		return nil, internalError()
 	}
 	return snapshotResult{Snapshot: marshalSnapshot(snapshot)}, nil
-}
-
-// MarshalSnapshot encodes a Snapshot in the wire shape (the same shape
-// manager.snapshot returns over JSON-RPC), so CLI --json output and the IPC
-// protocol stay one contract for script and desktop clients.
-func MarshalSnapshot(snapshot core.Snapshot) ([]byte, error) {
-	return json.Marshal(marshalSnapshot(snapshot))
-}
-
-func marshalSnapshot(snapshot core.Snapshot) wireSnapshot {
-	if snapshot.Host == nil {
-		return wireSnapshot{Revision: uint64(snapshot.Revision)}
-	}
-	host := snapshot.Host
-	forwards := make([]wireForward, len(host.Forwards))
-	for forwardIndex, forward := range host.Forwards {
-		forwards[forwardIndex] = marshalForward(forward)
-	}
-	observations := make([]wireListenerObservation, len(host.ListenerObservations))
-	for observationIndex, observation := range host.ListenerObservations {
-		observations[observationIndex] = marshalListenerObservation(observation)
-	}
-	return wireSnapshot{
-		Revision: uint64(snapshot.Revision),
-		Host: &wireHost{
-			Alias:                string(host.Alias),
-			Connection:           string(host.Connection),
-			Discovery:            marshalDiscovery(host.Discovery),
-			ListenerObservations: observations,
-			Forwards:             forwards,
-		},
-	}
-}
-
-func marshalDiscovery(discovery core.DiscoverySnapshot) wireDiscovery {
-	return wireDiscovery{
-		State: string(discovery.State),
-		Capability: wireDiscoveryCapability{
-			RemoteListeners: string(discovery.Capability.RemoteListeners),
-			SocketIdentity:  string(discovery.Capability.SocketIdentity),
-			ProcessMetadata: string(discovery.Capability.ProcessMetadata),
-		},
-		BaselineEstablished: discovery.BaselineEstablished,
-		ScannerVersion:      discovery.ScannerVersion,
-		ScannerChecksum:     discovery.ScannerChecksum,
-		Diagnostic:          discovery.Diagnostic,
-	}
-}
-
-func marshalListenerObservation(observation core.ListenerObservation) wireListenerObservation {
-	identities := make([]string, len(observation.SocketIdentities))
-	for index, identity := range observation.SocketIdentities {
-		identities[index] = string(identity)
-	}
-	chains := make([]wireProcessChain, len(observation.Processes))
-	for chainIndex, chain := range observation.Processes {
-		processes := make([]wireProcessMetadata, len(chain.Processes))
-		for processIndex, process := range chain.Processes {
-			arguments := make([]string, len(process.Arguments))
-			copy(arguments, process.Arguments)
-			processes[processIndex] = wireProcessMetadata{
-				PID:              process.PID,
-				Executable:       process.Executable,
-				WorkingDirectory: process.WorkingDirectory,
-				Arguments:        arguments,
-			}
-		}
-		chains[chainIndex] = wireProcessChain{Processes: processes}
-	}
-	return wireListenerObservation{
-		Family:           string(observation.Family),
-		BindScope:        string(observation.BindScope),
-		RemotePort:       observation.RemotePort,
-		SocketIdentities: identities,
-		ProcessChains:    chains,
-	}
 }
 
 func normalizeServeError(err error) error {

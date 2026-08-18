@@ -31,11 +31,11 @@ func (r *policyRef) set(policies []ForwardingPolicy) {
 // projection, recording the specs it was asked for.
 type autoAllocator struct {
 	mu       sync.Mutex
-	requests []forwardSpec
+	requests []ForwardSpec
 	next     uint16
 }
 
-func (a *autoAllocator) Allocate(_ context.Context, spec forwardSpec) (ownedForward, error) {
+func (a *autoAllocator) Allocate(_ context.Context, spec ForwardSpec) (OwnedForward, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.requests = append(a.requests, spec)
@@ -48,10 +48,10 @@ func (a *autoAllocator) Allocate(_ context.Context, spec forwardSpec) (ownedForw
 	}}, nil
 }
 
-func (a *autoAllocator) allocated() []forwardSpec {
+func (a *autoAllocator) allocated() []ForwardSpec {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return append([]forwardSpec(nil), a.requests...)
+	return append([]ForwardSpec(nil), a.requests...)
 }
 
 type simpleOwnedForward struct {
@@ -77,7 +77,7 @@ func newReconcileHarness(t *testing.T, policies []ForwardingPolicy) *reconcileHa
 	t.Helper()
 	session := newScriptedDiscoverySession()
 	connector := &sequenceConnector{
-		sessions: []hostSession{session},
+		sessions: []HostSession{session},
 		releases: []<-chan struct{}{closedChannel()},
 		started:  make(chan int, 1),
 	}
@@ -162,15 +162,11 @@ func managedForwards(snapshot Snapshot) []ForwardSnapshot {
 	return append([]ForwardSnapshot(nil), snapshot.Host.Forwards...)
 }
 
-func TestManagedForwardIdentityRoundTripsThroughSpec(t *testing.T) {
+func TestManagedForwardIdentityUsesStableToken(t *testing.T) {
 	key := remoteListenerKey{family: FamilyIPv4, scope: BindLoopback, port: 8080}
 	spec := managedForwardSpec(key)
-	if spec.PreferredLocalPort != 8080 {
-		t.Fatalf("spec = %+v, want port 8080", spec)
-	}
-	recovered, known := managedForwardKey(spec.ID)
-	if !known || recovered != key {
-		t.Fatalf("managedForwardKey(%q) = %+v, %v; want %+v", spec.ID, recovered, known, key)
+	if spec.PreferredLocalPort != 8080 || spec.key != key {
+		t.Fatalf("spec = %+v, want port 8080 and key %+v", spec, key)
 	}
 	if string(spec.ID) != "managed:"+managedForwardToken(key) {
 		t.Fatalf("ID %q does not match token %q", spec.ID, managedForwardToken(key))
@@ -245,7 +241,26 @@ func TestIgnorePolicyNeverCreates(t *testing.T) {
 	})
 }
 
-func TestPolicyMismatchRemovalRequiresTwoObservations(t *testing.T) {
+func TestPolicyEditAppliesImmediately(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newReconcileHarness(t, nil)
+		defer closeReconciliation(t, h)
+		h.push(loopbackListener(8080))
+		h.push(loopbackListener(8080))
+		h.waitFor("baseline with no policy", func(s Snapshot) bool {
+			return s.Host != nil && s.Host.Discovery.BaselineEstablished && len(managedForwards(s)) == 0
+		})
+		h.policies.set([]ForwardingPolicy{
+			{ID: "p1", Action: PolicyAutoForward, Conditions: []PolicyCondition{{RemotePorts: policyPort(8080)}}},
+		})
+		h.manager.reconciler.notifyPolicy()
+		h.waitFor("Remembered Auto-forward applies without another observation", func(s Snapshot) bool {
+			return len(managedForwards(s)) == 1
+		})
+	})
+}
+
+func TestPolicyEditToIgnoreRemovesImmediately(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := newReconcileHarness(t, []ForwardingPolicy{
 			{ID: "p1", Action: PolicyAutoForward, Conditions: []PolicyCondition{{RemotePorts: policyPort(8080)}}},
@@ -258,18 +273,56 @@ func TestPolicyMismatchRemovalRequiresTwoObservations(t *testing.T) {
 		h.policies.set([]ForwardingPolicy{
 			{ID: "p1", Action: PolicyIgnore, Conditions: []PolicyCondition{{RemotePorts: policyPort(8080)}}},
 		})
-		h.push(loopbackListener(8080))
-		snapshot := h.waitFor("first mismatch settles", func(s Snapshot) bool {
-			return s.Host != nil && len(s.Host.ListenerObservations) == 1
-		})
-		if managed := managedForwards(snapshot); len(managed) != 1 {
-			t.Fatalf("removed after one mismatch: %+v", managed)
-		}
-		h.push(loopbackListener(8080))
-		h.waitFor("Managed Forward removed", func(s Snapshot) bool {
+		h.manager.reconciler.notifyPolicy()
+		h.waitFor("Ignore removes the Managed Forward without another observation", func(s Snapshot) bool {
 			return len(managedForwards(s)) == 0
 		})
 	})
+}
+
+func TestLocalPortConflictAppearsOnSnapshot(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		session := newScriptedDiscoverySession()
+		connector := &sequenceConnector{
+			sessions: []HostSession{session},
+			releases: []<-chan struct{}{closedChannel()},
+			started:  make(chan int, 1),
+		}
+		manager := newManager(managerOptions{
+			host:             HostAlias("development"),
+			connector:        connector,
+			retryDelay:       func(int) time.Duration { return 0 },
+			retryWait:        func(ctx context.Context, _ time.Duration) bool { return ctx.Err() == nil },
+			forwardAllocator: conflictAllocator{},
+			policies: func() []ForwardingPolicy {
+				return []ForwardingPolicy{{
+					ID: "p1", Action: PolicyAutoForward,
+					Conditions: []PolicyCondition{{RemotePorts: policyPort(8080)}},
+				}}
+			},
+		})
+		h := &reconcileHarness{t: t, manager: manager, session: session}
+		defer closeReconciliation(t, h)
+		manager.actor.startIfNeeded()
+		h.push(loopbackListener(8080))
+		h.push(loopbackListener(8080))
+		snapshot := h.waitFor("Local Port Conflict is on the Snapshot", func(s Snapshot) bool {
+			return s.Host != nil && len(s.Host.LocalPortConflicts) == 1
+		})
+		conflict := snapshot.Host.LocalPortConflicts[0]
+		if conflict.RemotePort != 8080 || conflict.RemoteFamily != FamilyIPv4 || conflict.BindScope != BindLoopback {
+			t.Fatalf("conflict = %+v", conflict)
+		}
+		if len(managedForwards(snapshot)) != 0 {
+			t.Fatalf("conflict still created a forward: %+v", managedForwards(snapshot))
+		}
+	})
+}
+
+type conflictAllocator struct{}
+
+func (conflictAllocator) Allocate(context.Context, ForwardSpec) (OwnedForward, error) {
+	return nil, &DomainError{Kind: ErrorLocalPortConflict, Retryable: true}
 }
 
 func TestDisappearanceRemovesManagedForward(t *testing.T) {

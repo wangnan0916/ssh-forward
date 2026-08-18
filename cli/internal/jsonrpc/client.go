@@ -53,7 +53,7 @@ type wireResponse struct {
 }
 
 func (c *managerClient) hello(ctx context.Context) error {
-	params := []byte(`{"protocol":{"major":1,"minor":0},"capabilities":["cancel-v1","watch-snapshot-v1"]}`)
+	params := []byte(`{"protocol":{"major":1,"minor":0},"capabilities":["watch-snapshot-v1"]}`)
 	result, err := c.call(ctx, "system.hello", params, 1)
 	if err != nil {
 		return fmt.Errorf("manager hello: %w", err)
@@ -199,7 +199,7 @@ func (c *managerClient) failAll(err error) {
 }
 
 func (c *managerClient) Snapshot(ctx context.Context) (core.Snapshot, error) {
-	result, err := c.call(ctx, methodSnapshot, []byte(`{"scope":{"kind":"all"}}`), c.newID())
+	result, err := c.call(ctx, methodSnapshot, []byte(`{}`), c.newID())
 	if err != nil {
 		return core.Snapshot{}, err
 	}
@@ -213,7 +213,7 @@ func (c *managerClient) Snapshot(ctx context.Context) (core.Snapshot, error) {
 }
 
 func (c *managerClient) Watch(ctx context.Context) (core.SnapshotStream, error) {
-	result, err := c.call(ctx, methodWatch, []byte(`{"scope":{"kind":"all"}}`), c.newID())
+	result, err := c.call(ctx, methodWatch, []byte(`{}`), c.newID())
 	if err != nil {
 		return nil, err
 	}

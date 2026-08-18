@@ -9,8 +9,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
 )
 
 // hostActorOptions carries the actor's run-time assembly. The reconnect
@@ -20,7 +18,7 @@ import (
 // configured inconsistently between the two structs.
 type hostActorOptions struct {
 	host      HostAlias
-	connector hostConnector
+	connector HostConnector
 	dialer    *currentDialer
 	publish   func(HostSnapshot)
 	ctx       context.Context
@@ -37,7 +35,7 @@ type hostActorOptions struct {
 // ingestion path without holding either state lock.
 type hostActor struct {
 	host       HostAlias
-	connector  hostConnector
+	connector  HostConnector
 	dialer     *currentDialer
 	publish    func(HostSnapshot)
 	retryDelay func(int) time.Duration
@@ -47,7 +45,7 @@ type hostActor struct {
 
 	mu                      sync.Mutex
 	active                  atomic.Bool
-	session                 hostSession
+	session                 HostSession
 	state                   HostSnapshot
 	lastObservationSequence uint64
 
@@ -71,11 +69,9 @@ func newHostActor(options hostActorOptions, retryDelay func(int) time.Duration, 
 }
 
 // startIfNeeded launches the connect loop unless it is already running or
-// the Manager is shutting down. It is idempotent. The
-// Manager has already published the Connecting transition synchronously
-// under its own lock (beginConnectionLocked, gated on this method's armed()
-// projection), so startIfNeeded publishes nothing itself; the loop
-// publishes from Connected onward.
+// the Manager is shutting down. It is idempotent. It publishes Connecting
+// before the loop runs so the transition is visible as soon as arming
+// returns; the loop publishes from Connected onward.
 func (a *hostActor) startIfNeeded() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -85,15 +81,12 @@ func (a *hostActor) startIfNeeded() {
 	a.active.Store(true)
 	a.state.Connection = ConnectionConnecting
 	a.done = make(chan struct{})
+	a.publishLocked()
 	go a.run()
 }
 
 // armed is the single arming authority: the connect loop is either running
-// (active) or the Manager is shutting down (ctx done). beginConnectionLocked
-// reads this same projection without the actor lock — the mirror cannot
-// diverge because every active=false write lands in the same critical
-// section as the Disconnected publication (see connect's terminal paths and
-// publishConnectionFailure).
+// (active) or the Manager is shutting down (ctx done).
 func (a *hostActor) armed() bool {
 	return a.active.Load() || a.ctx.Err() != nil
 }
@@ -184,7 +177,7 @@ func (a *hostActor) closeSession(ctx context.Context) error {
 	return session.Close(ctx)
 }
 
-func (a *hostActor) consumeSession(session hostSession) error {
+func (a *hostActor) consumeSession(session HostSession) error {
 	for {
 		fact, err := session.Next(a.ctx)
 		if err != nil {
@@ -372,7 +365,7 @@ func sessionDisposition(err error) SessionDisposition {
 	return SessionRetry
 }
 
-func closeHostSession(session hostSession) {
+func closeHostSession(session HostSession) {
 	closeWithTimeout(session.Close, 5*time.Second)
 }
 
@@ -384,16 +377,16 @@ var errTransportUnavailable = errors.New("Development Host transport is unavaila
 // survive session replacement without holding either state lock.
 type currentDialer struct {
 	mu     sync.RWMutex
-	dialer proxy.Dialer
+	dialer Dialer
 }
 
-func (d *currentDialer) Set(dialer proxy.Dialer) {
+func (d *currentDialer) Set(dialer Dialer) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.dialer = dialer
 }
 
-func (d *currentDialer) DialContext(ctx context.Context, target netip.AddrPort) (proxy.HalfCloseConn, error) {
+func (d *currentDialer) DialContext(ctx context.Context, target netip.AddrPort) (HalfCloseConn, error) {
 	d.mu.RLock()
 	dialer := d.dialer
 	d.mu.RUnlock()

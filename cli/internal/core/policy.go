@@ -51,16 +51,6 @@ type PolicyVerdict struct {
 	PolicyID string
 }
 
-// evaluatePolicies applies the policy set to one observation. When a
-// Listener has multiple attributable Listener Processes (one per Process
-// Chain's direct holder), every chain must match the same policy; otherwise
-// the policy does not match. Ports and bind scope are chain-independent
-// and match with or without process evidence; executable, ancestor, and
-// working-directory conditions need their evidence.
-// sortPolicies is the single construction of the evaluation order: a
-// priority-descending copy of the policy set. The reconciliation path sorts
-// once per generation and evaluates every observation against the result;
-// the pure evaluation entry sorts defensively for tests and one-off calls.
 func sortPolicies(policies []ForwardingPolicy) []ForwardingPolicy {
 	ordered := slices.Clone(policies)
 	slices.SortStableFunc(ordered, func(left, right ForwardingPolicy) int {
@@ -69,14 +59,6 @@ func sortPolicies(policies []ForwardingPolicy) []ForwardingPolicy {
 	return ordered
 }
 
-func evaluatePolicies(policies []ForwardingPolicy, observation ListenerObservation) PolicyVerdict {
-	return evaluateOrdered(sortPolicies(policies), observation)
-}
-
-// evaluateOrdered applies an already priority-sorted policy set to one
-// observation: first match owns the listener. It is the shared evaluation
-// core for the reconciliation path (which sorts once per generation) and
-// for the pure evaluatePolicies entry.
 func evaluateOrdered(policies []ForwardingPolicy, observation ListenerObservation) PolicyVerdict {
 	for _, policy := range policies {
 		if verdict, matched := evaluatePolicy(policy, observation); matched {

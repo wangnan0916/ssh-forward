@@ -158,9 +158,9 @@ func TestLoadPoliciesMissingFile(t *testing.T) {
 	}
 }
 
-func TestFilePolicySourceKeepsLastValidOnInvalidEdit(t *testing.T) {
+func TestFilePolicyReaderSourceKeepsLastValidOnInvalidEdit(t *testing.T) {
 	path := writePolicyFile(t, `{"schema_version": 1, "policies": [{"id": "a", "action": "ignore", "conditions": [{"remote_ports": {"from": 8080, "to": 8080}}]}]}`)
-	source := FilePolicySource(path)
+	source := NewFilePolicyReader(path).Source()
 	first := source()
 	if len(first) != 1 || first[0].ID != "a" {
 		t.Fatalf("first read = %#v, want policy a", first)

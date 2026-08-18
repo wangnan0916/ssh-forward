@@ -117,7 +117,6 @@ func (a *App) rememberPort(port uint16, adding, jsonOutput bool) error {
 	if err != nil {
 		return err
 	}
-	a.refreshPolicies()
 	if !adding && !changed {
 		return fmt.Errorf("port %d is not remembered", port)
 	}
@@ -141,7 +140,6 @@ func (a *App) rememberDir(dir string, adding, jsonOutput bool) error {
 		}
 		return err
 	}
-	a.refreshPolicies()
 	if !adding && !changed {
 		return fmt.Errorf("directory %s is not remembered", stored)
 	}
@@ -150,12 +148,6 @@ func (a *App) rememberDir(dir string, adding, jsonOutput bool) error {
 
 func errorsIsHostDir(err error) bool {
 	return errors.Is(err, app.ErrEmptyDirectory) || errors.Is(err, app.ErrHostDirectory)
-}
-
-func (a *App) refreshPolicies() {
-	if a.PolicyReader != nil {
-		_, _ = a.PolicyReader.Read()
-	}
 }
 
 func (a *App) statusCommand() *cobra.Command {

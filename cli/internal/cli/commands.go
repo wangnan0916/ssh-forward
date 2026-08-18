@@ -32,6 +32,12 @@ func (a *App) writeStatusHuman(snapshot core.Snapshot) error {
 	if ports := newRemotePorts(host); len(ports) != 0 {
 		fmt.Fprintf(&builder, "New remote ports: %s (ssh-forward add PORT)\n", strings.Join(ports, ", "))
 	}
+	if len(host.LocalPortConflicts) != 0 {
+		builder.WriteString("Local port conflicts:\n")
+		for _, conflict := range host.LocalPortConflicts {
+			fmt.Fprintf(&builder, "  %s %s:%d\n", conflict.BindScope, conflict.RemoteFamily, conflict.RemotePort)
+		}
+	}
 	_, err := io.WriteString(a.Stdout, builder.String())
 	return err
 }

@@ -8,7 +8,7 @@ The completed throwaway spike validated one system `ssh -T -D … sh -s` connect
 
 Slices 1–6 are complete. One Forwarding Session carries the fixed versioned scanner plus SOCKS traffic. The Manager publishes canonical complete Snapshots with Discovery evidence and policy-reconciled Managed Forwards. Capability-negotiated JSON-RPC clients can Watch those Snapshots. The CLI is the public command surface: it auto-spawns a per-user manager and speaks the v1 wire.
 
-Slice 5's removal hysteresis is two consecutive observations. Session outage does not count as disappearance: the reconciler advances only on ObservationSets.
+Slice 5's observation-path hysteresis is two consecutive observations for create and disappearance. A saved policy edit applies immediately and resets that hysteresis. Session outage does not count as disappearance: the observation wake advances only on ObservationSets.
 
 1. Initialize the new local repository and preserve the accepted design baseline.
 2. Establish the Go module, disposable Linux integration harness, Manager Interface, and JSON-RPC hello/status path.

@@ -10,6 +10,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 const (
@@ -19,14 +21,9 @@ const (
 
 var ErrLocalPortConflict = errors.New("local port fallback range is occupied")
 
-type HalfCloseConn interface {
-	net.Conn
-	CloseWrite() error
-}
+type HalfCloseConn = core.HalfCloseConn
 
-type Dialer interface {
-	DialContext(context.Context, netip.AddrPort) (HalfCloseConn, error)
-}
+type Dialer = core.Dialer
 
 type EndpointOptions struct {
 	PreferredPort    uint16

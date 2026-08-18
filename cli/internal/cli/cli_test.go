@@ -77,6 +77,11 @@ func snapshotWithHost() core.Snapshot {
 					LocalFamilies:      []core.AddressFamily{core.FamilyIPv4},
 				},
 			},
+			LocalPortConflicts: []core.LocalPortConflict{{
+				RemotePort:   3000,
+				RemoteFamily: core.FamilyIPv4,
+				BindScope:    core.BindLoopback,
+			}},
 		},
 	}
 }
@@ -91,6 +96,8 @@ func TestStatusHuman(t *testing.T) {
 		"Discovery: healthy (baseline true, scanner v1)",
 		"New remote ports: 9090 (ssh-forward add PORT)",
 		"managed:ipv4:loopback:8080 → ipv4:8080 (local 8080)",
+		"Local port conflicts:",
+		"loopback ipv4:3000",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("status output missing %q:\n%s", want, output)
@@ -108,6 +115,7 @@ func TestStatusJSON(t *testing.T) {
 		`"revision":5`,
 		`"alias":"development"`,
 		`"remote_port":8080`,
+		`"local_port_conflicts"`,
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("status --json missing %q:\n%s", want, output)

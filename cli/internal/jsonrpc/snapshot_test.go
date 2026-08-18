@@ -24,6 +24,9 @@ func TestUnmarshalSnapshotInvertsMarshal(t *testing.T) {
 				RemotePort: 8080, RemoteFamily: core.FamilyIPv4, AllocatedLocalPort: 8081,
 				LocalFamilies: []core.AddressFamily{core.FamilyIPv4, core.FamilyIPv6},
 			}},
+			LocalPortConflicts: []core.LocalPortConflict{{
+				RemotePort: 3000, RemoteFamily: core.FamilyIPv4, BindScope: core.BindLoopback,
+			}},
 		},
 	}
 	encoded, err := MarshalSnapshot(want)

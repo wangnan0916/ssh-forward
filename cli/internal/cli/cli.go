@@ -100,15 +100,10 @@ func (a *App) bindGlobalFlags(cmd *cobra.Command) {
 }
 
 func (a *App) bindDefaults() {
-	if a.Layout.Dir == "" {
-		a.Layout = app.DefaultLayout()
-	}
-	if a.PoliciesPath == "" {
-		a.PoliciesPath = a.Layout.Policies
-	}
-	if a.ConfigPath == "" {
-		a.ConfigPath = a.Layout.Config
-	}
+	opts := a.options().WithDefaults()
+	a.Layout = opts.Layout
+	a.PoliciesPath = opts.PoliciesPath
+	a.ConfigPath = opts.ConfigPath
 }
 
 func (a *App) options() app.Options {

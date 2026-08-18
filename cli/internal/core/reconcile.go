@@ -1,76 +1,73 @@
 package core
 
 import (
+	"cmp"
 	"context"
+	"errors"
 	"reflect"
 	"slices"
 	"strconv"
-	"strings"
+	"time"
 )
 
-// reconciler owns the Forwarding Policy subsystem's state: the policy cache
-// and source, the creation and removal hysteresis, and the worker's wake-up
-// signal. Like forwardTable, it holds no lock of its own — the Manager lock
-// guards it, and its methods are called only while that lock is held, with
-// one exception: the policy source is a user-injected function (file-backed
-// in production) and the reconciliation worker invokes it before taking any
-// lock. The worker goroutine is the only writer of the hysteresis state.
+type wakeKind int
+
+const (
+	wakeObservation wakeKind = iota
+	wakePolicy
+)
+
+// reconciler owns Managed Forward lifecycle state: the policy cache, create
+// and removal hysteresis, Local Port Conflicts, and the worker's wake-up
+// signals. Like forwardTable, it holds no lock of its own — the Manager lock
+// guards it, except the policy source which the worker invokes before taking
+// any lock. The worker goroutine is the only writer of hysteresis and conflicts.
 type reconciler struct {
 	policyCache  []ForwardingPolicy
-	evaluated    []ForwardingPolicy
 	policySource func() []ForwardingPolicy
 	createState  map[remoteListenerKey]int
 	removalState map[ForwardID]int
-	reconcile    chan struct{}
+	conflicts    map[remoteListenerKey]LocalPortConflict
+	observe      chan struct{}
+	policy       chan struct{}
 }
 
 func newReconciler(policySource func() []ForwardingPolicy) *reconciler {
-	initial := policySource()
 	return &reconciler{
-		policyCache:  initial,
-		evaluated:    sortPolicies(initial),
+		policyCache:  policySource(),
 		policySource: policySource,
 		createState:  make(map[remoteListenerKey]int),
 		removalState: make(map[ForwardID]int),
-		reconcile:    make(chan struct{}, 8),
+		conflicts:    make(map[remoteListenerKey]LocalPortConflict),
+		observe:      make(chan struct{}, 8),
+		policy:       make(chan struct{}, 8),
 	}
 }
 
-// notify wakes the reconciliation worker after the actor applied a new
-// observation generation. The channel is buffered because the signal must
-// not be lost while the worker is busy with a previous generation.
 func (r *reconciler) notify() {
 	select {
-	case r.reconcile <- struct{}{}:
+	case r.observe <- struct{}{}:
 	default:
 	}
 }
 
-// commitPolicies records the policy set this generation evaluated (the
-// source order, for equality against the next read) and its priority-sorted
-// evaluation order (sorted once per generation), reporting whether the set
-// differs from the cache so the worker can republish when an edit changed
-// only which listeners match.
-func (r *reconciler) commitPolicies(source, ordered []ForwardingPolicy) bool {
-	changed := !policySetsEqual(r.policyCache, source)
-	r.policyCache = source
-	r.evaluated = ordered
-	return changed
+func (r *reconciler) notifyPolicy() {
+	select {
+	case r.policy <- struct{}{}:
+	default:
+	}
 }
 
-// policySetsEqual compares policy sets by value, treating nil and empty as
-// equal: a source that alternates between nil and empty must not count as
-// an edit.
+func (r *reconciler) commitPolicies(source []ForwardingPolicy) {
+	r.policyCache = source
+}
+
 func policySetsEqual(left, right []ForwardingPolicy) bool {
 	return slices.EqualFunc(left, right, func(a, b ForwardingPolicy) bool {
 		return reflect.DeepEqual(a, b)
 	})
 }
 
-// createReady advances the creation hysteresis: a Managed Forward needs two
-// consecutive observations of the same auto verdict. It reports whether
-// this observation makes the creation due. hasManaged resets the count: an
-// existing forward (or one registered meanwhile) ends the accumulation.
 func (r *reconciler) createReady(key remoteListenerKey, hasManaged bool) bool {
 	if hasManaged {
 		delete(r.createState, key)
@@ -84,10 +81,6 @@ func (r *reconciler) createReady(key remoteListenerKey, hasManaged bool) bool {
 	return true
 }
 
-// removalStep advances the removal hysteresis for one Managed Forward that
-// is no longer desired, reporting whether the removal is due now. desired
-// keeps the forward and clears the count; otherwise two consecutive
-// observations make the removal due.
 func (r *reconciler) removalStep(id ForwardID, desired bool) bool {
 	if desired {
 		delete(r.removalState, id)
@@ -101,37 +94,91 @@ func (r *reconciler) removalStep(id ForwardID, desired bool) bool {
 	return true
 }
 
-// reconcileLoop is the Manager's single reconciliation worker. The actor
-// signals it once per applied observation generation (reconciler.notify);
-// the worker reads the mirror outside the Manager lock, evaluates policies,
-// and executes the Managed Forward delta — so allocation and teardown never
-// block the actor. It is the writer of the Managed Forward lifecycle and
-// registers under the Manager lock. The drain
-// loop consumes every buffered notification so each generation advances
-// the hysteresis exactly once, even when the actor outruns the worker.
+func (r *reconciler) resetHysteresis() {
+	clear(r.createState)
+	clear(r.removalState)
+}
+
+func (r *reconciler) recordConflict(key remoteListenerKey) {
+	r.conflicts[key] = LocalPortConflict{
+		RemotePort:   key.port,
+		RemoteFamily: key.family,
+		BindScope:    key.scope,
+	}
+}
+
+func (r *reconciler) clearConflict(key remoteListenerKey) {
+	delete(r.conflicts, key)
+}
+
+func (r *reconciler) conflictSnapshots() []LocalPortConflict {
+	if len(r.conflicts) == 0 {
+		return nil
+	}
+	out := make([]LocalPortConflict, 0, len(r.conflicts))
+	for _, conflict := range r.conflicts {
+		out = append(out, conflict)
+	}
+	slices.SortFunc(out, func(left, right LocalPortConflict) int {
+		if order := cmp.Compare(left.RemoteFamily, right.RemoteFamily); order != 0 {
+			return order
+		}
+		if order := cmp.Compare(left.BindScope, right.BindScope); order != 0 {
+			return order
+		}
+		return cmp.Compare(left.RemotePort, right.RemotePort)
+	})
+	return out
+}
+
 func (m *manager) reconcileLoop() {
 	defer m.workers.Done()
 	for {
 		select {
 		case <-m.ctx.Done():
 			return
-		case <-m.reconciler.reconcile:
-			for {
-				m.reconcileOnce()
-				select {
-				case <-m.reconciler.reconcile:
-				default:
-					goto settled
-				}
-			}
-		settled:
+		case <-m.reconciler.observe:
+			drainWake(m.reconciler.observe)
+			m.reconcileOnce(wakeObservation)
+		case <-m.reconciler.policy:
+			drainWake(m.reconciler.policy)
+			m.reconcileOnce(wakePolicy)
 		}
 	}
 }
 
-func (m *manager) reconcileOnce() {
+func (m *manager) policyPollLoop(interval time.Duration) {
+	defer m.workers.Done()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-ticker.C:
+			m.reconciler.notifyPolicy()
+		}
+	}
+}
+
+func drainWake(ch <-chan struct{}) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
+		}
+	}
+}
+
+func (m *manager) reconcileOnce(kind wakeKind) {
 	policies := m.reconciler.policySource()
 	ordered := sortPolicies(policies)
+	policyChanged := !policySetsEqual(m.reconciler.policyCache, policies)
+	if kind == wakePolicy && !policyChanged {
+		return
+	}
+
 	m.mu.RLock()
 	if m.closed {
 		m.mu.RUnlock()
@@ -158,117 +205,128 @@ func (m *manager) reconcileOnce() {
 		managedKeys[entry.key] = struct{}{}
 	}
 
-	var toCreate []forwardSpec
-	for key := range desired {
-		_, managed := managedKeys[key]
-		if !m.reconciler.createReady(key, managed) {
-			continue
-		}
-		toCreate = append(toCreate, managedForwardSpec(key))
-	}
-
+	var toCreate []ForwardSpec
 	var toRemove []ForwardID
-	for _, entry := range managedEntries {
-		_, stillDesired := desired[entry.key]
-		if m.reconciler.removalStep(entry.id, stillDesired) {
-			toRemove = append(toRemove, entry.id)
+	if policyChanged {
+		for key := range desired {
+			if _, managed := managedKeys[key]; !managed {
+				toCreate = append(toCreate, managedForwardSpec(key))
+			}
+		}
+		for _, entry := range managedEntries {
+			if _, stillDesired := desired[entry.key]; !stillDesired {
+				toRemove = append(toRemove, entry.id)
+			}
+		}
+	} else {
+		for key := range desired {
+			_, managed := managedKeys[key]
+			if !m.reconciler.createReady(key, managed) {
+				continue
+			}
+			toCreate = append(toCreate, managedForwardSpec(key))
+		}
+		for _, entry := range managedEntries {
+			_, stillDesired := desired[entry.key]
+			if m.reconciler.removalStep(entry.id, stillDesired) {
+				toRemove = append(toRemove, entry.id)
+			}
 		}
 	}
 
-	m.mu.Lock()
-	if m.closed {
-		m.mu.Unlock()
-		return
-	}
-	policyChanged := m.reconciler.commitPolicies(policies, ordered)
 	if len(toCreate) == 0 && len(toRemove) == 0 {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.closed {
+			return
+		}
+		m.reconciler.commitPolicies(policies)
 		if policyChanged {
+			m.reconciler.resetHysteresis()
 			m.publishLocked()
 		}
-		m.mu.Unlock()
 		return
 	}
-	m.mu.Unlock()
 
-	var created []ownedForward
+	type createdForward struct {
+		owner OwnedForward
+		key   remoteListenerKey
+	}
+	var created []createdForward
+	failed := make(map[remoteListenerKey]struct{})
 	for _, spec := range toCreate {
 		owner, err := m.forwardAllocator.Allocate(context.Background(), spec)
 		if err != nil {
+			var domain *DomainError
+			if errors.As(err, &domain) && domain.Kind == ErrorLocalPortConflict {
+				failed[spec.key] = struct{}{}
+			}
 			continue
 		}
-		created = append(created, owner)
+		created = append(created, createdForward{owner: owner, key: spec.key})
 	}
 	type removedForward struct {
 		id    ForwardID
-		owner ownedForward
+		key   remoteListenerKey
+		owner OwnedForward
 	}
 	var removed []removedForward
+	removedKeys := make(map[ForwardID]remoteListenerKey, len(managedEntries))
+	for _, entry := range managedEntries {
+		removedKeys[entry.id] = entry.key
+	}
 	for _, id := range toRemove {
 		owner, found := m.forwards.removeDirect(id)
 		if found {
-			removed = append(removed, removedForward{id: id, owner: owner})
+			removed = append(removed, removedForward{id: id, key: removedKeys[id], owner: owner})
 		}
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
-		for _, owner := range created {
-			_ = owner.Close(context.Background())
+		for _, item := range created {
+			_ = item.owner.Close(context.Background())
 		}
 		return
 	}
-	for _, owner := range created {
-		if !m.forwards.add(owner) {
-			_ = owner.Close(context.Background())
+	m.reconciler.commitPolicies(policies)
+	if policyChanged {
+		m.reconciler.resetHysteresis()
+	}
+	changed := policyChanged
+	for key := range failed {
+		m.reconciler.recordConflict(key)
+		changed = true
+	}
+	for _, item := range created {
+		if !m.forwards.add(item.owner, item.key) {
+			_ = item.owner.Close(context.Background())
+			continue
 		}
+		m.reconciler.clearConflict(item.key)
+		changed = true
 	}
 	for _, forward := range removed {
 		_ = forward.owner.Close(context.Background())
 		delete(m.reconciler.removalState, forward.id)
+		m.reconciler.clearConflict(forward.key)
+		changed = true
 	}
-	if len(created) != 0 || len(removed) != 0 {
+	if changed {
 		m.publishLocked()
 	}
 }
 
-func managedForwardSpec(key remoteListenerKey) forwardSpec {
-	return forwardSpec{
+func managedForwardSpec(key remoteListenerKey) ForwardSpec {
+	return ForwardSpec{
 		ID:                 ForwardID("managed:" + managedForwardToken(key)),
 		Remote:             loopbackTarget(key.family, key.port),
 		PreferredLocalPort: key.port,
+		key:                key,
 	}
 }
 
-// managedForwardToken builds a stable, collision-resistant Managed Forward
-// identity from the listener key: reconciliation must address the same
-// forward across observations.
 func managedForwardToken(key remoteListenerKey) string {
 	return string(key.family) + ":" + string(key.scope) + ":" + strconv.Itoa(int(key.port))
-}
-
-// managedForwardKey recovers the listener key a Managed Forward serves from
-// its identity (managed:<family>:<scope>:<port>). Unknown shapes report false.
-func managedForwardKey(id ForwardID) (remoteListenerKey, bool) {
-	token, found := strings.CutPrefix(string(id), "managed:")
-	if !found {
-		return remoteListenerKey{}, false
-	}
-	family, rest, found := strings.Cut(token, ":")
-	if !found {
-		return remoteListenerKey{}, false
-	}
-	scope, portText, found := strings.Cut(rest, ":")
-	if !found {
-		return remoteListenerKey{}, false
-	}
-	port, err := strconv.ParseUint(portText, 10, 16)
-	if err != nil {
-		return remoteListenerKey{}, false
-	}
-	return remoteListenerKey{
-		family: AddressFamily(family),
-		scope:  ListenerBindScope(scope),
-		port:   uint16(port),
-	}, true
 }

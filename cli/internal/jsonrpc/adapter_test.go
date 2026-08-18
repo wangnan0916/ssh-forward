@@ -398,6 +398,20 @@ func TestServeRejectsUnknownSnapshotScope(t *testing.T) {
 	assertJSONEqual(t, response, []byte(want))
 }
 
+func TestServeAcceptsOmittedAndEmptySnapshotScope(t *testing.T) {
+	session := newTestSession(t)
+	session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":[]}}`)
+	want := `{"jsonrpc":"2.0","id":"2","result":{"snapshot":{"revision":0}}}`
+	for _, request := range []string{
+		`{"jsonrpc":"2.0","id":"2","method":"manager.snapshot"}`,
+		`{"jsonrpc":"2.0","id":"2","method":"manager.snapshot","params":{}}`,
+		`{"jsonrpc":"2.0","id":"2","method":"manager.snapshot","params":{"scope":{"kind":"all"}}}`,
+	} {
+		response := session.exchange(t, request)
+		assertJSONEqual(t, response, []byte(want))
+	}
+}
+
 func TestServeRejectsIncompatibleProtocolAndCloses(t *testing.T) {
 	session := newTestSession(t)
 	response := session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":2,"minor":0},"capabilities":[]}}`)

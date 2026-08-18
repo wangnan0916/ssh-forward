@@ -20,28 +20,18 @@ const (
 	FamilyIPv6 AddressFamily = "ipv6"
 )
 
-// ConnectionState is the Forwarding Session's life cycle as the mirror and
-// the Snapshot expose it. Transition table — who may write which state (the
-// only two legal writers are the Manager mirror under the Manager lock and
-// the host actor under its own lock):
+// ConnectionState is the Forwarding Session's life cycle as the Snapshot
+// exposes it. The host actor is the only writer; the Manager mirror follows
+// via the actor's publication callback.
 //
-//	disconnected → connecting: manager.ensureConnected patches the
-//	    mirror while the actor is unarmed (armed() guard). The
-//	    actor's startIfNeeded then re-states Connecting in its own state and
-//	    arms; both writes share the armed() projection as the single guard.
+//	disconnected → connecting: the actor arms (startIfNeeded) and publishes
+//	    Connecting before the connect loop runs.
 //	connecting → connected: the actor's connect loop after the session
-//	    passes readiness (a.state.Connection = ConnectionConnected).
-//	connected → connecting: the actor after a retryable session end
-//	    (sessionDisposition == SessionRetry); the mirror follows via the
-//	    publication callback.
-//	* → disconnected: the actor's terminal paths — non-retryable session
-//	    end and publishConnectionFailure. The actor always writes
-//	    active=false in the same critical section, so the mirror's
-//	    disconnected state is equivalent to the actor being unarmed
-//	    (round-6 C1 invariant).
-//
-// The Manager declares Connecting through beginConnectionLocked (manager.go).
-// SessionDisposition (below) collapses suspend/closed into the same terminal write.
+//	    passes readiness.
+//	connected → connecting: the actor after a retryable session end.
+//	* → disconnected: the actor's terminal paths. The actor always writes
+//	    active=false in the same critical section as the Disconnected
+//	    publication.
 type ConnectionState string
 
 const (
@@ -135,12 +125,21 @@ type ForwardSnapshot struct {
 	LocalFamilies      []AddressFamily
 }
 
+// LocalPortConflict is a Remote Listener whose Local Endpoint could not be
+// allocated under the configured conflict policy.
+type LocalPortConflict struct {
+	RemotePort   uint16
+	RemoteFamily AddressFamily
+	BindScope    ListenerBindScope
+}
+
 type HostSnapshot struct {
 	Alias                HostAlias
 	Connection           ConnectionState
 	Discovery            DiscoverySnapshot
 	ListenerObservations []ListenerObservation
 	Forwards             []ForwardSnapshot
+	LocalPortConflicts   []LocalPortConflict
 }
 
 type ErrorKind string

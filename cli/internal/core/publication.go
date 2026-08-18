@@ -40,6 +40,7 @@ func (m *manager) buildSnapshotLocked() Snapshot {
 	}
 	host := m.hostSnapshot
 	host.Forwards = m.forwards.snapshots()
+	host.LocalPortConflicts = m.reconciler.conflictSnapshots()
 	return Snapshot{
 		Revision: m.revision,
 		Host:     &host,
@@ -68,6 +69,9 @@ func cloneSnapshot(snapshot Snapshot) Snapshot {
 		for forwardIndex, forward := range snapshot.Host.Forwards {
 			host.Forwards[forwardIndex] = cloneForward(forward)
 		}
+	}
+	if snapshot.Host.LocalPortConflicts != nil {
+		host.LocalPortConflicts = append([]LocalPortConflict(nil), snapshot.Host.LocalPortConflicts...)
 	}
 	cloned.Host = &host
 	return cloned

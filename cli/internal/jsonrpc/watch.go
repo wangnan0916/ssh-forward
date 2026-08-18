@@ -58,9 +58,8 @@ func (s *connectionSession) handleWatch(ctx context.Context, request *jrpc2.Requ
 	if !s.capabilities.watchSnapshot {
 		return nil, errWatchCapabilityRequired
 	}
-	var params snapshotParams
-	if paramsText := request.ParamString(); paramsText == "" || json.Unmarshal([]byte(paramsText), &params) != nil || params.Scope.Kind != "all" {
-		return nil, errInvalidScope
+	if err := parseSnapshotParams(request); err != nil {
+		return nil, err
 	}
 	if !s.reserveWatchSlot() {
 		return nil, errWatchLimit

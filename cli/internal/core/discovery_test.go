@@ -10,8 +10,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
-
 	"github.com/google/go-cmp/cmp"
 )
 
@@ -30,7 +28,7 @@ func newScriptedDiscoverySession() *scriptedDiscoverySession {
 	}
 }
 
-func (*scriptedDiscoverySession) DialContext(context.Context, netip.AddrPort) (proxy.HalfCloseConn, error) {
+func (*scriptedDiscoverySession) DialContext(context.Context, netip.AddrPort) (HalfCloseConn, error) {
 	return nil, errors.New("unexpected Forward dial")
 }
 
@@ -53,10 +51,10 @@ func (s *scriptedDiscoverySession) Close(context.Context) error {
 }
 
 type oneSessionConnector struct {
-	session hostSession
+	session HostSession
 }
 
-func (c oneSessionConnector) Connect(context.Context, HostAlias) (hostSession, error) {
+func (c oneSessionConnector) Connect(context.Context, HostAlias) (HostSession, error) {
 	return c.session, nil
 }
 
@@ -132,7 +130,7 @@ func TestManagerReportsEvidenceTruncationDiagnostic(t *testing.T) {
 		ready := make(chan struct{})
 		close(ready)
 		connector := &sequenceConnector{
-			sessions: []hostSession{session},
+			sessions: []HostSession{session},
 			releases: []<-chan struct{}{ready},
 			started:  make(chan int, 1),
 		}
@@ -168,7 +166,7 @@ func TestManagerRejectsUnknownCapabilityReason(t *testing.T) {
 		ready := make(chan struct{})
 		close(ready)
 		connector := &sequenceConnector{
-			sessions: []hostSession{session},
+			sessions: []HostSession{session},
 			releases: []<-chan struct{}{ready},
 			started:  make(chan int, 1),
 		}
@@ -202,7 +200,7 @@ func TestManagerRetainsObservationsUntilReconnectGetsCompleteReplacement(t *test
 		ready := make(chan struct{})
 		close(ready)
 		connector := &sequenceConnector{
-			sessions: []hostSession{first, second},
+			sessions: []HostSession{first, second},
 			releases: []<-chan struct{}{ready, ready},
 			started:  make(chan int, 2),
 		}

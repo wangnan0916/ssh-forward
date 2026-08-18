@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sync"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
@@ -206,21 +205,13 @@ func (r *FilePolicyReader) Read() ([]core.ForwardingPolicy, error) {
 
 // Source returns the Manager's reconciliation seam: each call reads the
 // file and returns the last valid set — empty before any valid read
-// (unmatched listeners are not forwarded). The reconciliation cadence (~2s per observation
-// generation) hot-reloads external edits without a watcher.
+// (unmatched listeners are not forwarded). The Manager's 250ms policy poll
+// hot-reloads external edits without a watcher.
 func (r *FilePolicyReader) Source() func() []core.ForwardingPolicy {
 	return func() []core.ForwardingPolicy {
 		policies, _ := r.Read()
 		return policies
 	}
-}
-
-// FilePolicySource builds the Manager's policy source from a file, keeping
-// the last valid set on invalid input. Production wiring composes a
-// FilePolicyReader instead so the CLI can share the same reader; this
-// remains for tests and callers that want only the source seam.
-func FilePolicySource(path string) func() []core.ForwardingPolicy {
-	return NewFilePolicyReader(path).Source()
 }
 
 var (
@@ -233,9 +224,6 @@ var (
 
 // SavePolicies writes policies.jsonc atomically in the file shape.
 func SavePolicies(path string, policies []core.ForwardingPolicy) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
 	encoded, err := MarshalPolicies(policies)
 	if err != nil {
 		return err
@@ -245,24 +233,7 @@ func SavePolicies(path string, policies []core.ForwardingPolicy) error {
 		return err
 	}
 	indented.WriteByte('\n')
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".policies-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(indented.Bytes()); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
+	return writeAtomic(path, indented.Bytes(), ".policies-*.tmp")
 }
 
 func loadPoliciesOrEmpty(path string) ([]core.ForwardingPolicy, error) {
@@ -324,78 +295,4 @@ func RemoveAutoForwardDir(path, dir string) (bool, string, error) {
 		return changed, stored, err
 	}
 	return true, stored, SavePolicies(path, updated)
-}
-
-// stripJSONC removes line comments, block comments, and trailing commas
-// while staying string-aware, converting the JSONC dialect (ADR-0005) to
-// plain JSON. Strings keep their contents verbatim, including comment-like
-// sequences.
-func stripJSONC(input []byte) ([]byte, error) {
-	output := make([]byte, 0, len(input))
-	inString := false
-	inLineComment := false
-	inBlockComment := false
-	for index := 0; index < len(input); index++ {
-		current := input[index]
-		switch {
-		case inLineComment:
-			if current == '\n' {
-				inLineComment = false
-				output = append(output, current)
-			}
-			continue
-		case inBlockComment:
-			if current == '*' && index+1 < len(input) && input[index+1] == '/' {
-				inBlockComment = false
-				index++
-			}
-			continue
-		case inString:
-			output = append(output, current)
-			if current == '\\' && index+1 < len(input) {
-				index++
-				output = append(output, input[index])
-				continue
-			}
-			if current == '"' {
-				inString = false
-			}
-			continue
-		}
-		switch current {
-		case '"':
-			inString = true
-			output = append(output, current)
-		case '/':
-			if index+1 < len(input) && input[index+1] == '/' {
-				inLineComment = true
-				index++
-			} else if index+1 < len(input) && input[index+1] == '*' {
-				inBlockComment = true
-				index++
-			} else {
-				output = append(output, current)
-			}
-		case ',':
-			// Drop a comma when the next non-whitespace character closes
-			// the array or object: trailing commas are legal JSONC.
-			next := index + 1
-			for next < len(input) && (input[next] == ' ' || input[next] == '\t' || input[next] == '\n' || input[next] == '\r') {
-				next++
-			}
-			if next < len(input) && (input[next] == ']' || input[next] == '}') {
-				continue
-			}
-			output = append(output, current)
-		default:
-			output = append(output, current)
-		}
-	}
-	if inString {
-		return nil, errors.New("policies.jsonc: unterminated string")
-	}
-	if inBlockComment {
-		return nil, errors.New("policies.jsonc: unterminated block comment")
-	}
-	return output, nil
 }

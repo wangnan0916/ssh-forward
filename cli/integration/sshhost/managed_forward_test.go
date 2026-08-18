@@ -37,7 +37,7 @@ func TestManagedForwardThroughDisposableDevelopmentHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create OpenSSH Adapter: %v", err)
 	}
-	manager := app.NewManager(core.HostAlias(testHostAlias()), adapter, app.FilePolicySource(policiesPath))
+	manager := app.NewManager(core.HostAlias(testHostAlias()), adapter, app.NewFilePolicyReader(policiesPath).Source())
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -98,7 +98,7 @@ func TestIPv6ManagedForwardThroughDisposableDevelopmentHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create OpenSSH Adapter: %v", err)
 	}
-	manager := app.NewManager(core.HostAlias(testHostAlias()), adapter, app.FilePolicySource(policiesPath))
+	manager := app.NewManager(core.HostAlias(testHostAlias()), adapter, app.NewFilePolicyReader(policiesPath).Source())
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

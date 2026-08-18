@@ -31,17 +31,19 @@
 # Every cap above is declared in this file and derived by the parser from
 # the declaration, so the two sides cannot drift.
 interval=2
-# scan cadence in seconds; core counts Listener Lifetime grace in scan
-# cycles (default 3 cycles), so the effective grace is 4 consecutive
-# absences, about 8s at this value (see lifetime.go defaultListenerGraceCycles)
+# scan cadence in seconds. Core applies two-generation hysteresis on the
+# observation path (create and disappearance), so a listener appearing or
+# vanishing takes two consecutive successful scans, about 4s at this value.
+# A saved policy edit does not wait for that cadence: the Manager polls
+# policies and reconciles immediately against the current observations.
 sequence=0
 previous_fingerprint=''
 listener_records=''
 process_records=''
 process_capability=unavailable
-# Cadence family: interval is the scan cadence in seconds (core counts
-# Listener Lifetime grace in scan cycles — 3 cycles of tolerance plus the
-# ending scan, 4 consecutive absences, about 8s at this value);
+# Cadence family: interval is the scan cadence in seconds (core's
+# observation-path hysteresis is two consecutive successful scans, about
+# 4s at this value);
 # attribution runs on fingerprint change, on bounded backoff while process
 # capability is partial (5 scans ~= 10s), and on slow periodic refresh
 # (30 scans ~= 60s); the fallback chain tries at most 3 source degradations.

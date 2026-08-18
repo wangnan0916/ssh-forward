@@ -2,15 +2,30 @@ package core
 
 import (
 	"context"
-
-	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
+	"net"
+	"net/netip"
 )
 
-// HostSession and HostConnector form the true-external transport seam composed
-// by the app package's assembly point (app.NewManager); they are not part of
-// Manager's interface.
+// HalfCloseConn is a connection that can close its write side independently
+// of the read side. The Forwarding Session data path and Local Endpoints
+// share this shape so a client FIN still drains the remote response.
+type HalfCloseConn interface {
+	net.Conn
+	CloseWrite() error
+}
+
+// Dialer is the Forwarding Session data path: one Remote Listener address
+// in, one half-closeable connection out. HostSession embeds it; Local
+// Endpoint allocation consumes it. Production (OpenSSH SOCKS) and tests
+// (direct TCP, scripted sessions) are the two adapters that justify the seam.
+type Dialer interface {
+	DialContext(context.Context, netip.AddrPort) (HalfCloseConn, error)
+}
+
+// HostSession and HostConnector form the true-external transport seam
+// composed by the app package; they are not part of Manager's interface.
 type HostSession interface {
-	proxy.Dialer
+	Dialer
 	Next(context.Context) (SessionFact, error)
 	Close(context.Context) error
 }
@@ -96,6 +111,3 @@ type SessionError struct {
 func (e *SessionError) Error() string {
 	return "Development Host session ended: " + string(e.Reason)
 }
-
-type hostSession = HostSession
-type hostConnector = HostConnector

@@ -39,7 +39,7 @@ type Session struct {
 	PolicyReader *FilePolicyReader
 }
 
-func (o Options) withDefaults() Options {
+func (o Options) WithDefaults() Options {
 	if o.Layout.Dir == "" {
 		o.Layout = DefaultLayout()
 	}
@@ -62,7 +62,7 @@ func (o Options) withDefaults() Options {
 // auto-spawn it and dial, else (SSH_FORWARD_NO_AUTOSPAWN=1) build an
 // in-process Manager. The caller owns Session.Manager and must Close it.
 func Connect(ctx context.Context, opts Options) (Session, error) {
-	opts = opts.withDefaults()
+	opts = opts.WithDefaults()
 	if client, err := ipc.Dial(ctx, opts.Layout.Socket); err == nil {
 		return attach(ctx, client, opts.HostFlag, opts.Stderr)
 	}
@@ -96,7 +96,7 @@ func Connect(ctx context.Context, opts Options) (Session, error) {
 
 // Serve runs the per-user singleton in this process until ctx ends.
 func Serve(ctx context.Context, opts Options) error {
-	opts = opts.withDefaults()
+	opts = opts.WithDefaults()
 	host, err := ResolveHost(ResolveOptions{
 		HostFlag:      opts.HostFlag,
 		ConfigPath:    opts.ConfigPath,

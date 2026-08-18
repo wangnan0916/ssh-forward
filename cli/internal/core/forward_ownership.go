@@ -3,93 +3,47 @@ package core
 import (
 	"cmp"
 	"context"
-	"errors"
-	"net/netip"
 	"slices"
 	"time"
 
-	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
+	"net/netip"
 )
 
-type forwardSpec struct {
+// ForwardSpec is one Local Endpoint allocation request: the Managed Forward
+// identity, the remote loopback target, and the Preferred Local Port.
+type ForwardSpec struct {
 	ID                 ForwardID
 	Remote             netip.AddrPort
 	PreferredLocalPort uint16
+	key                remoteListenerKey
 }
 
-type ownedForward interface {
+// OwnedForward is one allocated Local Endpoint. The Forward table owns it
+// until reconciliation or Close tears it down.
+type OwnedForward interface {
 	Projection() ForwardSnapshot
 	Close(context.Context) error
 }
 
-type forwardAllocator interface {
-	Allocate(context.Context, forwardSpec) (ownedForward, error)
+// ForwardAllocator allocates a Local Endpoint for one ForwardSpec.
+// Production (proxy.NewAllocator) and tests (in-memory) are the two adapters.
+type ForwardAllocator interface {
+	Allocate(context.Context, ForwardSpec) (OwnedForward, error)
 }
 
-type proxyForwardAllocator struct {
-	dialer proxy.Dialer
-}
-
-func (a proxyForwardAllocator) Allocate(ctx context.Context, spec forwardSpec) (ownedForward, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	endpoint, err := proxy.OpenEndpoint(proxy.EndpointOptions{
-		PreferredPort: spec.PreferredLocalPort,
-		Remote:        spec.Remote,
-		Dialer:        a.dialer,
-	})
-	if err != nil {
-		// The allocator is the seam boundary: the proxy's bare conflict error
-		// is translated to the domain error here, exactly once — the wire
-		// mapping in the adapter is the only other mention of this failure.
-		if errors.Is(err, proxy.ErrLocalPortConflict) {
-			return nil, &DomainError{Kind: ErrorLocalPortConflict, Retryable: true}
-		}
-		return nil, err
-	}
-	owner := &proxyOwnedForward{spec: spec, endpoint: endpoint}
-	if err := ctx.Err(); err != nil {
-		closeOwnedForward(owner)
-		return nil, err
-	}
-	return owner, nil
-}
-
-type proxyOwnedForward struct {
-	spec     forwardSpec
-	endpoint *proxy.Endpoint
-}
-
-func (f *proxyOwnedForward) Projection() ForwardSnapshot {
-	return ForwardSnapshot{
-		ID:                 f.spec.ID,
-		RemotePort:         f.spec.Remote.Port(),
-		RemoteFamily:       familyForAddress(f.spec.Remote.Addr()),
-		AllocatedLocalPort: f.endpoint.LocalPort(),
-		LocalFamilies:      []AddressFamily{FamilyIPv4, FamilyIPv6},
-	}
-}
-
-func (f *proxyOwnedForward) Close(ctx context.Context) error {
-	return f.endpoint.Close(ctx)
-}
-
-// closeWithTimeout bounds a best-effort Close. Forward endpoints and
-// Forwarding Sessions share this one habit — a bounded, fire-and-forget
-// teardown — differing only in how long a slow Close may take.
 func closeWithTimeout(close func(context.Context) error, timeout time.Duration) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	_ = close(ctx)
 }
 
-func closeOwnedForward(forward ownedForward) {
+func closeOwnedForward(forward OwnedForward) {
 	closeWithTimeout(forward.Close, time.Second)
 }
 
 type forwardEntry struct {
-	owner ownedForward
+	owner OwnedForward
+	key   remoteListenerKey
 }
 
 type forwardTable struct {
@@ -100,17 +54,16 @@ func newForwardTable() forwardTable {
 	return forwardTable{entries: make(map[ForwardID]*forwardEntry)}
 }
 
-func (t *forwardTable) add(owner ownedForward) bool {
+func (t *forwardTable) add(owner OwnedForward, key remoteListenerKey) bool {
 	id := owner.Projection().ID
 	if _, found := t.entries[id]; found {
 		return false
 	}
-	t.entries[id] = &forwardEntry{owner: owner}
+	t.entries[id] = &forwardEntry{owner: owner, key: key}
 	return true
 }
 
-// removeDirect removes one forward; only the reconciliation worker calls it.
-func (t *forwardTable) removeDirect(id ForwardID) (ownedForward, bool) {
+func (t *forwardTable) removeDirect(id ForwardID) (OwnedForward, bool) {
 	entry, found := t.entries[id]
 	if !found {
 		return nil, false
@@ -119,24 +72,15 @@ func (t *forwardTable) removeDirect(id ForwardID) (ownedForward, bool) {
 	return entry.owner, true
 }
 
-// managedForwardEntry pairs a Managed Forward's identity with the listener
-// key it serves, in one pass over the table: reconciliation needs exactly
-// this shape for the has-managed set and the removal candidates.
 type managedForwardEntry struct {
 	id  ForwardID
 	key remoteListenerKey
 }
 
-// managedForwardsLocked lists Managed Forward entries in one pass, with no
-// cloning or sorting: the reconciliation worker iterates this instead of
-// the full table snapshot.
 func (t *forwardTable) managedForwardsLocked() []managedForwardEntry {
 	entries := make([]managedForwardEntry, 0, len(t.entries))
-	for _, entry := range t.entries {
-		projection := entry.owner.Projection()
-		if managedKey, known := managedForwardKey(projection.ID); known {
-			entries = append(entries, managedForwardEntry{id: projection.ID, key: managedKey})
-		}
+	for id, entry := range t.entries {
+		entries = append(entries, managedForwardEntry{id: id, key: entry.key})
 	}
 	return entries
 }
@@ -152,10 +96,16 @@ func (t *forwardTable) snapshots() []ForwardSnapshot {
 	return forwards
 }
 
-func (t *forwardTable) owners() []ownedForward {
-	owners := make([]ownedForward, 0, len(t.entries))
+func (t *forwardTable) owners() []OwnedForward {
+	owners := make([]OwnedForward, 0, len(t.entries))
 	for _, entry := range t.entries {
 		owners = append(owners, entry.owner)
 	}
 	return owners
+}
+
+type refusingAllocator struct{}
+
+func (refusingAllocator) Allocate(context.Context, ForwardSpec) (OwnedForward, error) {
+	return nil, errTransportUnavailable
 }
