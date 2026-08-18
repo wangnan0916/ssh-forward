@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
-	"github.com/wangnan0916/ssh-forward/cli/internal/ipc"
+	"github.com/wangnan0916/ssh-forward/cli/internal/jsonrpc"
 	"github.com/wangnan0916/ssh-forward/cli/internal/openssh"
 	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
 )
@@ -64,18 +64,11 @@ func (o Options) WithDefaults() Options {
 // in-process Manager. The caller owns Session.Manager and must Close it.
 func Connect(ctx context.Context, opts Options) (Session, error) {
 	opts = opts.WithDefaults()
-	if client, err := ipc.Dial(ctx, opts.Layout.Socket); err == nil {
+	if client, err := jsonrpc.Dial(ctx, opts.Layout.Socket); err == nil {
 		return attach(ctx, client, opts)
 	}
 
-	host, err := ResolveHost(ResolveOptions{
-		HostFlag:      opts.HostFlag,
-		ConfigPath:    opts.ConfigPath,
-		SSHConfigPath: opts.SSHConfigPath,
-		Interactive:   opts.Interactive,
-		Stdin:         opts.Stdin,
-		Stdout:        opts.Stdout,
-	})
+	host, err := ResolveHost(opts)
 	if err != nil {
 		return Session{}, err
 	}
@@ -84,10 +77,10 @@ func Connect(ctx context.Context, opts Options) (Session, error) {
 		if err := spawn(opts, host); err != nil {
 			return Session{}, fmt.Errorf("could not start the manager: %w", err)
 		}
-		if err := ipc.Wait(ctx, opts.Layout.Socket, 5*time.Second); err != nil {
+		if err := jsonrpc.Wait(ctx, opts.Layout.Socket, 5*time.Second); err != nil {
 			return Session{}, fmt.Errorf("manager did not start within %s (see %s)", 5*time.Second, opts.Layout.Log)
 		}
-		if client, err := ipc.Dial(ctx, opts.Layout.Socket); err == nil {
+		if client, err := jsonrpc.Dial(ctx, opts.Layout.Socket); err == nil {
 			return attach(ctx, client, opts)
 		}
 	}
@@ -98,18 +91,14 @@ func Connect(ctx context.Context, opts Options) (Session, error) {
 // Serve runs the per-user singleton in this process until ctx ends.
 func Serve(ctx context.Context, opts Options) error {
 	opts = opts.WithDefaults()
-	host, err := ResolveHost(ResolveOptions{
-		HostFlag:      opts.HostFlag,
-		ConfigPath:    opts.ConfigPath,
-		SSHConfigPath: opts.SSHConfigPath,
-	})
+	host, err := ResolveHost(opts)
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(opts.Layout.Dir, 0o700); err != nil {
 		return err
 	}
-	endpoint, err := ipc.Listen(opts.Layout.Socket)
+	endpoint, err := jsonrpc.Listen(opts.Layout.Socket)
 	if err != nil {
 		return err
 	}
@@ -148,7 +137,7 @@ func inProcess(host, sshConfig, policies string) (Session, error) {
 		return Session{}, err
 	}
 	reader := NewFilePolicyReader(policies)
-	manager := core.NewConfiguredManager(core.HostAlias(host), adapter, proxy.NewAllocator, reader.Source())
+	manager := core.NewConfiguredManager(core.HostAlias(host), adapter, proxy.NewAllocator, reader.Source)
 	return Session{
 		Manager:      manager,
 		Host:         core.HostAlias(host),

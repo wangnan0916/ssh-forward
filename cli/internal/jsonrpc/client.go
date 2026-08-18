@@ -15,9 +15,9 @@ import (
 	"github.com/wangnan0916/ssh-forward/cli/internal/snapshot"
 )
 
-// Dial negotiates a JSON-RPC v1 session on conn and returns a Manager
+// DialConn negotiates a JSON-RPC v1 session on conn and returns a Manager
 // whose operations are remote calls. The returned Manager owns conn.
-func Dial(ctx context.Context, conn net.Conn) (core.Manager, error) {
+func DialConn(ctx context.Context, conn net.Conn) (core.Manager, error) {
 	frames := newFrameChannel(conn, maxFrameBytes)
 	client := &managerClient{
 		frames:  frames,

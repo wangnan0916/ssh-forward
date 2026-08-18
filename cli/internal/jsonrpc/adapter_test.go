@@ -80,7 +80,7 @@ func newTestSessionWithManager(t *testing.T, manager core.Manager) *testSession 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- managerjsonrpc.Serve(ctx, server, manager)
+		done <- managerjsonrpc.ServeConn(ctx, server, manager)
 	}()
 	if err := client.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
 		t.Fatal(err)

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
 )
 
@@ -16,7 +17,7 @@ type stalledDialer struct {
 	result  chan error
 }
 
-func (d stalledDialer) DialContext(ctx context.Context, _ netip.AddrPort) (proxy.HalfCloseConn, error) {
+func (d stalledDialer) DialContext(ctx context.Context, _ netip.AddrPort) (core.HalfCloseConn, error) {
 	close(d.started)
 	<-ctx.Done()
 	d.result <- ctx.Err()

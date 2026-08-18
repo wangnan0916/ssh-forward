@@ -99,12 +99,12 @@ func TestManagedForwardCarriesTrafficAfterHostConnects(t *testing.T) {
 		host:         HostAlias("development"),
 		connector:    oneSessionConnector{session: session},
 		newAllocator: newLoopbackAllocator,
-		policies: func() []ForwardingPolicy {
+		policies: func() ([]ForwardingPolicy, string) {
 			return []ForwardingPolicy{{
 				ID:         "p1",
 				Action:     PolicyAutoForward,
 				Conditions: []PolicyCondition{{RemotePorts: policyPort(port)}},
-			}}
+			}}, ""
 		},
 	})
 	t.Cleanup(func() {

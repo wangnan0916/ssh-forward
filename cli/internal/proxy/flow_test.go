@@ -9,12 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
 )
 
 type directDialer struct{}
 
-func (directDialer) DialContext(ctx context.Context, target netip.AddrPort) (proxy.HalfCloseConn, error) {
+func (directDialer) DialContext(ctx context.Context, target netip.AddrPort) (core.HalfCloseConn, error) {
 	connection, err := (&net.Dialer{}).DialContext(ctx, "tcp", target.String())
 	if err != nil {
 		return nil, err

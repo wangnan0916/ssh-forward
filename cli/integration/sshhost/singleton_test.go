@@ -6,18 +6,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
-	"github.com/wangnan0916/ssh-forward/cli/internal/ipc"
+	"github.com/wangnan0916/ssh-forward/cli/internal/jsonrpc"
 )
 
 // TestSingletonManagerThroughDisposableDevelopmentHost pins ADR-0016 end
-// to end over a real Development Host: the singleton (ipc.Serve) owns one
+// to end over a real Development Host: the singleton (jsonrpc.Serve) owns one
 // Manager, and every operation below is a socket client call — snapshot
 // visibility, connection state, a second serve refusal, and a watch stream.
 func TestSingletonManagerThroughDisposableDevelopmentHost(t *testing.T) {
@@ -35,10 +34,12 @@ func TestSingletonManagerThroughDisposableDevelopmentHost(t *testing.T) {
 	serveCtx, serveCancel := context.WithCancel(context.Background())
 	t.Cleanup(serveCancel)
 	served := make(chan error, 1)
-	go func() { served <- ipc.Serve(serveCtx, endpoint, manager) }()
-	waitForEndpointReady(t, endpoint)
+	go func() { served <- jsonrpc.Serve(serveCtx, endpoint, manager) }()
+	if err := jsonrpc.Wait(context.Background(), endpoint, 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
 
-	client, err := ipc.Dial(context.Background(), endpoint)
+	client, err := jsonrpc.Dial(context.Background(), endpoint)
 	if err != nil {
 		t.Fatalf("Dial the singleton: %v", err)
 	}
@@ -63,7 +64,7 @@ func TestSingletonManagerThroughDisposableDevelopmentHost(t *testing.T) {
 
 	second := testConfiguredManager(t, adapter)
 	defer func() { _ = second.Close(context.Background()) }()
-	if err := ipc.Serve(context.Background(), endpoint, second); !errors.Is(err, ipc.ErrAlreadyRunning) {
+	if err := jsonrpc.Serve(context.Background(), endpoint, second); !errors.Is(err, jsonrpc.ErrAlreadyRunning) {
 		t.Fatalf("second serve err = %v, want ErrAlreadyRunning", err)
 	}
 
@@ -75,21 +76,5 @@ func TestSingletonManagerThroughDisposableDevelopmentHost(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("serve did not stop with its context")
-	}
-}
-
-func waitForEndpointReady(t *testing.T, path string) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		conn, err := net.DialTimeout("unix", path, 100*time.Millisecond)
-		if err == nil {
-			_ = conn.Close()
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("singleton endpoint never became ready: %v", err)
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
 }

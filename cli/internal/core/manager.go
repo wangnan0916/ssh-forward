@@ -25,9 +25,10 @@ type managerOptions struct {
 	retryWait        func(context.Context, time.Duration) bool
 	// policies is the Forwarding Policy source seam: the reconciliation
 	// path refreshes its policy cache from this function outside the
-	// Manager lock. nil means no policies (unmatched listeners are not
-	// forwarded).
-	policies func() []ForwardingPolicy
+	// Manager lock. The string is Policy Diagnostic when last-valid
+	// policies are in effect because the file could not be parsed. nil
+	// means no policies (unmatched listeners are not forwarded).
+	policies func() ([]ForwardingPolicy, string)
 	// policyPoll, when > 0, re-reads the policy source on this interval so
 	// a saved Remembered Auto-forward applies against the current
 	// observations without waiting for the next scan.
@@ -68,8 +69,8 @@ const defaultPolicyPoll = 250 * time.Millisecond
 // connector, the Local Endpoint allocator factory, and the Forwarding Policy
 // source into the Manager. app.Connect / app.Serve and integration tests are
 // its callers; core tests inject through managerOptions instead.
-func NewConfiguredManager(host HostAlias, connector HostConnector, newAlloc func(Dialer) ForwardAllocator, policySources ...func() []ForwardingPolicy) Manager {
-	var policies func() []ForwardingPolicy
+func NewConfiguredManager(host HostAlias, connector HostConnector, newAlloc func(Dialer) ForwardAllocator, policySources ...func() ([]ForwardingPolicy, string)) Manager {
+	var policies func() ([]ForwardingPolicy, string)
 	if len(policySources) != 0 {
 		policies = policySources[0]
 	}
@@ -102,7 +103,7 @@ func newManager(options managerOptions) *manager {
 	}
 	policySource := options.policies
 	if policySource == nil {
-		policySource = func() []ForwardingPolicy { return nil }
+		policySource = func() ([]ForwardingPolicy, string) { return nil, "" }
 	}
 	m := &manager{
 		host:             options.host,

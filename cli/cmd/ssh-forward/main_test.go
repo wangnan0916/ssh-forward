@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/app"
-	"github.com/wangnan0916/ssh-forward/cli/internal/ipc"
+	"github.com/wangnan0916/ssh-forward/cli/internal/jsonrpc"
 )
 
 // run() with no host or no command must fail before any Manager is built,
@@ -211,7 +211,7 @@ func TestRunManagerSingletonServesClients(t *testing.T) {
 
 func waitForEndpoint(t *testing.T, path string) {
 	t.Helper()
-	if err := ipc.Wait(context.Background(), path, 3*time.Second); err != nil {
+	if err := jsonrpc.Wait(context.Background(), path, 3*time.Second); err != nil {
 		t.Fatal(err)
 	}
 }

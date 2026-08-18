@@ -26,7 +26,7 @@ func testHostConnector(t *testing.T) core.HostConnector {
 	return adapter
 }
 
-func testConfiguredManager(t *testing.T, connector core.HostConnector, policySources ...func() []core.ForwardingPolicy) core.Manager {
+func testConfiguredManager(t *testing.T, connector core.HostConnector, policySources ...func() ([]core.ForwardingPolicy, string)) core.Manager {
 	t.Helper()
 	return core.NewConfiguredManager(core.HostAlias(testHostAlias()), connector, proxy.NewAllocator, policySources...)
 }

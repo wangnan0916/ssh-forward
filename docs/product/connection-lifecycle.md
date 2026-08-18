@@ -27,7 +27,7 @@ Enforced today:
 - Effective SSH configuration is inspected through `ssh -G` and never copied into a product-owned profile (openssh/adapter.go).
 - Local Endpoints remain allocated across a transport disconnect; new client connections fail promptly; in-flight proxies end on EOF/reset with a bounded post-half-close drain (proxy/).
 - Reconnection uses exponential backoff with jitter through injectable clock/random behavior (core/manager.go, core/actor.go).
-- Authentication and host-key failures are classified from bounded OpenSSH diagnostics (core/actor.go sessionDisposition).
+- Authentication and host-key failures are classified from bounded OpenSSH diagnostics and published as Connection Diagnostic on the Snapshot (core/actor.go, core/connection.go).
 - ObservationSets advance policy reconciliation; session outage does not count toward Managed Forward disappearance (core/actor.go, core/reconcile.go).
 
 Lands with later slices:

@@ -21,14 +21,10 @@ const (
 
 var ErrLocalPortConflict = errors.New("local port fallback range is occupied")
 
-type HalfCloseConn = core.HalfCloseConn
-
-type Dialer = core.Dialer
-
 type EndpointOptions struct {
 	PreferredPort    uint16
 	Remote           netip.AddrPort
-	Dialer           Dialer
+	Dialer           core.Dialer
 	DrainTimeout     time.Duration
 	HandshakeTimeout time.Duration
 }
@@ -37,7 +33,7 @@ type Endpoint struct {
 	localPort uint16
 	listeners []net.Listener
 	remote    netip.AddrPort
-	dialer    Dialer
+	dialer    core.Dialer
 	drain     time.Duration
 	handshake time.Duration
 	ctx       context.Context

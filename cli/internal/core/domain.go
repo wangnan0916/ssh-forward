@@ -134,10 +134,12 @@ type LocalPortConflict struct {
 type HostSnapshot struct {
 	Alias                HostAlias
 	Connection           ConnectionState
+	ConnectionDiagnostic string
 	Discovery            DiscoverySnapshot
 	ListenerObservations []ListenerObservation
 	Forwards             []ForwardSnapshot
 	LocalPortConflicts   []LocalPortConflict
+	PolicyDiagnostic     string
 }
 
 type ErrorKind string

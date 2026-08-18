@@ -84,7 +84,7 @@ func (a *App) removeCommand() *cobra.Command {
 }
 
 func (a *App) runRemember(cmd *cobra.Command, args []string, dir string, adding bool) error {
-	if a.PoliciesPath == "" {
+	if a.Options.PoliciesPath == "" {
 		return fmt.Errorf("no policies file is configured (--policies)")
 	}
 	if dir != "" && len(args) != 0 {
@@ -261,7 +261,7 @@ func (a *App) managerCommand() *cobra.Command {
 		Short: "run the singleton manager in the foreground",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			err := app.Serve(cmd.Context(), a.options())
+			err := app.Serve(cmd.Context(), a.connectOptions())
 			if app.IsResolution(err) {
 				return UsageError(err)
 			}

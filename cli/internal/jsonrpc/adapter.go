@@ -1,3 +1,6 @@
+// Package jsonrpc is the per-user Manager endpoint: Unix socket lifecycle
+// plus the JSON-RPC v1 session. Named pipes stay out until a second
+// transport adapter exists (ADR-0007, ADR-0018).
 package jsonrpc
 
 import (
@@ -14,7 +17,8 @@ import (
 	"github.com/wangnan0916/ssh-forward/cli/internal/snapshot"
 )
 
-func Serve(ctx context.Context, conn net.Conn, manager core.Manager) error {
+// ServeConn runs one JSON-RPC v1 session on conn until it ends.
+func ServeConn(ctx context.Context, conn net.Conn, manager core.Manager) error {
 	frames := newFrameChannel(conn, maxFrameBytes)
 	// Negotiate before starting jrpc2 so pipelined or built-in methods cannot
 	// overtake the session handshake.

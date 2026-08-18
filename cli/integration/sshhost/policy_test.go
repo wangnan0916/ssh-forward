@@ -27,7 +27,7 @@ func TestPolicyReconciliationThroughDisposableDevelopmentHost(t *testing.T) {
   ]
 }`, fixturePortV4(), fixturePortV4()))
 
-	manager := testConfiguredManager(t, testHostConnector(t), app.NewFilePolicyReader(policiesPath).Source())
+	manager := testConfiguredManager(t, testHostConnector(t), app.NewFilePolicyReader(policiesPath).Source)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -54,7 +54,7 @@ func TestPolicyIgnoreThroughDisposableDevelopmentHost(t *testing.T) {
   ]
 }`, fixturePortV4(), fixturePortV4()))
 
-	manager := testConfiguredManager(t, testHostConnector(t), app.NewFilePolicyReader(policiesPath).Source())
+	manager := testConfiguredManager(t, testHostConnector(t), app.NewFilePolicyReader(policiesPath).Source)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

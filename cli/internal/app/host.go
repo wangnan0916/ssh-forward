@@ -38,23 +38,12 @@ func resolution(err error) error {
 	return &ResolutionError{err: err}
 }
 
-// ResolveOptions names a Development Host from the flag, pinned default,
-// SSH client configuration, and an optional terminal pick.
-type ResolveOptions struct {
-	HostFlag      string
-	ConfigPath    string
-	SSHConfigPath string
-	Interactive   bool
-	Stdin         io.Reader
-	Stdout        io.Writer
-}
-
 // ResolveHost names the Development Host, in order: --host, then
 // config.jsonc's default_host, then — when the SSH client configuration
 // names exactly one literal Host alias — that host. A corrupt config is
 // diagnosed, not bypassed; ambiguous choices are reported with the
 // candidates, or prompted when Interactive.
-func ResolveHost(opts ResolveOptions) (string, error) {
+func ResolveHost(opts Options) (string, error) {
 	if opts.HostFlag != "" {
 		return opts.HostFlag, nil
 	}

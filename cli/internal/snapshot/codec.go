@@ -16,10 +16,12 @@ type Wire struct {
 type host struct {
 	Alias                string                `json:"alias"`
 	Connection           string                `json:"connection"`
+	ConnectionDiagnostic string                `json:"connection_diagnostic,omitempty"`
 	Discovery            discovery             `json:"discovery"`
 	ListenerObservations []listenerObservation `json:"listener_observations"`
 	Forwards             []forward             `json:"forwards"`
 	LocalPortConflicts   []localPortConflict   `json:"local_port_conflicts,omitempty"`
+	PolicyDiagnostic     string                `json:"policy_diagnostic,omitempty"`
 }
 
 type localPortConflict struct {
@@ -112,10 +114,12 @@ func Encode(s core.Snapshot) Wire {
 		Host: &host{
 			Alias:                string(hostSnap.Alias),
 			Connection:           string(hostSnap.Connection),
+			ConnectionDiagnostic: hostSnap.ConnectionDiagnostic,
 			Discovery:            encodeDiscovery(hostSnap.Discovery),
 			ListenerObservations: observations,
 			Forwards:             forwards,
 			LocalPortConflicts:   conflicts,
+			PolicyDiagnostic:     hostSnap.PolicyDiagnostic,
 		},
 	}
 }
@@ -196,9 +200,11 @@ func Decode(wire Wire) core.Snapshot {
 	translated := core.HostSnapshot{
 		Alias:                core.HostAlias(h.Alias),
 		Connection:           core.ConnectionState(h.Connection),
+		ConnectionDiagnostic: h.ConnectionDiagnostic,
 		Discovery:            decodeDiscovery(h.Discovery),
 		ListenerObservations: observations,
 		Forwards:             forwards,
+		PolicyDiagnostic:     h.PolicyDiagnostic,
 	}
 	if len(h.LocalPortConflicts) != 0 {
 		conflicts := make([]core.LocalPortConflict, len(h.LocalPortConflicts))

@@ -34,12 +34,14 @@ type snapshotStream struct {
 	terminal       error
 }
 
-// hostView is the actor's slice of a HostSnapshot: Connection, Discovery,
-// and Listener Observations. composeSnapshotLocked overlays Forwards and
-// Local Port Conflicts, because the actor overwrites this mirror wholesale.
+// hostView is the actor's slice of a HostSnapshot: Connection,
+// Connection Diagnostic, Discovery, and Listener Observations.
+// composeSnapshotLocked overlays Forwards, Local Port Conflicts, and
+// Policy Diagnostic, because the actor overwrites this mirror wholesale.
 type hostView struct {
 	Alias                HostAlias
 	Connection           ConnectionState
+	ConnectionDiagnostic string
 	Discovery            DiscoverySnapshot
 	ListenerObservations []ListenerObservation
 }
@@ -62,10 +64,12 @@ func (m *manager) composeSnapshotLocked() Snapshot {
 	host := HostSnapshot{
 		Alias:                m.view.Alias,
 		Connection:           m.view.Connection,
+		ConnectionDiagnostic: m.view.ConnectionDiagnostic,
 		Discovery:            m.view.Discovery,
 		ListenerObservations: m.view.ListenerObservations,
 		Forwards:             m.forwards.snapshots(),
 		LocalPortConflicts:   m.reconciler.conflictSnapshots(),
+		PolicyDiagnostic:     m.reconciler.policyDiagnostic,
 	}
 	return Snapshot{
 		Revision: m.revision,

@@ -38,7 +38,7 @@ const (
 
 type Session struct {
 	command     *exec.Cmd
-	dialer      proxy.Dialer
+	dialer      core.Dialer
 	done        chan struct{}
 	stderr      *boundedBuffer
 	facts       *sessionFactQueue
@@ -51,7 +51,7 @@ type Session struct {
 	closeOnce sync.Once
 }
 
-func (s *Session) DialContext(ctx context.Context, target netip.AddrPort) (proxy.HalfCloseConn, error) {
+func (s *Session) DialContext(ctx context.Context, target netip.AddrPort) (core.HalfCloseConn, error) {
 	ipv4Loopback := netip.AddrFrom4([4]byte{127, 0, 0, 1})
 	if target.Port() == 0 || (target.Addr() != ipv4Loopback && target.Addr() != netip.IPv6Loopback()) {
 		return nil, errInvalidSessionTarget

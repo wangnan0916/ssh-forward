@@ -66,8 +66,8 @@ func TestManagerSuspendsReconnectAfterPermanentSSHFailure(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Snapshot: %v", err)
 		}
-		if got := snapshot.Host.Connection; got != ConnectionDisconnected || snapshot.Revision != 2 {
-			t.Fatalf("connection = %q revision %d, want disconnected revision 2", got, snapshot.Revision)
+		if got := snapshot.Host.Connection; got != ConnectionDisconnected || snapshot.Host.ConnectionDiagnostic != "authentication_failed" || snapshot.Revision != 2 {
+			t.Fatalf("connection = %q diagnostic %q revision %d, want disconnected authentication_failed revision 2", got, snapshot.Host.ConnectionDiagnostic, snapshot.Revision)
 		}
 	})
 }

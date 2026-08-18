@@ -6,7 +6,7 @@ import (
 	"net/netip"
 	"testing"
 
-	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 var errUnexpectedSessionDial = errors.New("underlying dialer was called")
@@ -15,7 +15,7 @@ type countingSessionDialer struct {
 	calls int
 }
 
-func (d *countingSessionDialer) DialContext(context.Context, netip.AddrPort) (proxy.HalfCloseConn, error) {
+func (d *countingSessionDialer) DialContext(context.Context, netip.AddrPort) (core.HalfCloseConn, error) {
 	d.calls++
 	return nil, errUnexpectedSessionDial
 }

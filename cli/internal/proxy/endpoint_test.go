@@ -9,12 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
 )
 
 type unusedDialer struct{}
 
-func (unusedDialer) DialContext(context.Context, netip.AddrPort) (proxy.HalfCloseConn, error) {
+func (unusedDialer) DialContext(context.Context, netip.AddrPort) (core.HalfCloseConn, error) {
 	return nil, errors.New("unexpected dial")
 }
 

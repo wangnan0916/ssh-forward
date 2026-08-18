@@ -108,9 +108,24 @@ const (
 type SessionError struct {
 	Disposition SessionDisposition
 	Reason      SessionReason
-	Diagnostic  string
 }
 
 func (e *SessionError) Error() string {
 	return "Development Host session ended: " + string(e.Reason)
+}
+
+// connectionDiagnostic is the single translation from a terminal SessionReason
+// to the Snapshot field. Retryable transport and a user-closed session have
+// no diagnostic: Needs Attention is for failures the user must fix.
+func connectionDiagnostic(reason SessionReason) string {
+	switch reason {
+	case SessionReasonInvalidAlias:
+		return "invalid_alias"
+	case SessionReasonAuthentication:
+		return "authentication_failed"
+	case SessionReasonHostKey:
+		return "host_key_failed"
+	default:
+		return ""
+	}
 }

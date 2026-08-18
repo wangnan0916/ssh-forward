@@ -15,10 +15,16 @@ func (a *App) writeStatusHuman(snap core.Snapshot) error {
 	host := snap.Host
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "Host: %s — %s\n", host.Alias, host.Connection)
+	if host.ConnectionDiagnostic != "" {
+		fmt.Fprintf(&builder, "  diagnostic: %s\n", host.ConnectionDiagnostic)
+	}
 	fmt.Fprintf(&builder, "Discovery: %s (baseline %v, scanner v%d)\n",
 		host.Discovery.State, host.Discovery.BaselineEstablished, host.Discovery.ScannerVersion)
 	if host.Discovery.Diagnostic != "" {
 		fmt.Fprintf(&builder, "  diagnostic: %s\n", host.Discovery.Diagnostic)
+	}
+	if host.PolicyDiagnostic != "" {
+		fmt.Fprintf(&builder, "Policies: %s\n", host.PolicyDiagnostic)
 	}
 
 	if len(host.Forwards) != 0 {
@@ -38,7 +44,7 @@ func (a *App) writeStatusHuman(snap core.Snapshot) error {
 			fmt.Fprintf(&builder, "  %s %s:%d\n", conflict.BindScope, conflict.RemoteFamily, conflict.RemotePort)
 		}
 	}
-	_, err := io.WriteString(a.Stdout, builder.String())
+	_, err := io.WriteString(a.Options.Stdout, builder.String())
 	return err
 }
 
@@ -69,7 +75,7 @@ func (a *App) writeSnapshotJSON(snap core.Snapshot) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(a.Stdout, string(encoded))
+	fmt.Fprintln(a.Options.Stdout, string(encoded))
 	return nil
 }
 
@@ -90,22 +96,22 @@ func (a *App) writeRemember(jsonOutput, adding, changed bool, port uint16, dir s
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(a.Stdout, string(encoded))
+		fmt.Fprintln(a.Options.Stdout, string(encoded))
 		return nil
 	}
 	switch {
 	case dir != "" && adding && changed:
-		fmt.Fprintf(a.Stdout, "added directory %s\n", dir)
+		fmt.Fprintf(a.Options.Stdout, "added directory %s\n", dir)
 	case dir != "" && adding:
-		fmt.Fprintf(a.Stdout, "already added directory %s\n", dir)
+		fmt.Fprintf(a.Options.Stdout, "already added directory %s\n", dir)
 	case dir != "" && changed:
-		fmt.Fprintf(a.Stdout, "removed directory %s\n", dir)
+		fmt.Fprintf(a.Options.Stdout, "removed directory %s\n", dir)
 	case adding && changed:
-		fmt.Fprintf(a.Stdout, "added port %d\n", port)
+		fmt.Fprintf(a.Options.Stdout, "added port %d\n", port)
 	case adding:
-		fmt.Fprintf(a.Stdout, "already added port %d\n", port)
+		fmt.Fprintf(a.Options.Stdout, "already added port %d\n", port)
 	default:
-		fmt.Fprintf(a.Stdout, "removed port %d\n", port)
+		fmt.Fprintf(a.Options.Stdout, "removed port %d\n", port)
 	}
 	return nil
 }

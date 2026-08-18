@@ -160,15 +160,18 @@ func TestLoadPoliciesMissingFile(t *testing.T) {
 
 func TestFilePolicyReaderSourceKeepsLastValidOnInvalidEdit(t *testing.T) {
 	path := writePolicyFile(t, `{"schema_version": 1, "policies": [{"id": "a", "action": "ignore", "conditions": [{"remote_ports": {"from": 8080, "to": 8080}}]}]}`)
-	source := NewFilePolicyReader(path).Source()
-	first := source()
-	if len(first) != 1 || first[0].ID != "a" {
-		t.Fatalf("first read = %#v, want policy a", first)
+	reader := NewFilePolicyReader(path)
+	first, diagnostic := reader.Source()
+	if len(first) != 1 || first[0].ID != "a" || diagnostic != "" {
+		t.Fatalf("first read = %#v diagnostic %q, want policy a", first, diagnostic)
 	}
 	if err := os.WriteFile(path, []byte(`{"schema_version": 1, "policies": [{"id": "broken`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	second := source()
+	second, diagnostic := reader.Source()
+	if diagnostic != policyFileInvalid {
+		t.Fatalf("invalid edit diagnostic = %q, want %s", diagnostic, policyFileInvalid)
+	}
 	if diff := cmp.Diff(second, first); diff != "" {
 		t.Fatalf("invalid edit changed the source (-second +first):\n%s", diff)
 	}
@@ -244,11 +247,10 @@ func TestFilePolicyReaderKeepsLastValidOnInvalidInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	reader := NewFilePolicyReader(path)
-	source := reader.Source()
 
-	policies := source()
-	if len(policies) != 1 || policies[0].ID != "web" {
-		t.Fatalf("source after valid read = %#v", policies)
+	policies, diagnostic := reader.Source()
+	if len(policies) != 1 || policies[0].ID != "web" || diagnostic != "" {
+		t.Fatalf("source after valid read = %#v diagnostic %q", policies, diagnostic)
 	}
 
 	corrupt := `{"schema_version": 1, "policies": [{"id": "broken", "action": "bogus"}]}`
@@ -262,8 +264,9 @@ func TestFilePolicyReaderKeepsLastValidOnInvalidInput(t *testing.T) {
 	if len(got) != 1 || got[0].ID != "web" {
 		t.Fatalf("Read on corrupt file = %#v, want last valid set", got)
 	}
-	if still := source(); len(still) != 1 || still[0].ID != "web" {
-		t.Fatalf("source after corrupt read = %#v, want last valid set", still)
+	still, diagnostic := reader.Source()
+	if len(still) != 1 || still[0].ID != "web" || diagnostic != policyFileInvalid {
+		t.Fatalf("source after corrupt read = %#v diagnostic %q, want last valid set", still, diagnostic)
 	}
 
 	// The Manager and the CLI share one reader: a fresh parse by the CLI
@@ -276,8 +279,9 @@ func TestFilePolicyReaderKeepsLastValidOnInvalidInput(t *testing.T) {
 	if err != nil || len(refreshed) != 1 || refreshed[0].ID != "db" {
 		t.Fatalf("Read after fix = %#v, %v", refreshed, err)
 	}
-	if fromSource := source(); len(fromSource) != 1 || fromSource[0].ID != "db" {
-		t.Fatalf("source after fix = %#v", fromSource)
+	fromSource, diagnostic := reader.Source()
+	if len(fromSource) != 1 || fromSource[0].ID != "db" || diagnostic != "" {
+		t.Fatalf("source after fix = %#v diagnostic %q", fromSource, diagnostic)
 	}
 }
 
@@ -402,6 +406,13 @@ func TestAddAutoForwardDirRejectsRelativePath(t *testing.T) {
 	_, _, err := NewFilePolicyReader(filepath.Join(t.TempDir(), "policies.jsonc")).AddDir("src/app")
 	if !errors.Is(err, ErrHostDirectory) {
 		t.Fatalf("err = %v, want ErrHostDirectory", err)
+	}
+}
+
+func TestAddDirRejectsEmpty(t *testing.T) {
+	_, _, err := NewFilePolicyReader(filepath.Join(t.TempDir(), "policies.jsonc")).AddDir("  ")
+	if !errors.Is(err, ErrEmptyDirectory) {
+		t.Fatalf("err = %v, want ErrEmptyDirectory", err)
 	}
 }
 

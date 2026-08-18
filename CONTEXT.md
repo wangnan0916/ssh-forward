@@ -62,6 +62,14 @@ _Avoid_: Discovery State, permission level
 The explanation of why a Discovery Capability dimension is not full, distinguishing scanner-declared partiality from evidence the scanner saw as missing and from evidence core dropped at retention caps. Core has one Diagnostic table that turns this, observation gaps, and DiscoveryChange reasons into the Discovery Diagnostic shown on the wire.
 _Avoid_: Diagnostic, failure reason, partiality flag
 
+**Connection Diagnostic**:
+The user-visible explanation of a terminal Forwarding Session failure (invalid alias, authentication, or host-key), independent of Discovery Diagnostic. It is empty while the session is connecting, connected, or retrying.
+_Avoid_: SSH stderr, SessionError text, Discovery Diagnostic
+
+**Policy Diagnostic**:
+The explanation that the saved Forwarding Policy file is unreadable while last-valid policies remain in effect.
+_Avoid_: parse error, file I/O error, Policy Evidence
+
 **Listener Observation**:
 A point-in-time snapshot of a Remote Listener and any processes observed holding its sockets. Process information may be absent, ambiguous, or change between observations.
 _Avoid_: Service record, stable process identity

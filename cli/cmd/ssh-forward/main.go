@@ -51,12 +51,10 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	surface := &cli.App{
-		Stdin:   stdin,
-		Stdout:  stdout,
-		Stderr:  stderr,
-		Version: versionString(),
-	}
+	surface := &cli.App{Version: versionString()}
+	surface.Options.Stdin = stdin
+	surface.Options.Stdout = stdout
+	surface.Options.Stderr = stderr
 	if err := surface.Run(ctx, args); err != nil {
 		if errors.Is(err, cli.ErrNeedCommand) {
 			return 2

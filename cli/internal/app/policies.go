@@ -11,10 +11,15 @@ import (
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
-// policiesSchemaVersion is the versioned schema of policies.jsonc
-// (ADR-0005): the manager refuses files that declare a different version,
-// so the format can evolve without silent misinterpretation.
-const policiesSchemaVersion = 1
+const (
+	// policiesSchemaVersion is the versioned schema of policies.jsonc
+	// (ADR-0005): the manager refuses files that declare a different version,
+	// so the format can evolve without silent misinterpretation.
+	policiesSchemaVersion = 1
+	// policyFileInvalid is the Snapshot Policy Diagnostic when the policies
+	// file exists but cannot be parsed. A missing file is empty, not invalid.
+	policyFileInvalid = "policies_file_invalid"
+)
 
 // policyFile is the on-disk shape of policies.jsonc.
 type policyFile struct {
@@ -204,15 +209,17 @@ func (r *FilePolicyReader) Read() ([]core.ForwardingPolicy, error) {
 	return policies, nil
 }
 
-// Source returns the Manager's reconciliation seam: each call reads the
-// file and returns the last valid set — empty before any valid read
-// (unmatched listeners are not forwarded). The Manager's 250ms policy poll
-// hot-reloads external edits without a watcher.
-func (r *FilePolicyReader) Source() func() []core.ForwardingPolicy {
-	return func() []core.ForwardingPolicy {
-		policies, _ := r.Read()
-		return policies
+// Source is the Manager's reconciliation seam: each call reads the file
+// and returns the last valid set plus a Snapshot diagnostic when the file
+// is unreadable. Missing files are empty with no diagnostic. Unmatched
+// listeners are not forwarded. The Manager's 250ms policy poll hot-reloads
+// external edits without a watcher.
+func (r *FilePolicyReader) Source() ([]core.ForwardingPolicy, string) {
+	policies, err := r.Read()
+	if err == nil || errors.Is(err, os.ErrNotExist) {
+		return policies, ""
 	}
+	return policies, policyFileInvalid
 }
 
 func (r *FilePolicyReader) update(apply func([]core.ForwardingPolicy) ([]core.ForwardingPolicy, bool, error)) (bool, error) {

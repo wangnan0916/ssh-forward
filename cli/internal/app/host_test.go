@@ -19,7 +19,7 @@ func TestResolveHostFallsBackToSSHConfig(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), []byte("Host ubuntu\n    User dev\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	host, err := ResolveHost(ResolveOptions{})
+	host, err := ResolveHost(Options{})
 	if err != nil {
 		t.Fatalf("ResolveHost: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestResolveHostReportsAmbiguousSSHHosts(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), []byte("Host ubuntu devbox\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := ResolveHost(ResolveOptions{})
+	_, err := ResolveHost(Options{})
 	if !IsResolution(err) || err == nil || !strings.Contains(err.Error(), "configured hosts: ubuntu, devbox") {
 		t.Fatalf("ResolveHost err = %v, want the candidate list", err)
 	}
@@ -56,7 +56,7 @@ func TestResolveHostInteractivePick(t *testing.T) {
 		t.Fatal(err)
 	}
 	var prompt bytes.Buffer
-	host, err := ResolveHost(ResolveOptions{
+	host, err := ResolveHost(Options{
 		Interactive: true,
 		Stdin:       strings.NewReader("2\n"),
 		Stdout:      &prompt,
@@ -86,7 +86,7 @@ func TestResolveHostInteractiveRejectsGarbage(t *testing.T) {
 		t.Fatal(err)
 	}
 	var prompt bytes.Buffer
-	host, err := ResolveHost(ResolveOptions{
+	host, err := ResolveHost(Options{
 		Interactive: true,
 		Stdin:       strings.NewReader("nope\n1\n"),
 		Stdout:      &prompt,
@@ -103,7 +103,7 @@ func TestResolveHostInteractiveRejectsGarbage(t *testing.T) {
 }
 
 func TestResolveHostFlagWins(t *testing.T) {
-	host, err := ResolveHost(ResolveOptions{HostFlag: "devbox"})
+	host, err := ResolveHost(Options{HostFlag: "devbox"})
 	if err != nil {
 		t.Fatalf("ResolveHost: %v", err)
 	}

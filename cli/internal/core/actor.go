@@ -80,6 +80,7 @@ func (a *hostActor) startIfNeeded() {
 	}
 	a.active.Store(true)
 	a.state.Connection = ConnectionConnecting
+	a.state.ConnectionDiagnostic = ""
 	a.done = make(chan struct{})
 	a.publishLocked()
 	go a.run()
@@ -119,8 +120,9 @@ func (a *hostActor) connect() {
 	for {
 		session, err := a.connector.Connect(a.ctx, a.host)
 		if err != nil {
-			if sessionDisposition(err) != SessionRetry {
-				a.publishConnectionFailure()
+			disposition, reason := sessionEnd(err)
+			if disposition != SessionRetry {
+				a.publishConnectionFailure(reason)
 				return
 			}
 			if !a.waitToReconnect(retryAttempt) {
@@ -139,6 +141,7 @@ func (a *hostActor) connect() {
 		a.session = session
 		a.dialer.Set(session)
 		a.state.Connection = ConnectionConnected
+		a.state.ConnectionDiagnostic = ""
 		a.state.Discovery = startingDiscovery()
 		a.lastObservationSequence = 0
 		a.publishLocked()
@@ -146,15 +149,17 @@ func (a *hostActor) connect() {
 
 		err = a.consumeSession(session)
 		closeHostSession(session)
-		disposition := sessionDisposition(err)
+		disposition, reason := sessionEnd(err)
 
 		a.mu.Lock()
 		a.session = nil
 		a.dialer.Set(nil)
 		if disposition == SessionRetry {
 			a.state.Connection = ConnectionConnecting
+			a.state.ConnectionDiagnostic = ""
 		} else {
 			a.state.Connection = ConnectionDisconnected
+			a.state.ConnectionDiagnostic = connectionDiagnostic(reason)
 			a.active.Store(false)
 		}
 		a.state.Discovery = stoppedDiscovery()
@@ -276,11 +281,12 @@ func (a *hostActor) failDiscoveryLocked(reason DiscoveryReason) {
 	a.publishLocked()
 }
 
-func (a *hostActor) publishConnectionFailure() {
+func (a *hostActor) publishConnectionFailure(reason SessionReason) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.active.Store(false)
 	a.state.Connection = ConnectionDisconnected
+	a.state.ConnectionDiagnostic = connectionDiagnostic(reason)
 	a.state.Discovery = stoppedDiscovery()
 	a.publishLocked()
 }
@@ -325,19 +331,17 @@ func waitForRetry(ctx context.Context, delay time.Duration) bool {
 	}
 }
 
-// sessionDisposition collapses SessionSuspend and SessionClosed into one
-// non-retry terminal: both end the connect loop, and reconnect policy does
-// not yet distinguish "user must fix authentication" from "session shut
-// down".
-func sessionDisposition(err error) SessionDisposition {
+// sessionEnd is the single unwrap of a connect or consume error. Non-retry
+// dispositions end the loop; ConnectionDiagnostic distinguishes them.
+func sessionEnd(err error) (SessionDisposition, SessionReason) {
 	if errors.Is(err, context.Canceled) {
-		return SessionClosed
+		return SessionClosed, SessionReasonClosed
 	}
 	var sessionError *SessionError
 	if errors.As(err, &sessionError) {
-		return sessionError.Disposition
+		return sessionError.Disposition, sessionError.Reason
 	}
-	return SessionRetry
+	return SessionRetry, SessionReasonTransport
 }
 
 func closeHostSession(session HostSession) {

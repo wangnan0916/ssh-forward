@@ -8,6 +8,8 @@ import (
 	"io"
 	"net"
 	"net/netip"
+
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 type SOCKS5Dialer struct {
@@ -18,7 +20,7 @@ func NewSOCKS5Dialer(server netip.AddrPort) *SOCKS5Dialer {
 	return &SOCKS5Dialer{server: server}
 }
 
-func (d *SOCKS5Dialer) DialContext(ctx context.Context, target netip.AddrPort) (HalfCloseConn, error) {
+func (d *SOCKS5Dialer) DialContext(ctx context.Context, target netip.AddrPort) (core.HalfCloseConn, error) {
 	connection, err := (&net.Dialer{}).DialContext(ctx, "tcp", d.server.String())
 	if err != nil {
 		return nil, err

@@ -2,7 +2,7 @@
 
 ## Transport and framing
 
-The manager accepts a current-user-only Unix domain socket on macOS/Linux and named pipe on Windows. Go uses pinned `github.com/creachadair/jrpc2` on the server; the client and server share one bounded newline-framing implementation. Every frame is one bounded, compact UTF-8 JSON-RPC 2.0 object followed by LF. Swift uses Foundation `Codable` and the same golden wire fixtures. Domain types never marshal directly onto the wire.
+The manager accepts a current-user-only Unix domain socket on macOS/Linux. Named pipes for Windows are deferred with the Windows Local Machine surface. Go uses pinned `github.com/creachadair/jrpc2` on the server; the client and server share one bounded newline-framing implementation in the same `jsonrpc` module that owns Listen/Dial/Serve. Every frame is one bounded, compact UTF-8 JSON-RPC 2.0 object followed by LF. Swift uses Foundation `Codable` and the same golden wire fixtures. Domain types never marshal directly onto the wire.
 
 ## Session handshake
 
@@ -19,7 +19,7 @@ JSON-RPC request IDs correlate one attempt.
 
 ## Methods
 
-- `manager.snapshot` — return a complete Snapshot. Params may be omitted, `{}`, or `{"scope":{"kind":"all"}}`; any other `scope.kind` returns `invalid_scope`. A new Manager returns `{"snapshot":{"revision":0}}`. The single `host` entry (present once a Development Host is configured) carries alias, Connection State, Discovery State/Capability with a `diagnostic` explaining partiality or failure (`scanner_reported_partial`, `process_metadata_unavailable`, `evidence_truncated`, a scanner failure reason, or `observation_resync`), baseline and scanner identity, complete deterministically ordered Listener Observations with bounded Process Chains, complete Forwards, and `local_port_conflicts` when any Local Port Conflict is current.
+- `manager.snapshot` — return a complete Snapshot. Params may be omitted, `{}`, or `{"scope":{"kind":"all"}}`; any other `scope.kind` returns `invalid_scope`. A new Manager returns `{"snapshot":{"revision":0}}`. The single `host` entry (present once a Development Host is configured) carries alias, Connection State, optional `connection_diagnostic` for a terminal Forwarding Session failure (`invalid_alias`, `authentication_failed`, `host_key_failed`), Discovery State/Capability with a `diagnostic` explaining partiality or failure (`scanner_reported_partial`, `process_metadata_unavailable`, `evidence_truncated`, a scanner failure reason, or `observation_resync`), optional `policy_diagnostic` when the policies file is unreadable (`policies_file_invalid`) while last-valid policies remain in effect, baseline and scanner identity, complete deterministically ordered Listener Observations with bounded Process Chains, complete Forwards, and `local_port_conflicts` when any Local Port Conflict is current.
 - `manager.watch` — with `watch-snapshot-v1`, same params as `manager.snapshot`. Return `{"watch_id":"watch-…","snapshot":…}`. The response is written before that Watch can emit `manager.snapshot` notifications carrying the same `watch_id` and later complete Snapshots.
 - `manager.unwatch` — idempotently end one Watch by `watch_id` and report whether it was active. Its response is ordered after any already-started bounded notification write, and no notification for that Watch follows the response.
 

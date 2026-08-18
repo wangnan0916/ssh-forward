@@ -11,20 +11,27 @@ import (
 // policyRef is a mutable policy source: the reconciliation path reads the
 // current set on every observation, so tests can swap policies mid-run.
 type policyRef struct {
-	mu       sync.Mutex
-	policies []ForwardingPolicy
+	mu         sync.Mutex
+	policies   []ForwardingPolicy
+	diagnostic string
 }
 
-func (r *policyRef) snapshot() []ForwardingPolicy {
+func (r *policyRef) snapshot() ([]ForwardingPolicy, string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]ForwardingPolicy(nil), r.policies...)
+	return append([]ForwardingPolicy(nil), r.policies...), r.diagnostic
 }
 
 func (r *policyRef) set(policies []ForwardingPolicy) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.policies = append([]ForwardingPolicy(nil), policies...)
+}
+
+func (r *policyRef) setDiagnostic(diagnostic string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.diagnostic = diagnostic
 }
 
 // autoAllocator answers every allocation immediately with a working
@@ -294,11 +301,11 @@ func TestLocalPortConflictAppearsOnSnapshot(t *testing.T) {
 			retryDelay:       func(int) time.Duration { return 0 },
 			retryWait:        func(ctx context.Context, _ time.Duration) bool { return ctx.Err() == nil },
 			forwardAllocator: conflictAllocator{},
-			policies: func() []ForwardingPolicy {
+			policies: func() ([]ForwardingPolicy, string) {
 				return []ForwardingPolicy{{
 					ID: "p1", Action: PolicyAutoForward,
 					Conditions: []PolicyCondition{{RemotePorts: policyPort(8080)}},
-				}}
+				}}, ""
 			},
 		})
 		h := &reconcileHarness{t: t, manager: manager, session: session}
@@ -344,5 +351,32 @@ func TestDisappearanceRemovesManagedForward(t *testing.T) {
 		}
 		h.push()
 		h.waitFor("Managed Forward removed", func(s Snapshot) bool { return len(managedForwards(s)) == 0 })
+	})
+}
+
+func TestPolicyDiagnosticAppearsOnSnapshot(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newReconcileHarness(t, []ForwardingPolicy{
+			{ID: "p1", Action: PolicyAutoForward, Conditions: []PolicyCondition{{RemotePorts: policyPort(8080)}}},
+		})
+		defer closeReconciliation(t, h)
+		h.push(loopbackListener(8080))
+		h.push(loopbackListener(8080))
+		h.waitFor("Managed Forward appears", func(s Snapshot) bool { return len(managedForwards(s)) == 1 })
+
+		h.policies.setDiagnostic("policies_file_invalid")
+		h.manager.reconciler.notifyPolicy()
+		snapshot := h.waitFor("Policy Diagnostic is on the Snapshot", func(s Snapshot) bool {
+			return s.Host != nil && s.Host.PolicyDiagnostic == "policies_file_invalid"
+		})
+		if len(managedForwards(snapshot)) != 1 {
+			t.Fatalf("corrupt file dropped Managed Forwards: %+v", managedForwards(snapshot))
+		}
+
+		h.policies.setDiagnostic("")
+		h.manager.reconciler.notifyPolicy()
+		h.waitFor("Policy Diagnostic clears", func(s Snapshot) bool {
+			return s.Host != nil && s.Host.PolicyDiagnostic == ""
+		})
 	})
 }

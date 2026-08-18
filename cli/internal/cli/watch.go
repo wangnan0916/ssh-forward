@@ -34,11 +34,11 @@ func (a *App) runWatch(ctx context.Context, jsonOutput bool) error {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(a.Stdout, string(encoded))
+			fmt.Fprintln(a.Options.Stdout, string(encoded))
 			continue
 		}
 		if !first {
-			fmt.Fprintln(a.Stdout)
+			fmt.Fprintln(a.Options.Stdout)
 		}
 		first = false
 		if err := a.writeStatusHuman(snap); err != nil {

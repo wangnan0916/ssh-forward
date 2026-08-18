@@ -27,7 +27,7 @@ func TestManagedForwardThroughDisposableDevelopmentHost(t *testing.T) {
 }`, fixturePortV4(), fixturePortV4())), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	manager := testConfiguredManager(t, testHostConnector(t), app.NewFilePolicyReader(policiesPath).Source())
+	manager := testConfiguredManager(t, testHostConnector(t), app.NewFilePolicyReader(policiesPath).Source)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -79,7 +79,7 @@ func TestIPv6ManagedForwardThroughDisposableDevelopmentHost(t *testing.T) {
 }`, fixturePortV6(), fixturePortV6())), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	manager := testConfiguredManager(t, testHostConnector(t), app.NewFilePolicyReader(policiesPath).Source())
+	manager := testConfiguredManager(t, testHostConnector(t), app.NewFilePolicyReader(policiesPath).Source)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

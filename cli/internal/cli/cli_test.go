@@ -36,18 +36,18 @@ func (*fakeManager) Close(context.Context) error { return nil }
 func runApp(t *testing.T, manager core.Manager, args ...string) (string, error) {
 	t.Helper()
 	return runCLI(t, &App{
-		Manager:      manager,
-		Host:         core.HostAlias("development"),
-		PoliciesPath: filepath.Join(t.TempDir(), "policies.jsonc"),
+		Manager: manager,
+		Host:    core.HostAlias("development"),
+		Options: app.Options{PoliciesPath: filepath.Join(t.TempDir(), "policies.jsonc")},
 	}, args...)
 }
 
 func runCLI(t *testing.T, surface *App, args ...string) (string, error) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	surface.Stdout = &stdout
-	if surface.Stderr == nil {
-		surface.Stderr = &stderr
+	surface.Options.Stdout = &stdout
+	if surface.Options.Stderr == nil {
+		surface.Options.Stderr = &stderr
 	}
 	err := surface.Run(context.Background(), args)
 	return stdout.String(), err
@@ -133,8 +133,8 @@ func TestStatusNoHost(t *testing.T) {
 func TestAdd(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "policies.jsonc")
 	output, err := runCLI(t, &App{
-		Manager:      &fakeManager{},
-		PoliciesPath: path,
+		Manager: &fakeManager{},
+		Options: app.Options{PoliciesPath: path},
 	}, "add", "5173")
 	if err != nil {
 		t.Fatalf("add: %v", err)
@@ -153,7 +153,7 @@ func TestAdd(t *testing.T) {
 
 func TestAddJSON(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "policies.jsonc")
-	output, err := runCLI(t, &App{PoliciesPath: path}, "add", "--json", "5173")
+	output, err := runCLI(t, &App{Options: app.Options{PoliciesPath: path}}, "add", "--json", "5173")
 	if err != nil {
 		t.Fatalf("add --json: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestAddRequiresPortOrDir(t *testing.T) {
 
 func TestAddDir(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "policies.jsonc")
-	output, err := runCLI(t, &App{PoliciesPath: path}, "add", "--dir", "/home/dev/src/app")
+	output, err := runCLI(t, &App{Options: app.Options{PoliciesPath: path}}, "add", "--dir", "/home/dev/src/app")
 	if err != nil {
 		t.Fatalf("add --dir: %v", err)
 	}
@@ -188,10 +188,10 @@ func TestAddRejectsPortAndDir(t *testing.T) {
 
 func TestRemove(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "policies.jsonc")
-	if _, err := runCLI(t, &App{PoliciesPath: path}, "add", "5173"); err != nil {
+	if _, err := runCLI(t, &App{Options: app.Options{PoliciesPath: path}}, "add", "5173"); err != nil {
 		t.Fatal(err)
 	}
-	output, err := runCLI(t, &App{PoliciesPath: path}, "remove", "5173")
+	output, err := runCLI(t, &App{Options: app.Options{PoliciesPath: path}}, "remove", "5173")
 	if err != nil {
 		t.Fatalf("remove: %v", err)
 	}
@@ -229,9 +229,8 @@ func TestPolicyList(t *testing.T) {
 ]}`)
 	var stdout bytes.Buffer
 	app := &App{
-		Manager:      &fakeManager{},
-		PoliciesPath: path,
-		Stdout:       &stdout,
+		Manager: &fakeManager{},
+		Options: app.Options{PoliciesPath: path, Stdout: &stdout},
 	}
 	if err := app.Run(context.Background(), []string{"policy", "list"}); err != nil {
 		t.Fatalf("policy list: %v", err)
@@ -246,9 +245,8 @@ func TestPolicyListJSON(t *testing.T) {
 	path := writePolicies(t, `{"schema_version": 1, "policies": [{"id": "web", "priority": 10, "action": "auto_forward"}]}`)
 	var stdout bytes.Buffer
 	app := &App{
-		Manager:      &fakeManager{},
-		PoliciesPath: path,
-		Stdout:       &stdout,
+		Manager: &fakeManager{},
+		Options: app.Options{PoliciesPath: path, Stdout: &stdout},
 	}
 	if err := app.Run(context.Background(), []string{"policy", "list", "--json"}); err != nil {
 		t.Fatalf("policy list --json: %v", err)
@@ -280,10 +278,8 @@ func TestPolicyListWithReaderShowsLastValidOnCorruptFile(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	a := &App{
 		Manager:      &fakeManager{},
-		PoliciesPath: path,
 		PolicyReader: reader,
-		Stdout:       &stdout,
-		Stderr:       &stderr,
+		Options:      app.Options{PoliciesPath: path, Stdout: &stdout, Stderr: &stderr},
 	}
 	if err := a.Run(context.Background(), []string{"policy", "list"}); err != nil {
 		t.Fatalf("policy list with reader: %v", err)
@@ -300,9 +296,8 @@ func TestPolicyListWithReaderShowsLastValidOnCorruptFile(t *testing.T) {
 func TestPolicyListMissingFile(t *testing.T) {
 	var stdout bytes.Buffer
 	app := &App{
-		Manager:      &fakeManager{},
-		PoliciesPath: filepath.Join(t.TempDir(), "absent.jsonc"),
-		Stdout:       &stdout,
+		Manager: &fakeManager{},
+		Options: app.Options{PoliciesPath: filepath.Join(t.TempDir(), "absent.jsonc"), Stdout: &stdout},
 	}
 	if err := app.Run(context.Background(), []string{"policy", "list"}); err != nil {
 		t.Fatalf("policy list on a missing file: %v", err)
@@ -314,10 +309,10 @@ func TestPolicyListMissingFile(t *testing.T) {
 
 func TestRemoveDir(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "policies.jsonc")
-	if _, err := runCLI(t, &App{PoliciesPath: path}, "add", "--dir", "/home/dev/src/app"); err != nil {
+	if _, err := runCLI(t, &App{Options: app.Options{PoliciesPath: path}}, "add", "--dir", "/home/dev/src/app"); err != nil {
 		t.Fatal(err)
 	}
-	output, err := runCLI(t, &App{PoliciesPath: path}, "remove", "--dir", "/home/dev/src/app")
+	output, err := runCLI(t, &App{Options: app.Options{PoliciesPath: path}}, "remove", "--dir", "/home/dev/src/app")
 	if err != nil {
 		t.Fatalf("remove --dir: %v", err)
 	}
@@ -328,11 +323,11 @@ func TestRemoveDir(t *testing.T) {
 
 func TestAddIsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "policies.jsonc")
-	surface := &App{PoliciesPath: path}
+	surface := &App{Options: app.Options{PoliciesPath: path}}
 	if _, err := runCLI(t, surface, "add", "8080"); err != nil {
 		t.Fatal(err)
 	}
-	output, err := runCLI(t, &App{PoliciesPath: path}, "add", "8080")
+	output, err := runCLI(t, &App{Options: app.Options{PoliciesPath: path}}, "add", "8080")
 	if err != nil {
 		t.Fatalf("add: %v", err)
 	}

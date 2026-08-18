@@ -1,4 +1,4 @@
-package ipc
+package jsonrpc
 
 import (
 	"context"
@@ -19,7 +19,7 @@ import (
 // directory; these tests mirror that.
 func shortTempDir(t *testing.T) string {
 	t.Helper()
-	dir := filepath.Join(os.TempDir(), fmt.Sprintf("ipc-%d", time.Now().UnixNano()))
+	dir := filepath.Join(os.TempDir(), fmt.Sprintf("jsonrpc-%d", time.Now().UnixNano()))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +27,6 @@ func shortTempDir(t *testing.T) string {
 	return dir
 }
 
-// servingManager runs Serve on a temp-dir socket for the test duration.
 func servingManager(t *testing.T) (string, core.Manager) {
 	t.Helper()
 	path := filepath.Join(shortTempDir(t), "manager.sock")
@@ -112,12 +111,11 @@ func TestServeRejectsALiveSingleton(t *testing.T) {
 
 func TestServeReplacesAStaleSocket(t *testing.T) {
 	path := filepath.Join(shortTempDir(t), "manager.sock")
-	// A socket file nobody listens on: the probe proves it stale.
 	listener, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = listener.Close() // leave the file behind, no live owner
+	_ = listener.Close()
 	manager := core.NewManager()
 	defer func() { _ = manager.Close(context.Background()) }()
 	ctx, cancel := context.WithCancel(context.Background())

@@ -23,24 +23,27 @@ const (
 // guards it, except the policy source which the worker invokes before taking
 // any lock. The worker goroutine is the only writer of hysteresis and conflicts.
 type reconciler struct {
-	policyCache  []ForwardingPolicy
-	policySource func() []ForwardingPolicy
-	createState  map[remoteListenerKey]int
-	removalState map[ForwardID]int
-	conflicts    map[remoteListenerKey]LocalPortConflict
-	observe      chan struct{}
-	policy       chan struct{}
+	policyCache      []ForwardingPolicy
+	policyDiagnostic string
+	policySource     func() ([]ForwardingPolicy, string)
+	createState      map[remoteListenerKey]int
+	removalState     map[ForwardID]int
+	conflicts        map[remoteListenerKey]LocalPortConflict
+	observe          chan struct{}
+	policy           chan struct{}
 }
 
-func newReconciler(policySource func() []ForwardingPolicy) *reconciler {
+func newReconciler(policySource func() ([]ForwardingPolicy, string)) *reconciler {
+	policies, diagnostic := policySource()
 	return &reconciler{
-		policyCache:  policySource(),
-		policySource: policySource,
-		createState:  make(map[remoteListenerKey]int),
-		removalState: make(map[ForwardID]int),
-		conflicts:    make(map[remoteListenerKey]LocalPortConflict),
-		observe:      make(chan struct{}, 8),
-		policy:       make(chan struct{}, 8),
+		policyCache:      policies,
+		policyDiagnostic: diagnostic,
+		policySource:     policySource,
+		createState:      make(map[remoteListenerKey]int),
+		removalState:     make(map[ForwardID]int),
+		conflicts:        make(map[remoteListenerKey]LocalPortConflict),
+		observe:          make(chan struct{}, 8),
+		policy:           make(chan struct{}, 8),
 	}
 }
 
@@ -58,8 +61,9 @@ func (r *reconciler) notifyPolicy() {
 	}
 }
 
-func (r *reconciler) commitPolicies(source []ForwardingPolicy) {
-	r.policyCache = source
+func (r *reconciler) commit(policies []ForwardingPolicy, diagnostic string) {
+	r.policyCache = policies
+	r.policyDiagnostic = diagnostic
 }
 
 func policySetsEqual(left, right []ForwardingPolicy) bool {
@@ -172,10 +176,20 @@ func drainWake(ch <-chan struct{}) {
 }
 
 func (m *manager) reconcileOnce(kind wakeKind) {
-	policies := m.reconciler.policySource()
-	ordered := sortPolicies(policies)
+	policies, diagnostic := m.reconciler.policySource()
 	policyChanged := !policySetsEqual(m.reconciler.policyCache, policies)
+	diagnosticChanged := diagnostic != m.reconciler.policyDiagnostic
 	if kind == wakePolicy && !policyChanged {
+		if !diagnosticChanged {
+			return
+		}
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.closed {
+			return
+		}
+		m.reconciler.commit(policies, diagnostic)
+		m.publishLocked()
 		return
 	}
 
@@ -188,51 +202,7 @@ func (m *manager) reconcileOnce(kind wakeKind) {
 	managedEntries := m.forwards.managedForwardsLocked()
 	m.mu.RUnlock()
 
-	observationByKey := make(map[remoteListenerKey]ListenerObservation, len(host.ListenerObservations))
-	for _, observation := range host.ListenerObservations {
-		observationByKey[listenerKey(observation)] = observation
-	}
-
-	desired := make(map[remoteListenerKey]struct{})
-	for key, observation := range observationByKey {
-		if evaluateOrdered(ordered, observation).Action == PolicyAutoForward {
-			desired[key] = struct{}{}
-		}
-	}
-
-	managedKeys := make(map[remoteListenerKey]struct{}, len(managedEntries))
-	for _, entry := range managedEntries {
-		managedKeys[entry.key] = struct{}{}
-	}
-
-	var toCreate []ForwardSpec
-	var toRemove []ForwardID
-	if policyChanged {
-		for key := range desired {
-			if _, managed := managedKeys[key]; !managed {
-				toCreate = append(toCreate, managedForwardSpec(key))
-			}
-		}
-		for _, entry := range managedEntries {
-			if _, stillDesired := desired[entry.key]; !stillDesired {
-				toRemove = append(toRemove, entry.id)
-			}
-		}
-	} else {
-		for key := range desired {
-			_, managed := managedKeys[key]
-			if !m.reconciler.createReady(key, managed) {
-				continue
-			}
-			toCreate = append(toCreate, managedForwardSpec(key))
-		}
-		for _, entry := range managedEntries {
-			_, stillDesired := desired[entry.key]
-			if m.reconciler.removalStep(entry.id, stillDesired) {
-				toRemove = append(toRemove, entry.id)
-			}
-		}
-	}
+	toCreate, toRemove := m.reconciler.decide(host.ListenerObservations, managedEntries, policies, policyChanged)
 
 	if len(toCreate) == 0 && len(toRemove) == 0 {
 		m.mu.Lock()
@@ -240,9 +210,11 @@ func (m *manager) reconcileOnce(kind wakeKind) {
 		if m.closed {
 			return
 		}
-		m.reconciler.commitPolicies(policies)
+		m.reconciler.commit(policies, diagnostic)
 		if policyChanged {
 			m.reconciler.resetHysteresis()
+			m.publishLocked()
+		} else if diagnosticChanged {
 			m.publishLocked()
 		}
 		return
@@ -276,11 +248,11 @@ func (m *manager) reconcileOnce(kind wakeKind) {
 		}
 		return
 	}
-	m.reconciler.commitPolicies(policies)
+	m.reconciler.commit(policies, diagnostic)
 	if policyChanged {
 		m.reconciler.resetHysteresis()
 	}
-	changed := policyChanged
+	changed := policyChanged || diagnosticChanged
 	for key := range failed {
 		m.reconciler.recordConflict(key)
 		changed = true
@@ -311,6 +283,49 @@ func (m *manager) reconcileOnce(kind wakeKind) {
 	for _, owner := range extraClose {
 		_ = owner.Close(context.Background())
 	}
+}
+
+// decide is the Managed Forward intent: observations + policies + hysteresis
+// become create/remove lists. Allocate, Close, and the Forward table stay
+// in reconcileOnce with the lock policy.
+func (r *reconciler) decide(observations []ListenerObservation, managed []managedForwardEntry, policies []ForwardingPolicy, policyChanged bool) (toCreate []ForwardSpec, toRemove []ForwardID) {
+	ordered := sortPolicies(policies)
+	desired := make(map[remoteListenerKey]struct{})
+	for _, observation := range observations {
+		if evaluateOrdered(ordered, observation).Action == PolicyAutoForward {
+			desired[listenerKey(observation)] = struct{}{}
+		}
+	}
+	managedKeys := make(map[remoteListenerKey]struct{}, len(managed))
+	for _, entry := range managed {
+		managedKeys[entry.key] = struct{}{}
+	}
+	if policyChanged {
+		for key := range desired {
+			if _, already := managedKeys[key]; !already {
+				toCreate = append(toCreate, managedForwardSpec(key))
+			}
+		}
+		for _, entry := range managed {
+			if _, stillDesired := desired[entry.key]; !stillDesired {
+				toRemove = append(toRemove, entry.id)
+			}
+		}
+		return toCreate, toRemove
+	}
+	for key := range desired {
+		_, managed := managedKeys[key]
+		if r.createReady(key, managed) {
+			toCreate = append(toCreate, managedForwardSpec(key))
+		}
+	}
+	for _, entry := range managed {
+		_, stillDesired := desired[entry.key]
+		if r.removalStep(entry.id, stillDesired) {
+			toRemove = append(toRemove, entry.id)
+		}
+	}
+	return toCreate, toRemove
 }
 
 func managedForwardSpec(key remoteListenerKey) ForwardSpec {

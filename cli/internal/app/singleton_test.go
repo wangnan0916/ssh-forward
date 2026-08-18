@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
-	"github.com/wangnan0916/ssh-forward/cli/internal/ipc"
+	"github.com/wangnan0916/ssh-forward/cli/internal/jsonrpc"
 )
 
 func TestConnectDialsLiveSocket(t *testing.T) {
@@ -26,8 +26,8 @@ func TestConnectDialsLiveSocket(t *testing.T) {
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	go func() { _ = ipc.Serve(ctx, layout.Socket, manager) }()
-	if err := ipc.Wait(context.Background(), layout.Socket, 3*time.Second); err != nil {
+	go func() { _ = jsonrpc.Serve(ctx, layout.Socket, manager) }()
+	if err := jsonrpc.Wait(context.Background(), layout.Socket, 3*time.Second); err != nil {
 		t.Fatalf("Wait: %v", err)
 	}
 	_, err := Connect(context.Background(), Options{Layout: layout, HostFlag: "development"})
@@ -48,15 +48,15 @@ func TestServeLeavesLivePidAlone(t *testing.T) {
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	go func() { _ = ipc.Serve(ctx, layout.Socket, manager) }()
-	if err := ipc.Wait(context.Background(), layout.Socket, 3*time.Second); err != nil {
+	go func() { _ = jsonrpc.Serve(ctx, layout.Socket, manager) }()
+	if err := jsonrpc.Wait(context.Background(), layout.Socket, 3*time.Second); err != nil {
 		t.Fatalf("Wait: %v", err)
 	}
 	if err := os.WriteFile(layout.PID, []byte("4242\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	err := Serve(context.Background(), Options{Layout: layout, HostFlag: "development"})
-	if !errors.Is(err, ipc.ErrAlreadyRunning) {
+	if !errors.Is(err, jsonrpc.ErrAlreadyRunning) {
 		t.Fatalf("Serve err = %v, want ErrAlreadyRunning", err)
 	}
 	raw, err := os.ReadFile(layout.PID)

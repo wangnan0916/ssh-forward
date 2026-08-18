@@ -23,22 +23,15 @@ var ErrUsage = errors.New("usage")
 // per-user Manager through app.Connect / app.Serve. Tests inject Manager
 // directly and skip Connect.
 type App struct {
-	Manager      core.Manager
-	Host         core.HostAlias
-	HostFlag     string
-	PoliciesPath string
+	Manager core.Manager
+	Host    core.HostAlias
+	Options app.Options
 	// PolicyReader is the shared policies-file path: Remembered Auto-forward
 	// writes, policy list, and the Manager's reconciliation source share one
 	// last-valid set. bindDefaults creates one when nil so tests can still
 	// inject a primed reader.
-	PolicyReader  *app.FilePolicyReader
-	SSHConfigPath string
-	ConfigPath    string
-	Layout        app.Layout
-	Version       string
-	Stdin         io.Reader
-	Stdout        io.Writer
-	Stderr        io.Writer
+	PolicyReader *app.FilePolicyReader
+	Version      string
 
 	sessionOwned bool
 }
@@ -66,13 +59,13 @@ func (e *usageError) Is(target error) bool {
 func (a *App) Run(ctx context.Context, args []string) error {
 	command := a.RootCommand()
 	command.SetArgs(args)
-	if a.Stdout != nil {
-		command.SetOut(a.Stdout)
+	if a.Options.Stdout != nil {
+		command.SetOut(a.Options.Stdout)
 	} else {
 		command.SetOut(io.Discard)
 	}
-	if a.Stderr != nil {
-		command.SetErr(a.Stderr)
+	if a.Options.Stderr != nil {
+		command.SetErr(a.Options.Stderr)
 	} else {
 		command.SetErr(io.Discard)
 	}
@@ -90,37 +83,26 @@ func (a *App) closeSession() {
 }
 
 func (a *App) bindGlobalFlags(cmd *cobra.Command) {
-	a.HostFlag, _ = cmd.Flags().GetString("host")
+	a.Options.HostFlag, _ = cmd.Flags().GetString("host")
 	if policies, _ := cmd.Flags().GetString("policies"); policies != "" {
-		a.PoliciesPath = policies
+		a.Options.PoliciesPath = policies
 	}
 	if sshConfig, _ := cmd.Flags().GetString("ssh-config"); sshConfig != "" {
-		a.SSHConfigPath = sshConfig
+		a.Options.SSHConfigPath = sshConfig
 	}
 }
 
 func (a *App) bindDefaults() {
-	opts := a.options().WithDefaults()
-	a.Layout = opts.Layout
-	a.PoliciesPath = opts.PoliciesPath
-	a.ConfigPath = opts.ConfigPath
-	if a.PolicyReader == nil && a.PoliciesPath != "" {
-		a.PolicyReader = app.NewFilePolicyReader(a.PoliciesPath)
+	a.Options = a.Options.WithDefaults()
+	if a.PolicyReader == nil && a.Options.PoliciesPath != "" {
+		a.PolicyReader = app.NewFilePolicyReader(a.Options.PoliciesPath)
 	}
 }
 
-func (a *App) options() app.Options {
-	return app.Options{
-		Layout:        a.Layout,
-		HostFlag:      a.HostFlag,
-		SSHConfigPath: a.SSHConfigPath,
-		PoliciesPath:  a.PoliciesPath,
-		ConfigPath:    a.ConfigPath,
-		Interactive:   app.IsTerminal(a.Stdin),
-		Stdin:         a.Stdin,
-		Stdout:        a.Stdout,
-		Stderr:        a.Stderr,
-	}
+func (a *App) connectOptions() app.Options {
+	opts := a.Options
+	opts.Interactive = app.IsTerminal(a.Options.Stdin)
+	return opts
 }
 
 func needsManager(cmd *cobra.Command) bool {
@@ -142,7 +124,7 @@ func (a *App) prepareCommand(cmd *cobra.Command) error {
 	if a.Manager != nil || !needsManager(cmd) {
 		return nil
 	}
-	session, err := app.Connect(cmd.Context(), a.options())
+	session, err := app.Connect(cmd.Context(), a.connectOptions())
 	if err != nil {
 		if app.IsResolution(err) {
 			return UsageError(err)

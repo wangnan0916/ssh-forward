@@ -72,7 +72,6 @@ func (a *Adapter) Connect(ctx context.Context, host core.HostAlias) (core.HostSe
 		return nil, &core.SessionError{
 			Disposition: core.SessionSuspend,
 			Reason:      core.SessionReasonInvalidAlias,
-			Diagnostic:  "alias_validation_failed",
 		}
 	}
 	session, err := a.start(ctx, alias)
