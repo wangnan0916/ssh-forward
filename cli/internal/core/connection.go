@@ -60,17 +60,20 @@ type ObservationBudget struct {
 	MetadataBytes  int
 }
 
-// DiscoveryReason is the vocabulary scanner-side facts may use to report
-// why Discovery is degraded or failed. The actor owns the single translation
-// from reason to wire diagnostic, so the user-visible Diagnostic strings
-// have exactly one producer.
+// DiscoveryReason is the domain vocabulary an adapter uses to report why
+// Discovery is degraded or failed. Framing, streams, and scanner scripts
+// stay inside the HostSession adapter; these reasons name what the
+// Development Host observation could not provide. discoveryDiagnostic is
+// the single translation to the wire Diagnostic.
 type DiscoveryReason string
 
 const (
-	// ReasonFrameInvalid reports a scanner frame that failed to parse.
-	ReasonFrameInvalid DiscoveryReason = "frame_invalid"
-	// ReasonStreamFailed reports the scanner output stream ending in error.
-	ReasonStreamFailed DiscoveryReason = "stream_failed"
+	// ReasonObservationInvalid reports observation input the adapter could
+	// not turn into a valid ObservationSet.
+	ReasonObservationInvalid DiscoveryReason = "observation_invalid"
+	// ReasonObservationLost reports that the adapter could not continue
+	// producing observations.
+	ReasonObservationLost DiscoveryReason = "observation_lost"
 	// ReasonSessionInvalid reports a fact the actor's re-validation gate
 	// rejected (defense against a misbehaving adapter).
 	ReasonSessionInvalid DiscoveryReason = "session_invalid"

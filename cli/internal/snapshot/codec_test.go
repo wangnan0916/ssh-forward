@@ -1,4 +1,4 @@
-package jsonrpc
+package snapshot
 
 import (
 	"reflect"
@@ -7,7 +7,7 @@ import (
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
-func TestUnmarshalSnapshotInvertsMarshal(t *testing.T) {
+func TestUnmarshalInvertsMarshal(t *testing.T) {
 	want := core.Snapshot{
 		Revision: 9,
 		Host: &core.HostSnapshot{
@@ -29,23 +29,23 @@ func TestUnmarshalSnapshotInvertsMarshal(t *testing.T) {
 			}},
 		},
 	}
-	encoded, err := MarshalSnapshot(want)
+	encoded, err := Marshal(want)
 	if err != nil {
-		t.Fatalf("MarshalSnapshot: %v", err)
+		t.Fatalf("Marshal: %v", err)
 	}
-	got, err := UnmarshalSnapshot(encoded)
+	got, err := Unmarshal(encoded)
 	if err != nil {
-		t.Fatalf("UnmarshalSnapshot: %v", err)
+		t.Fatalf("Unmarshal: %v", err)
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("round trip = %#v, want %#v", got, want)
 	}
 }
 
-func TestUnmarshalSnapshotEmptyHost(t *testing.T) {
-	got, err := UnmarshalSnapshot([]byte(`{"revision":0}`))
+func TestUnmarshalEmptyHost(t *testing.T) {
+	got, err := Unmarshal([]byte(`{"revision":0}`))
 	if err != nil {
-		t.Fatalf("UnmarshalSnapshot: %v", err)
+		t.Fatalf("Unmarshal: %v", err)
 	}
 	if got.Revision != 0 || got.Host != nil {
 		t.Fatalf("empty snapshot = %#v, want no host", got)

@@ -27,10 +27,10 @@ type App struct {
 	Host         core.HostAlias
 	HostFlag     string
 	PoliciesPath string
-	// PolicyReader is the shared policies-file reader (the same instance
-	// the Manager was composed with): policy list reads through it so the
-	// CLI and the Manager agree on the last valid set. When nil, policy
-	// list parses the file directly for tests and bare usage.
+	// PolicyReader is the shared policies-file path: Remembered Auto-forward
+	// writes, policy list, and the Manager's reconciliation source share one
+	// last-valid set. bindDefaults creates one when nil so tests can still
+	// inject a primed reader.
 	PolicyReader  *app.FilePolicyReader
 	SSHConfigPath string
 	ConfigPath    string
@@ -104,6 +104,9 @@ func (a *App) bindDefaults() {
 	a.Layout = opts.Layout
 	a.PoliciesPath = opts.PoliciesPath
 	a.ConfigPath = opts.ConfigPath
+	if a.PolicyReader == nil && a.PoliciesPath != "" {
+		a.PolicyReader = app.NewFilePolicyReader(a.PoliciesPath)
+	}
 }
 
 func (a *App) options() app.Options {

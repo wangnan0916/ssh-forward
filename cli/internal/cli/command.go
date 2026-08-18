@@ -110,9 +110,9 @@ func (a *App) rememberPort(port uint16, adding, jsonOutput bool) error {
 		err     error
 	)
 	if adding {
-		changed, err = app.AddAutoForwardPort(a.PoliciesPath, port)
+		changed, err = a.PolicyReader.AddPort(port)
 	} else {
-		changed, err = app.RemoveAutoForwardPort(a.PoliciesPath, port)
+		changed, err = a.PolicyReader.RemovePort(port)
 	}
 	if err != nil {
 		return err
@@ -130,9 +130,9 @@ func (a *App) rememberDir(dir string, adding, jsonOutput bool) error {
 		err     error
 	)
 	if adding {
-		changed, stored, err = app.AddAutoForwardDir(a.PoliciesPath, dir)
+		changed, stored, err = a.PolicyReader.AddDir(dir)
 	} else {
-		changed, stored, err = app.RemoveAutoForwardDir(a.PoliciesPath, dir)
+		changed, stored, err = a.PolicyReader.RemoveDir(dir)
 	}
 	if err != nil {
 		if errorsIsHostDir(err) {

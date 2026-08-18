@@ -7,11 +7,11 @@ import (
 
 const (
 	// MaxRetained* are the published-snapshot retention caps for Discovery
-	// evidence. The scanner declares its own per-scan budgets in-band; core
-	// accepts declarations within these caps (see validObservationBudget),
-	// so a scanner may use fewer records than these defaults but never more.
-	// The scanner's parser caps are asserted equal to these in the openssh
-	// package tests, keeping the protocol defaults in one numeric family.
+	// evidence. The HostSession adapter declares its own per-scan budget
+	// in-band; core accepts declarations within these caps (see
+	// validObservationBudget), so an adapter may use fewer records than
+	// these defaults but never more. Equality with the adapter's parser
+	// caps is not part of the seam.
 	MaxRetainedListenerObservations = 256
 	MaxRetainedSocketIdentities     = 512
 	MaxRetainedProcessRecords       = 512
@@ -68,16 +68,29 @@ func validCapabilityReason(reason CapabilityReason) bool {
 	}
 }
 
-// capabilityDiagnostic is the single translation from capability partiality
-// to the user-visible wire Diagnostic. The discovery-failure paths own their
-// own diagnostics; this table covers the healthy-but-partial states only,
-// so a client can distinguish "the source cannot see the evidence" from
-// "evidence was dropped after ingestion".
-func capabilityDiagnostic(capability DiscoveryCapability, reason CapabilityReason) string {
-	if capability.RemoteListeners == CapabilityFull && capability.SocketIdentity == CapabilityFull && capability.ProcessMetadata == CapabilityFull {
+// discoveryDiagnostic is the single translation to the user-visible wire
+// Diagnostic. Failure reasons win, then an observation-sequence gap, then
+// capability partiality — so every Snapshot field has one producer.
+func discoveryDiagnostic(gapped bool, capability DiscoveryCapability, capabilityReason CapabilityReason, failure DiscoveryReason) string {
+	switch failure {
+	case ReasonObservationInvalid:
+		return "invalid_scanner_frame"
+	case ReasonObservationLost:
+		return "scanner_framing_failed"
+	case ReasonSessionInvalid:
+		return "invalid_session_fact"
+	case "":
+		// No failure: a gap or capability partiality may still apply.
+	default:
 		return ""
 	}
-	switch reason {
+	if gapped {
+		return "observation_resync"
+	}
+	if capabilityFull(capability) {
+		return ""
+	}
+	switch capabilityReason {
 	case CapabilityReasonEvidenceTruncated:
 		return "evidence_truncated"
 	case CapabilityReasonEvidenceMissing:
@@ -86,6 +99,19 @@ func capabilityDiagnostic(capability DiscoveryCapability, reason CapabilityReaso
 		return "scanner_reported_partial"
 	default:
 		return ""
+	}
+}
+
+func discoveryFailureDiagnostic(reason DiscoveryReason) string {
+	return discoveryDiagnostic(false, DiscoveryCapability{}, CapabilityReasonNone, reason)
+}
+
+func validDiscoveryReason(reason DiscoveryReason) bool {
+	switch reason {
+	case ReasonObservationInvalid, ReasonObservationLost, ReasonSessionInvalid:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -99,8 +125,14 @@ func validObservationBudget(budget ObservationBudget) bool {
 		budget.MetadataBytes >= 1 && budget.MetadataBytes <= MaxRetainedProcessMetadataBytes
 }
 
+func capabilityFull(capability DiscoveryCapability) bool {
+	return capability.RemoteListeners == CapabilityFull &&
+		capability.SocketIdentity == CapabilityFull &&
+		capability.ProcessMetadata == CapabilityFull
+}
+
 func discoveryStateForCapability(capability DiscoveryCapability) DiscoveryState {
-	if capability.RemoteListeners == CapabilityFull && capability.SocketIdentity == CapabilityFull && capability.ProcessMetadata == CapabilityFull {
+	if capabilityFull(capability) {
 		return DiscoveryHealthy
 	}
 	return DiscoveryDegraded

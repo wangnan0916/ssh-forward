@@ -7,6 +7,8 @@ import (
 
 	"github.com/creachadair/jrpc2"
 	"github.com/creachadair/jrpc2/channel"
+
+	"github.com/wangnan0916/ssh-forward/cli/internal/snapshot"
 )
 
 const (
@@ -130,27 +132,34 @@ func (c negotiatedCapabilities) wireValues() []string {
 	return capabilities
 }
 
-type wireForward struct {
-	ID                 string   `json:"id"`
-	RemotePort         uint16   `json:"remote_port"`
-	RemoteFamily       string   `json:"remote_family"`
-	AllocatedLocalPort uint16   `json:"allocated_local_port"`
-	LocalFamilies      []string `json:"local_families"`
-}
-
 type snapshotParams struct {
 	Scope struct {
 		Kind string `json:"kind"`
 	} `json:"scope"`
 }
 
+func parseSnapshotParams(request *jrpc2.Request) error {
+	paramsText := request.ParamString()
+	if paramsText == "" || paramsText == "{}" {
+		return nil
+	}
+	var params snapshotParams
+	if json.Unmarshal([]byte(paramsText), &params) != nil {
+		return errInvalidParameters
+	}
+	if params.Scope.Kind == "" || params.Scope.Kind == "all" {
+		return nil
+	}
+	return errInvalidScope
+}
+
 type snapshotResult struct {
-	Snapshot wireSnapshot `json:"snapshot"`
+	Snapshot snapshot.Wire `json:"snapshot"`
 }
 
 type watchResult struct {
-	WatchID  string       `json:"watch_id"`
-	Snapshot wireSnapshot `json:"snapshot"`
+	WatchID  string        `json:"watch_id"`
+	Snapshot snapshot.Wire `json:"snapshot"`
 }
 
 type unwatchParams struct {
@@ -163,67 +172,13 @@ type unwatchResult struct {
 }
 
 type snapshotNotification struct {
-	WatchID  string       `json:"watch_id"`
-	Snapshot wireSnapshot `json:"snapshot"`
+	WatchID  string        `json:"watch_id"`
+	Snapshot snapshot.Wire `json:"snapshot"`
 }
 
 type resyncNotification struct {
 	WatchID string `json:"watch_id"`
 	Reason  string `json:"reason"`
-}
-
-type wireSnapshot struct {
-	Revision uint64    `json:"revision"`
-	Host     *wireHost `json:"host,omitempty"`
-}
-
-type wireHost struct {
-	Alias                string                    `json:"alias"`
-	Connection           string                    `json:"connection"`
-	Discovery            wireDiscovery             `json:"discovery"`
-	ListenerObservations []wireListenerObservation `json:"listener_observations"`
-	Forwards             []wireForward             `json:"forwards"`
-	LocalPortConflicts   []wireLocalPortConflict   `json:"local_port_conflicts,omitempty"`
-}
-
-type wireLocalPortConflict struct {
-	RemotePort   uint16 `json:"remote_port"`
-	RemoteFamily string `json:"remote_family"`
-	BindScope    string `json:"bind_scope"`
-}
-
-type wireDiscovery struct {
-	State               string                  `json:"state"`
-	Capability          wireDiscoveryCapability `json:"capability"`
-	BaselineEstablished bool                    `json:"baseline_established"`
-	ScannerVersion      int                     `json:"scanner_version"`
-	ScannerChecksum     string                  `json:"scanner_checksum"`
-	Diagnostic          string                  `json:"diagnostic"`
-}
-
-type wireDiscoveryCapability struct {
-	RemoteListeners string `json:"remote_listeners"`
-	SocketIdentity  string `json:"socket_identity"`
-	ProcessMetadata string `json:"process_metadata"`
-}
-
-type wireListenerObservation struct {
-	Family           string             `json:"family"`
-	BindScope        string             `json:"bind_scope"`
-	RemotePort       uint16             `json:"remote_port"`
-	SocketIdentities []string           `json:"socket_identities"`
-	ProcessChains    []wireProcessChain `json:"process_chains"`
-}
-
-type wireProcessChain struct {
-	Processes []wireProcessMetadata `json:"processes"`
-}
-
-type wireProcessMetadata struct {
-	PID              int      `json:"pid"`
-	Executable       string   `json:"executable"`
-	WorkingDirectory string   `json:"working_directory"`
-	Arguments        []string `json:"arguments"`
 }
 
 type requestEnvelope struct {

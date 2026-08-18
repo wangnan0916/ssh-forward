@@ -12,6 +12,7 @@ import (
 	"github.com/creachadair/jrpc2/channel"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/snapshot"
 )
 
 // Dial negotiates a JSON-RPC v1 session on conn and returns a Manager
@@ -209,7 +210,7 @@ func (c *managerClient) Snapshot(ctx context.Context) (core.Snapshot, error) {
 	if err := json.Unmarshal(result, &wrapped); err != nil {
 		return core.Snapshot{}, fmt.Errorf("snapshot result: %w", err)
 	}
-	return UnmarshalSnapshot(wrapped.Snapshot)
+	return snapshot.Unmarshal(wrapped.Snapshot)
 }
 
 func (c *managerClient) Watch(ctx context.Context) (core.SnapshotStream, error) {
@@ -249,9 +250,11 @@ func (c *managerClient) Close(context.Context) error {
 	return c.frames.Close()
 }
 
-// socketStream is one Watch over the wire. The subscription Snapshot is
-// delivered first; later unread notifications coalesce to the latest value,
-// matching the Manager stream.
+// socketStream is one Watch over the wire. Unread notifications coalesce
+// to the latest value, matching the Manager stream. The latest-value loop
+// lives here and in core's snapshotStream rather than a shared helper
+// because the two shapes differ: core holds Snapshot values; the client
+// holds json.RawMessage until Unmarshal.
 type socketStream struct {
 	client  *managerClient
 	watchID string
@@ -260,6 +263,7 @@ type socketStream struct {
 	initial        json.RawMessage
 	initialPending bool
 	latest         json.RawMessage
+	nextActive     bool
 	ready          chan struct{}
 	failed         error
 }
@@ -300,32 +304,61 @@ func (s *socketStream) fail(err error) {
 }
 
 func (s *socketStream) Next(ctx context.Context) (core.Snapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return core.Snapshot{}, err
+	}
+	if !s.beginNext() {
+		return core.Snapshot{}, core.ErrConcurrentSnapshotNext
+	}
+	defer s.endNext()
 	for {
 		s.mu.Lock()
-		if s.initialPending {
-			s.initialPending = false
-			snapshot := s.initial
-			s.mu.Unlock()
-			return UnmarshalSnapshot(snapshot)
-		}
-		if len(s.latest) > 0 {
-			snapshot := s.latest
-			s.latest = nil
-			s.mu.Unlock()
-			return UnmarshalSnapshot(snapshot)
-		}
-		if s.failed != nil {
-			err := s.failed
-			s.mu.Unlock()
+		payload, found, err := s.nextLocked()
+		s.mu.Unlock()
+		if err != nil {
 			return core.Snapshot{}, err
 		}
-		s.mu.Unlock()
+		if found {
+			return snapshot.Unmarshal(payload)
+		}
 		select {
 		case <-ctx.Done():
 			return core.Snapshot{}, ctx.Err()
 		case <-s.ready:
 		}
 	}
+}
+
+func (s *socketStream) nextLocked() (json.RawMessage, bool, error) {
+	if s.initialPending {
+		s.initialPending = false
+		return s.initial, true, nil
+	}
+	if len(s.latest) > 0 {
+		payload := s.latest
+		s.latest = nil
+		return payload, true, nil
+	}
+	if s.failed != nil {
+		return nil, false, s.failed
+	}
+	return nil, false, nil
+}
+
+func (s *socketStream) beginNext() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.nextActive {
+		return false
+	}
+	s.nextActive = true
+	return true
+}
+
+func (s *socketStream) endNext() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nextActive = false
 }
 
 func (s *socketStream) Close() error {

@@ -64,7 +64,7 @@ func (o Options) WithDefaults() Options {
 func Connect(ctx context.Context, opts Options) (Session, error) {
 	opts = opts.WithDefaults()
 	if client, err := ipc.Dial(ctx, opts.Layout.Socket); err == nil {
-		return attach(ctx, client, opts.HostFlag, opts.Stderr)
+		return attach(ctx, client, opts)
 	}
 
 	host, err := ResolveHost(ResolveOptions{
@@ -87,7 +87,7 @@ func Connect(ctx context.Context, opts Options) (Session, error) {
 			return Session{}, fmt.Errorf("manager did not start within %s (see %s)", 5*time.Second, opts.Layout.Log)
 		}
 		if client, err := ipc.Dial(ctx, opts.Layout.Socket); err == nil {
-			return attach(ctx, client, opts.HostFlag, opts.Stderr)
+			return attach(ctx, client, opts)
 		}
 	}
 
@@ -125,16 +125,20 @@ func Serve(ctx context.Context, opts Options) error {
 	return endpoint.Serve(ctx, session.Manager)
 }
 
-func attach(ctx context.Context, client core.Manager, hostFlag string, stderr io.Writer) (Session, error) {
+func attach(ctx context.Context, client core.Manager, opts Options) (Session, error) {
 	snapshot, err := client.Snapshot(ctx)
 	if err != nil || snapshot.Host == nil {
 		_ = client.Close(context.Background())
 		return Session{}, errors.New("the running manager has no Development Host configured")
 	}
-	if hostFlag != "" && hostFlag != string(snapshot.Host.Alias) {
-		fmt.Fprintf(stderr, "ssh-forward: warning: --host %s ignored; the running manager owns %s\n", hostFlag, snapshot.Host.Alias)
+	if opts.HostFlag != "" && opts.HostFlag != string(snapshot.Host.Alias) {
+		fmt.Fprintf(opts.Stderr, "ssh-forward: warning: --host %s ignored; the running manager owns %s\n", opts.HostFlag, snapshot.Host.Alias)
 	}
-	return Session{Manager: client, Host: snapshot.Host.Alias}, nil
+	return Session{
+		Manager:      client,
+		Host:         snapshot.Host.Alias,
+		PolicyReader: NewFilePolicyReader(opts.PoliciesPath),
+	}, nil
 }
 
 func inProcess(host, sshConfig, policies string) (Session, error) {

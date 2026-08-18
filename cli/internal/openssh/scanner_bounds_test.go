@@ -93,7 +93,7 @@ func TestScannerRejectsProcessEvidenceExpansionAcrossListenerEndpoints(t *testin
 		t.Fatalf("scanner facts = %#v, want one degraded DiscoveryChange", facts)
 	}
 	change, ok := facts[0].(core.DiscoveryChange)
-	if !ok || change.State != core.DiscoveryDegraded || change.Reason != core.ReasonFrameInvalid {
+	if !ok || change.State != core.DiscoveryDegraded || change.Reason != core.ReasonObservationInvalid {
 		t.Fatalf("scanner fact = %#v, want degraded invalid frame", facts[0])
 	}
 }
@@ -204,7 +204,7 @@ func TestScannerRejectsDeclaredBudgetBeyondFrameLimits(t *testing.T) {
 				t.Fatalf("scanner facts = %#v, want one invalid frame change", facts)
 			}
 			change, ok := facts[0].(core.DiscoveryChange)
-			if !ok || change.Reason != core.ReasonFrameInvalid {
+			if !ok || change.Reason != core.ReasonObservationInvalid {
 				t.Fatalf("scanner fact = %#v, want invalid frame change", facts[0])
 			}
 		})
@@ -227,7 +227,7 @@ func TestScannerRejectsRecordsBeyondDeclaredBudget(t *testing.T) {
 	if len(facts) != 1 {
 		t.Fatalf("scanner facts = %#v, want one invalid frame change", facts)
 	}
-	if change, ok := facts[0].(core.DiscoveryChange); !ok || change.Reason != core.ReasonFrameInvalid {
+	if change, ok := facts[0].(core.DiscoveryChange); !ok || change.Reason != core.ReasonObservationInvalid {
 		t.Fatalf("scanner fact = %#v, want invalid frame change", facts[0])
 	}
 }
@@ -310,24 +310,22 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
-// The scanner script's declared budgets, the parser's frame caps, and core's
-// retention caps are the same protocol default family; a drift between any
-// two of them should fail this test rather than silently diverge at runtime.
-func TestScannerScriptDeclaresParserDefaultBudgets(t *testing.T) {
-	// The parser caps are derived from the embedded script, so script and
-	// parser cannot drift. What remains to pin is the second copy: core's
-	// retention caps, which are the same protocol defaults and must stay in
-	// one numeric family with the script's declarations.
-	if MaxObservedListeners != core.MaxRetainedListenerObservations {
-		t.Fatalf("parser listener cap %d != core retention cap %d", MaxObservedListeners, core.MaxRetainedListenerObservations)
+// Parser caps come from scanner.sh. Core retention is a separate policy:
+// a declared budget must fit inside MaxRetained*, not match the parser cap.
+func TestParserBudgetsFitCoreRetention(t *testing.T) {
+	cases := []struct {
+		name string
+		got  int
+		want int
+	}{
+		{"listeners", MaxObservedListeners, core.MaxRetainedListenerObservations},
+		{"sockets", MaxObservedSockets, core.MaxRetainedSocketIdentities},
+		{"processes", MaxProcessRecords, core.MaxRetainedProcessRecords},
+		{"metadata", MaxObservationMetadataBytes, core.MaxRetainedProcessMetadataBytes},
 	}
-	if MaxObservedSockets != core.MaxRetainedSocketIdentities {
-		t.Fatalf("parser socket cap %d != core retention cap %d", MaxObservedSockets, core.MaxRetainedSocketIdentities)
-	}
-	if MaxProcessRecords != core.MaxRetainedProcessRecords {
-		t.Fatalf("parser process cap %d != core retention cap %d", MaxProcessRecords, core.MaxRetainedProcessRecords)
-	}
-	if MaxObservationMetadataBytes != core.MaxRetainedProcessMetadataBytes {
-		t.Fatalf("parser metadata cap %d != core retention cap %d", MaxObservationMetadataBytes, core.MaxRetainedProcessMetadataBytes)
+	for _, test := range cases {
+		if test.got > test.want {
+			t.Fatalf("parser %s cap %d exceeds core retention %d", test.name, test.got, test.want)
+		}
 	}
 }

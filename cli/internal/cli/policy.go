@@ -6,28 +6,15 @@ import (
 	"os"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/app"
-	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 func (a *App) runPolicyList(jsonOutput bool) error {
 	if a.PoliciesPath == "" {
 		return fmt.Errorf("no policies file is configured (--policies)")
 	}
-	var policies []core.ForwardingPolicy
-	var err error
-	if a.PolicyReader != nil {
-		policies, err = a.PolicyReader.Read()
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(a.Stderr, "warning: %v; showing the last valid policies\n", err)
-		}
-	} else {
-		policies, err = app.LoadPolicies(a.PoliciesPath)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		if errors.Is(err, os.ErrNotExist) {
-			policies = nil
-		}
+	policies, err := a.PolicyReader.Read()
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintf(a.Stderr, "warning: %v; showing the last valid policies\n", err)
 	}
 	if jsonOutput {
 		encoded, err := app.MarshalPolicies(policies)

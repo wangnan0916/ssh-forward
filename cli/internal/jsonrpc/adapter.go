@@ -11,6 +11,7 @@ import (
 	"github.com/creachadair/jrpc2/handler"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/snapshot"
 )
 
 func Serve(ctx context.Context, conn net.Conn, manager core.Manager) error {
@@ -75,11 +76,11 @@ func handleSnapshot(ctx context.Context, request *jrpc2.Request, manager core.Ma
 	if err := parseSnapshotParams(request); err != nil {
 		return nil, err
 	}
-	snapshot, err := manager.Snapshot(ctx)
+	snap, err := manager.Snapshot(ctx)
 	if err != nil {
 		return nil, internalError()
 	}
-	return snapshotResult{Snapshot: marshalSnapshot(snapshot)}, nil
+	return snapshotResult{Snapshot: snapshot.Encode(snap)}, nil
 }
 
 func normalizeServeError(err error) error {

@@ -65,12 +65,9 @@ type DiscoveryCapability struct {
 }
 
 // CapabilityReason explains why a Discovery Capability dimension is not
-// full. The evidence producers attach it to an ObservationSet (the scanner
-// parser: scanner-declared or recomputed from frames; core: retention-cap
-// truncation), and the actor translates it to the user-visible wire
-// Diagnostic through its single table. Empty means there is no partiality
-// to explain (the capability is full, or a failure path owns the
-// Diagnostic).
+// full. Evidence producers attach it to an ObservationSet; discoveryDiagnostic
+// is the single table that turns it (and gaps, and DiscoveryChange reasons)
+// into the wire Diagnostic. Empty means there is no partiality to explain.
 type CapabilityReason string
 
 const (

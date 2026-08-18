@@ -12,7 +12,6 @@ import (
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/app"
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
-	"github.com/wangnan0916/ssh-forward/cli/internal/openssh"
 )
 
 // TestPolicyReconciliationThroughDisposableDevelopmentHost pins the
@@ -28,15 +27,7 @@ func TestPolicyReconciliationThroughDisposableDevelopmentHost(t *testing.T) {
   ]
 }`, fixturePortV4(), fixturePortV4()))
 
-	adapter, err := openssh.New(openssh.Options{
-		Executable:   "/usr/bin/ssh",
-		ConfigFile:   isolatedSSHConfig(t),
-		ReadyTimeout: 5 * time.Second,
-	})
-	if err != nil {
-		t.Fatalf("create OpenSSH Adapter: %v", err)
-	}
-	manager := app.NewManager(core.HostAlias(testHostAlias()), adapter, app.NewFilePolicyReader(policiesPath).Source())
+	manager := app.NewManager(core.HostAlias(testHostAlias()), testHostConnector(t), app.NewFilePolicyReader(policiesPath).Source())
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -63,15 +54,7 @@ func TestPolicyIgnoreThroughDisposableDevelopmentHost(t *testing.T) {
   ]
 }`, fixturePortV4(), fixturePortV4()))
 
-	adapter, err := openssh.New(openssh.Options{
-		Executable:   "/usr/bin/ssh",
-		ConfigFile:   isolatedSSHConfig(t),
-		ReadyTimeout: 5 * time.Second,
-	})
-	if err != nil {
-		t.Fatalf("create OpenSSH Adapter: %v", err)
-	}
-	manager := app.NewManager(core.HostAlias(testHostAlias()), adapter, app.NewFilePolicyReader(policiesPath).Source())
+	manager := app.NewManager(core.HostAlias(testHostAlias()), testHostConnector(t), app.NewFilePolicyReader(policiesPath).Source())
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

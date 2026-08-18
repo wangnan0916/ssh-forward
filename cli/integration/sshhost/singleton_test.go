@@ -15,7 +15,6 @@ import (
 	"github.com/wangnan0916/ssh-forward/cli/internal/app"
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 	"github.com/wangnan0916/ssh-forward/cli/internal/ipc"
-	"github.com/wangnan0916/ssh-forward/cli/internal/openssh"
 )
 
 // TestSingletonManagerThroughDisposableDevelopmentHost pins ADR-0016 end
@@ -23,14 +22,7 @@ import (
 // Manager, and every operation below is a socket client call — snapshot
 // visibility, connection state, a second serve refusal, and a watch stream.
 func TestSingletonManagerThroughDisposableDevelopmentHost(t *testing.T) {
-	adapter, err := openssh.New(openssh.Options{
-		Executable:   "/usr/bin/ssh",
-		ConfigFile:   isolatedSSHConfig(t),
-		ReadyTimeout: 5 * time.Second,
-	})
-	if err != nil {
-		t.Fatalf("create OpenSSH Adapter: %v", err)
-	}
+	adapter := testHostConnector(t)
 	manager := app.NewManager(core.HostAlias(testHostAlias()), adapter)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

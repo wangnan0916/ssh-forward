@@ -115,7 +115,7 @@ listener.close()
 		t.Fatalf("degraded Next: %v", err)
 	}
 	change, ok := fact.(core.DiscoveryChange)
-	if !ok || change.State != core.DiscoveryDegraded || change.Reason != core.ReasonFrameInvalid {
+	if !ok || change.State != core.DiscoveryDegraded || change.Reason != core.ReasonObservationInvalid {
 		t.Fatalf("first invalid frame fact = %#v, want degraded DiscoveryChange", fact)
 	}
 	fact, err = session.Next(ctx)

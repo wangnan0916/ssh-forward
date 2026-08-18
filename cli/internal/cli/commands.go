@@ -8,11 +8,11 @@ import (
 	"strings"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
-	"github.com/wangnan0916/ssh-forward/cli/internal/jsonrpc"
+	"github.com/wangnan0916/ssh-forward/cli/internal/snapshot"
 )
 
-func (a *App) writeStatusHuman(snapshot core.Snapshot) error {
-	host := snapshot.Host
+func (a *App) writeStatusHuman(snap core.Snapshot) error {
+	host := snap.Host
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "Host: %s — %s\n", host.Alias, host.Connection)
 	fmt.Fprintf(&builder, "Discovery: %s (baseline %v, scanner v%d)\n",
@@ -64,8 +64,8 @@ func newRemotePorts(host *core.HostSnapshot) []string {
 	return ports
 }
 
-func (a *App) writeSnapshotJSON(snapshot core.Snapshot) error {
-	encoded, err := jsonrpc.MarshalSnapshot(snapshot)
+func (a *App) writeSnapshotJSON(snap core.Snapshot) error {
+	encoded, err := snapshot.Marshal(snap)
 	if err != nil {
 		return err
 	}

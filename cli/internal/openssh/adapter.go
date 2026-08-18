@@ -65,7 +65,7 @@ func New(options Options) (*Adapter, error) {
 
 func (a *Adapter) Connect(ctx context.Context, host core.HostAlias) (core.HostSession, error) {
 	alias := string(host)
-	if err := a.ValidateAlias(ctx, alias); err != nil {
+	if err := a.validateAlias(ctx, alias); err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
@@ -75,7 +75,7 @@ func (a *Adapter) Connect(ctx context.Context, host core.HostAlias) (core.HostSe
 			Diagnostic:  "alias_validation_failed",
 		}
 	}
-	session, err := a.Start(ctx, alias)
+	session, err := a.start(ctx, alias)
 	if err == nil {
 		return session, nil
 	}
@@ -89,7 +89,7 @@ func (a *Adapter) Connect(ctx context.Context, host core.HostAlias) (core.HostSe
 	return nil, retryTransportError()
 }
 
-func (a *Adapter) ValidateAlias(ctx context.Context, alias string) error {
+func (a *Adapter) validateAlias(ctx context.Context, alias string) error {
 	if !validAlias(alias) {
 		return ErrInvalidAlias
 	}
@@ -102,10 +102,10 @@ func (a *Adapter) ValidateAlias(ctx context.Context, alias string) error {
 	return command.Run()
 }
 
-func (a *Adapter) Start(ctx context.Context, alias string) (*Session, error) {
-	// Guard the exported surface: Connect validates first for the transport
-	// seam, but Start is also called directly by tests and must never hand
-	// an unchecked alias (e.g. one starting with '-') to ssh.
+func (a *Adapter) start(ctx context.Context, alias string) (*Session, error) {
+	// Connect validates first for the transport seam, but tests also
+	// start sessions directly and must never hand an unchecked alias
+	// (e.g. one starting with '-') to ssh.
 	if !validAlias(alias) {
 		return nil, ErrInvalidAlias
 	}

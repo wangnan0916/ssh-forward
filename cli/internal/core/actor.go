@@ -225,22 +225,17 @@ func (a *hostActor) applyObservationSet(set ObservationSet) {
 			reason = CapabilityReasonEvidenceTruncated
 		}
 	}
+	state := discoveryStateForCapability(capability)
+	if gapped {
+		state = DiscoveryDegraded
+	}
 	discovery := DiscoverySnapshot{
-		State:               discoveryStateForCapability(capability),
+		State:               state,
 		Capability:          capability,
 		BaselineEstablished: complete || a.state.Discovery.BaselineEstablished,
-		Diagnostic:          capabilityDiagnostic(capability, reason),
+		Diagnostic:          discoveryDiagnostic(gapped, capability, reason, ""),
 		ScannerVersion:      set.ScannerVersion,
-		// ScannerChecksum is evidence metadata: the scanner parser stamps
-		// each ObservationSet with the embedded script's digest, so clients
-		// can attribute observations to a script revision. It is not a
-		// verification gate (the stamp cannot drift from the script that
-		// produced it); budget drift is instead rejected in-band.
-		ScannerChecksum: set.ScannerChecksum,
-	}
-	if gapped {
-		discovery.State = DiscoveryDegraded
-		discovery.Diagnostic = "observation_resync"
+		ScannerChecksum:     set.ScannerChecksum,
 	}
 	a.state.Discovery = discovery
 	a.state.ListenerObservations = observations
@@ -250,28 +245,12 @@ func (a *hostActor) applyObservationSet(set ObservationSet) {
 	}
 }
 
-// diagnosticForReason is the single translation from scanner-side report
-// reasons to user-visible Discovery diagnostics. The wire strings are
-// contractual (rendered by clients); the parser and queue never write them.
-func diagnosticForReason(reason DiscoveryReason) (string, bool) {
-	switch reason {
-	case ReasonFrameInvalid:
-		return "invalid_scanner_frame", true
-	case ReasonStreamFailed:
-		return "scanner_framing_failed", true
-	case ReasonSessionInvalid:
-		return "invalid_session_fact", true
-	default:
-		return "", false
-	}
-}
-
 func (a *hostActor) applyDiscoveryChange(change DiscoveryChange) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	diagnostic, known := diagnosticForReason(change.Reason)
+	diagnostic := discoveryFailureDiagnostic(change.Reason)
 	if (change.State != DiscoveryDegraded && change.State != DiscoveryFailed) ||
-		!validDiscoveryCapability(change.Capability) || !known {
+		!validDiscoveryCapability(change.Capability) || !validDiscoveryReason(change.Reason) {
 		a.failDiscoveryLocked(ReasonSessionInvalid)
 		return
 	}
@@ -293,7 +272,7 @@ func (a *hostActor) applyInvalidDiscoveryFact() {
 // its re-validation gate: a misbehaving adapter (stale sequence, bad
 // capability, unknown budget, invalid report) must not corrupt the mirror.
 func (a *hostActor) failDiscoveryLocked(reason DiscoveryReason) {
-	diagnostic, _ := diagnosticForReason(reason)
+	diagnostic := discoveryFailureDiagnostic(reason)
 	discovery := a.state.Discovery
 	discovery.State = DiscoveryFailed
 	discovery.Diagnostic = diagnostic

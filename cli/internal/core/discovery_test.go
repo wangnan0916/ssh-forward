@@ -594,3 +594,36 @@ func newBubbleForwardingManager(t *testing.T, connector *sequenceConnector) (*ma
 	}
 	return manager, closeManager
 }
+
+func TestDiscoveryDiagnostic(t *testing.T) {
+	full := DiscoveryCapability{RemoteListeners: CapabilityFull, SocketIdentity: CapabilityFull, ProcessMetadata: CapabilityFull}
+	partial := DiscoveryCapability{RemoteListeners: CapabilityFull, SocketIdentity: CapabilityFull, ProcessMetadata: CapabilityPartial}
+	cases := []struct {
+		name       string
+		gapped     bool
+		capability DiscoveryCapability
+		reason     CapabilityReason
+		failure    DiscoveryReason
+		want       string
+	}{
+		{name: "invalid observation", failure: ReasonObservationInvalid, want: "invalid_scanner_frame"},
+		{name: "lost observation", failure: ReasonObservationLost, want: "scanner_framing_failed"},
+		{name: "invalid session", failure: ReasonSessionInvalid, want: "invalid_session_fact"},
+		{name: "failure wins over gap", gapped: true, failure: ReasonObservationInvalid, want: "invalid_scanner_frame"},
+		{name: "unknown failure", failure: DiscoveryReason("nope"), gapped: true, want: ""},
+		{name: "observation gap", gapped: true, capability: full, want: "observation_resync"},
+		{name: "truncated evidence", capability: partial, reason: CapabilityReasonEvidenceTruncated, want: "evidence_truncated"},
+		{name: "missing evidence", capability: partial, reason: CapabilityReasonEvidenceMissing, want: "process_metadata_unavailable"},
+		{name: "scanner reported", capability: partial, reason: CapabilityReasonScannerReported, want: "scanner_reported_partial"},
+		{name: "full capability", capability: full, want: ""},
+		{name: "partial without reason", capability: partial, want: ""},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			got := discoveryDiagnostic(test.gapped, test.capability, test.reason, test.failure)
+			if got != test.want {
+				t.Fatalf("discoveryDiagnostic = %q, want %q", got, test.want)
+			}
+		})
+	}
+}

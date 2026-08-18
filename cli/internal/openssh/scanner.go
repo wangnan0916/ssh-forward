@@ -17,31 +17,18 @@ import (
 const (
 	maxScannerFrameBytes = 64 << 10
 	maxProcessArguments  = 64
-
-	// MaxObservedSockets is the parser's upper bound for the socket budget a
-	// scanner may declare. It deliberately stays a parser-local constant: the
-	// script's socket_record_limit is a derived report value equal to
-	// listener_limit, not the same limit, so deriving from it would narrow
-	// the parser's tolerance for no benefit.
-	MaxObservedSockets = 512
 )
 
-// The frame caps below are derived from the embedded scanner.sh, the single
-// declaration of every frame limit; a missing or malformed declaration is a
-// package build error (see scannerBudget).
+// Parser frame caps and script-local text limits are derived from the
+// embedded scanner.sh, the adapter's single declaration of every scan
+// bound. Core retention caps are independent: an ObservationSet budget
+// must fit inside MaxRetained*, not equal the parser caps.
 var (
-	maxProcessDepth      = scannerBudget("process_depth_limit")
-	maxProcessTextBytes  = scannerBudget("process_text_bytes")
-	maxIdentityTextBytes = scannerBudget("identity_text_bytes")
-)
-
-// MaxObserved* are the parser's frame caps: the largest per-scan budgets a
-// scanner may declare. The three that the script actually enforces are
-// derived from the embedded scanner.sh, which is the single declaration of
-// the evidence budget family; core's retention caps remain the second copy,
-// pinned by TestScannerScriptDeclaresParserDefaultBudgets.
-var (
+	maxProcessDepth             = scannerBudget("process_depth_limit")
+	maxProcessTextBytes         = scannerBudget("process_text_bytes")
+	maxIdentityTextBytes        = scannerBudget("identity_text_bytes")
 	MaxObservedListeners        = scannerBudget("listener_limit")
+	MaxObservedSockets          = scannerBudget("socket_record_limit")
 	MaxProcessRecords           = scannerBudget("process_record_limit")
 	MaxObservationMetadataBytes = scannerBudget("metadata_bytes_limit")
 )
@@ -116,7 +103,7 @@ func scanObservationFrames(reader io.Reader, emit func(core.SessionFact)) {
 		emit(core.DiscoveryChange{
 			State:      state,
 			Capability: lastCapability,
-			Reason:     core.ReasonFrameInvalid,
+			Reason:     core.ReasonObservationInvalid,
 		})
 	}
 	for scanner.Scan() {
@@ -153,7 +140,7 @@ func scanObservationFrames(reader io.Reader, emit func(core.SessionFact)) {
 		emit(core.DiscoveryChange{
 			State:      core.DiscoveryFailed,
 			Capability: lastCapability,
-			Reason:     core.ReasonStreamFailed,
+			Reason:     core.ReasonObservationLost,
 		})
 	}
 	_, _ = io.Copy(io.Discard, reader)

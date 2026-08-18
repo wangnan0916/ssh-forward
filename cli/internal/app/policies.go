@@ -172,9 +172,10 @@ func reverseCondition(condition core.PolicyCondition) fileCondition {
 	return out
 }
 
-// FilePolicyReader is the single read path for the policies file: the
-// Manager's reconciliation source and the CLI's diagnostic read share one
-// last-valid set and one last error, so both surfaces see the same truth.
+// FilePolicyReader is the single read-and-mutate path for the policies
+// file: the Manager's reconciliation source, Remembered Auto-forward
+// writes, and the CLI's policy list share one last-valid set and one last
+// error, so every surface sees the same truth.
 type FilePolicyReader struct {
 	path string
 
@@ -214,6 +215,66 @@ func (r *FilePolicyReader) Source() func() []core.ForwardingPolicy {
 	}
 }
 
+func (r *FilePolicyReader) update(apply func([]core.ForwardingPolicy) ([]core.ForwardingPolicy, bool, error)) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	policies, err := LoadPolicies(r.path)
+	if errors.Is(err, os.ErrNotExist) {
+		policies = nil
+	} else if err != nil {
+		r.lastErr = err
+		return false, err
+	}
+	updated, changed, err := apply(policies)
+	if err != nil {
+		return false, err
+	}
+	r.lastValid = policies
+	r.lastErr = nil
+	if !changed {
+		return false, nil
+	}
+	if err := SavePolicies(r.path, updated); err != nil {
+		return false, err
+	}
+	r.lastValid = updated
+	return true, nil
+}
+
+func (r *FilePolicyReader) AddPort(port uint16) (bool, error) {
+	return r.update(func(policies []core.ForwardingPolicy) ([]core.ForwardingPolicy, bool, error) {
+		updated, changed := core.RememberPort(policies, port)
+		return updated, changed, nil
+	})
+}
+
+func (r *FilePolicyReader) RemovePort(port uint16) (bool, error) {
+	return r.update(func(policies []core.ForwardingPolicy) ([]core.ForwardingPolicy, bool, error) {
+		updated, changed := core.ForgetPort(policies, port)
+		return updated, changed, nil
+	})
+}
+
+func (r *FilePolicyReader) AddDir(dir string) (bool, string, error) {
+	var stored string
+	changed, err := r.update(func(policies []core.ForwardingPolicy) ([]core.ForwardingPolicy, bool, error) {
+		updated, path, changed, err := core.RememberDirectory(policies, dir)
+		stored = path
+		return updated, changed, err
+	})
+	return changed, stored, err
+}
+
+func (r *FilePolicyReader) RemoveDir(dir string) (bool, string, error) {
+	var stored string
+	changed, err := r.update(func(policies []core.ForwardingPolicy) ([]core.ForwardingPolicy, bool, error) {
+		updated, path, changed, err := core.ForgetDirectory(policies, dir)
+		stored = path
+		return updated, changed, err
+	})
+	return changed, stored, err
+}
+
 var (
 	// ErrEmptyDirectory and ErrHostDirectory are the Remembered Auto-forward
 	// directory errors; the file adapter re-exports the core values so CLI
@@ -236,63 +297,23 @@ func SavePolicies(path string, policies []core.ForwardingPolicy) error {
 	return writeAtomic(path, indented.Bytes(), ".policies-*.tmp")
 }
 
-func loadPoliciesOrEmpty(path string) ([]core.ForwardingPolicy, error) {
-	policies, err := LoadPolicies(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	return policies, err
-}
-
 // AddAutoForwardPort remembers a remote port into policies.jsonc.
 func AddAutoForwardPort(path string, port uint16) (bool, error) {
-	policies, err := loadPoliciesOrEmpty(path)
-	if err != nil {
-		return false, err
-	}
-	updated, changed := core.RememberPort(policies, port)
-	if !changed {
-		return false, nil
-	}
-	return true, SavePolicies(path, updated)
+	return NewFilePolicyReader(path).AddPort(port)
 }
 
 // AddAutoForwardDir remembers a Development Host working-directory tree
 // into policies.jsonc. The returned string is the stored path.
 func AddAutoForwardDir(path, dir string) (bool, string, error) {
-	policies, err := loadPoliciesOrEmpty(path)
-	if err != nil {
-		return false, "", err
-	}
-	updated, stored, changed, err := core.RememberDirectory(policies, dir)
-	if err != nil || !changed {
-		return changed, stored, err
-	}
-	return true, stored, SavePolicies(path, updated)
+	return NewFilePolicyReader(path).AddDir(dir)
 }
 
 // RemoveAutoForwardPort drops the simple port Auto-forward written by add.
 func RemoveAutoForwardPort(path string, port uint16) (bool, error) {
-	policies, err := loadPoliciesOrEmpty(path)
-	if err != nil {
-		return false, err
-	}
-	updated, changed := core.ForgetPort(policies, port)
-	if !changed {
-		return false, nil
-	}
-	return true, SavePolicies(path, updated)
+	return NewFilePolicyReader(path).RemovePort(port)
 }
 
 // RemoveAutoForwardDir drops the simple directory Auto-forward written by add.
 func RemoveAutoForwardDir(path, dir string) (bool, string, error) {
-	policies, err := loadPoliciesOrEmpty(path)
-	if err != nil {
-		return false, "", err
-	}
-	updated, stored, changed, err := core.ForgetDirectory(policies, dir)
-	if err != nil || !changed {
-		return changed, stored, err
-	}
-	return true, stored, SavePolicies(path, updated)
+	return NewFilePolicyReader(path).RemoveDir(dir)
 }

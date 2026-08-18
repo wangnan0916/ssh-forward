@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/wangnan0916/ssh-forward/cli/internal/jsonrpc"
+	"github.com/wangnan0916/ssh-forward/cli/internal/snapshot"
 )
 
 // runWatch streams the snapshot sequence until the context ends. Human
@@ -20,7 +20,7 @@ func (a *App) runWatch(ctx context.Context, jsonOutput bool) error {
 
 	first := true
 	for {
-		snapshot, err := stream.Next(ctx)
+		snap, err := stream.Next(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				// The stream ended because we were cancelled: a clean
@@ -30,7 +30,7 @@ func (a *App) runWatch(ctx context.Context, jsonOutput bool) error {
 			return err
 		}
 		if jsonOutput {
-			encoded, err := jsonrpc.MarshalSnapshot(snapshot)
+			encoded, err := snapshot.Marshal(snap)
 			if err != nil {
 				return err
 			}
@@ -41,7 +41,7 @@ func (a *App) runWatch(ctx context.Context, jsonOutput bool) error {
 			fmt.Fprintln(a.Stdout)
 		}
 		first = false
-		if err := a.writeStatusHuman(snapshot); err != nil {
+		if err := a.writeStatusHuman(snap); err != nil {
 			return err
 		}
 	}

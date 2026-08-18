@@ -5,7 +5,25 @@ package sshhost_test
 import (
 	"os"
 	"strconv"
+	"testing"
+	"time"
+
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/openssh"
 )
+
+func testHostConnector(t *testing.T) core.HostConnector {
+	t.Helper()
+	adapter, err := openssh.New(openssh.Options{
+		Executable:   "/usr/bin/ssh",
+		ConfigFile:   isolatedSSHConfig(t),
+		ReadyTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("create OpenSSH Adapter: %v", err)
+	}
+	return adapter
+}
 
 // Harness identity, declared once in scripts/internal/harness.env and
 // exported by scripts/test-integration. The defaults here keep the Go side
