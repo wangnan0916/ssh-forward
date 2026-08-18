@@ -37,14 +37,11 @@ func (a *App) runHostList(jsonOutput bool) error {
 }
 
 func (a *App) defaultHostAlias() string {
-	if a.Options.ConfigPath == "" {
-		return ""
-	}
-	config, err := app.LoadConfig(a.Options.ConfigPath)
+	host, err := app.PinnedHost(a.Options.ConfigPath)
 	if err != nil {
 		return ""
 	}
-	return config.DefaultHost
+	return host
 }
 
 func (a *App) runSetDefault(alias string) error {

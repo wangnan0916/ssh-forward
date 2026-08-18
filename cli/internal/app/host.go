@@ -51,7 +51,7 @@ func ResolveHost(opts Options) (string, error) {
 	if configPath == "" {
 		configPath = DefaultLayout().Config
 	}
-	if host, err := pinnedHost(configPath); err == nil {
+	if host, err := PinnedHost(configPath); err == nil {
 		return host, nil
 	} else if !errors.Is(err, ErrNoHost) {
 		return "", resolution(err)
@@ -66,8 +66,12 @@ func ResolveHost(opts Options) (string, error) {
 	case 1:
 		return hosts[0], nil
 	default:
-		if opts.Interactive {
-			host, err := pickHost(hosts, opts.Stdin, opts.Stdout)
+		picker := opts.PickHost
+		if picker == nil && opts.Interactive {
+			picker = pickHost
+		}
+		if picker != nil {
+			host, err := picker(hosts, opts.Stdin, opts.Stdout)
 			if err != nil {
 				return "", resolution(err)
 			}
@@ -77,7 +81,12 @@ func ResolveHost(opts Options) (string, error) {
 	}
 }
 
-func pinnedHost(path string) (string, error) {
+// PinnedHost returns config.jsonc's default_host. A missing file or empty
+// default is ErrNoHost; a corrupt file is diagnosed.
+func PinnedHost(path string) (string, error) {
+	if path == "" {
+		return "", ErrNoHost
+	}
 	config, err := LoadConfig(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return "", ErrNoHost

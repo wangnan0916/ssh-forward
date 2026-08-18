@@ -36,6 +36,26 @@ func TestConnectDialsLiveSocket(t *testing.T) {
 	}
 }
 
+func TestTakeManagerServeEnvCopiesOptions(t *testing.T) {
+	t.Setenv("SSH_FORWARD_MANAGER_SERVE", "1")
+	t.Setenv("SSH_FORWARD_MANAGER_HOST", "devbox")
+	t.Setenv("SSH_FORWARD_MANAGER_POLICIES", "/tmp/policies.jsonc")
+	t.Setenv("SSH_FORWARD_MANAGER_SSH_CONFIG", "/tmp/ssh-config")
+	opts := Options{}
+	if !TakeManagerServeEnv(&opts) {
+		t.Fatal("TakeManagerServeEnv = false, want the autospawn encoding")
+	}
+	if opts.HostFlag != "devbox" || opts.PoliciesPath != "/tmp/policies.jsonc" || opts.SSHConfigPath != "/tmp/ssh-config" {
+		t.Fatalf("opts = %+v, want host/policies/ssh-config from env", opts)
+	}
+	if os.Getenv("SSH_FORWARD_MANAGER_SERVE") != "" {
+		t.Fatal("serve env should be consumed so a later Run can parse argv")
+	}
+	if TakeManagerServeEnv(&Options{}) {
+		t.Fatal("second TakeManagerServeEnv = true, want consumed")
+	}
+}
+
 func TestServeLeavesLivePidAlone(t *testing.T) {
 	dir := filepath.Join(os.TempDir(), fmt.Sprintf("sf-pid-%d", time.Now().UnixNano()))
 	if err := os.MkdirAll(dir, 0o700); err != nil {

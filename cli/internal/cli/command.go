@@ -50,6 +50,13 @@ func (a *App) RootCommand() *cobra.Command {
 		a.defaultCommand(),
 		a.managerCommand(),
 	)
+	root.InitDefaultHelpCmd()
+	for _, cmd := range root.Commands() {
+		if cmd.Name() == "help" {
+			annotateSkipManager(cmd)
+			break
+		}
+	}
 	return root
 }
 
@@ -65,7 +72,7 @@ func (a *App) addCommand() *cobra.Command {
 	}
 	command.Flags().StringVar(&dir, "dir", "", "Development Host working directory to auto-forward")
 	command.Flags().Bool("json", false, "emit JSON")
-	return command
+	return annotateSkipManager(command)
 }
 
 func (a *App) removeCommand() *cobra.Command {
@@ -80,7 +87,7 @@ func (a *App) removeCommand() *cobra.Command {
 	}
 	command.Flags().StringVar(&dir, "dir", "", "Development Host working directory to forget")
 	command.Flags().Bool("json", false, "emit JSON")
-	return command
+	return annotateSkipManager(command)
 }
 
 func (a *App) runRemember(cmd *cobra.Command, args []string, dir string, adding bool) error {
@@ -207,7 +214,7 @@ func (a *App) policyCommand() *cobra.Command {
 	}
 	list.Flags().Bool("json", false, "emit the policies in the file shape")
 	command.AddCommand(list)
-	return command
+	return annotateSkipManager(command)
 }
 
 func (a *App) hostCommand() *cobra.Command {
@@ -229,11 +236,11 @@ func (a *App) hostCommand() *cobra.Command {
 	}
 	list.Flags().Bool("json", false, "emit the host list as JSON")
 	command.AddCommand(list)
-	return command
+	return annotateSkipManager(command)
 }
 
 func (a *App) defaultCommand() *cobra.Command {
-	return &cobra.Command{
+	command := &cobra.Command{
 		Use:   "default <alias>",
 		Short: "pin the default Development Host",
 		Args: func(cmd *cobra.Command, args []string) error {
@@ -246,6 +253,7 @@ func (a *App) defaultCommand() *cobra.Command {
 			return a.runSetDefault(args[0])
 		},
 	}
+	return annotateSkipManager(command)
 }
 
 func (a *App) managerCommand() *cobra.Command {
@@ -261,13 +269,9 @@ func (a *App) managerCommand() *cobra.Command {
 		Short: "run the singleton manager in the foreground",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			err := app.Serve(cmd.Context(), a.connectOptions())
-			if app.IsResolution(err) {
-				return UsageError(err)
-			}
-			return err
+			return a.serveManager(cmd.Context())
 		},
 	}
 	command.AddCommand(serve)
-	return command
+	return annotateSkipManager(command)
 }

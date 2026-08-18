@@ -380,3 +380,40 @@ func TestPolicyDiagnosticAppearsOnSnapshot(t *testing.T) {
 		})
 	})
 }
+
+func TestDecideCreatesAfterTwoMatches(t *testing.T) {
+	r := newReconciler(func() ([]ForwardingPolicy, string) { return nil, "" })
+	policies := []ForwardingPolicy{{ID: "p1", Action: PolicyAutoForward, Conditions: []PolicyCondition{{RemotePorts: policyPort(8080)}}}}
+	observations := []ListenerObservation{loopbackListener(8080)}
+	create, remove := r.decide(observations, nil, policies, false)
+	if len(create) != 0 || len(remove) != 0 {
+		t.Fatalf("first match create=%v remove=%v, want empty", create, remove)
+	}
+	create, remove = r.decide(observations, nil, policies, false)
+	if len(create) != 1 || create[0].PreferredLocalPort != 8080 || len(remove) != 0 {
+		t.Fatalf("second match create=%+v remove=%v", create, remove)
+	}
+}
+
+func TestDecidePolicyChangeSkipsHysteresis(t *testing.T) {
+	r := newReconciler(func() ([]ForwardingPolicy, string) { return nil, "" })
+	policies := []ForwardingPolicy{{ID: "p1", Action: PolicyAutoForward, Conditions: []PolicyCondition{{RemotePorts: policyPort(8080)}}}}
+	create, remove := r.decide([]ListenerObservation{loopbackListener(8080)}, nil, policies, true)
+	if len(create) != 1 || create[0].PreferredLocalPort != 8080 || len(remove) != 0 {
+		t.Fatalf("policy change create=%+v remove=%v, want one create", create, remove)
+	}
+}
+
+func TestDecideRemovesAfterTwoMisses(t *testing.T) {
+	r := newReconciler(func() ([]ForwardingPolicy, string) { return nil, "" })
+	key := listenerKey(loopbackListener(8080))
+	managed := []managedForwardEntry{{id: ForwardID("managed:" + managedForwardToken(key)), key: key}}
+	create, remove := r.decide(nil, managed, nil, false)
+	if len(create) != 0 || len(remove) != 0 {
+		t.Fatalf("first miss create=%v remove=%v, want empty", create, remove)
+	}
+	_, remove = r.decide(nil, managed, nil, false)
+	if len(remove) != 1 || remove[0] != managed[0].id {
+		t.Fatalf("second miss remove=%v, want %s", remove, managed[0].id)
+	}
+}

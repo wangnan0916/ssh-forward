@@ -51,7 +51,7 @@ The Included list is the first public CLI's scope. This map records which items 
 Enforced today:
 
 - Agentless Remote Listener discovery with process and working-directory context (slices 1–4).
-- Preferred local port with bounded fallback (ADR-0008, core/forward_ownership.go).
+- Preferred local port with bounded fallback (ADR-0008, `proxy/allocator.go`).
 - Reconnection with classified failures.
 - Forwarding Policy evaluation with directory, direct-process, and ancestor-process matchers; policies.jsonc (versioned, ADR-0005); unmatched listeners are not forwarded; Managed Forward reconciliation with two-observation hysteresis (slice 5).
 - The domain-oriented CLI with `--json` output and a per-user auto-spawned manager (slice 6, cli/cmd/ssh-forward/).

@@ -3,12 +3,19 @@ package proxy
 import (
 	"context"
 	"errors"
+	"syscall"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
+// fallbackPortRoom is the ADR-0008 bounded fallback width: allocation tries
+// the Preferred Local Port, then each successor up to +fallbackPortRoom,
+// unless ForwardSpec.RequireSamePort is set.
+const fallbackPortRoom = 100
+
 // NewAllocator builds the production ForwardAllocator: it opens a dual-stack
-// Local Endpoint through the live Forwarding Session Dialer.
+// Local Endpoint through the live Forwarding Session Dialer, applying the
+// Local Port Conflict policy.
 func NewAllocator(dialer core.Dialer) core.ForwardAllocator {
 	return allocator{dialer: dialer}
 }
@@ -26,23 +33,47 @@ func (a allocator) Allocate(ctx context.Context, spec core.ForwardSpec) (core.Ow
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	endpoint, err := OpenEndpoint(EndpointOptions{
-		PreferredPort: spec.PreferredLocalPort,
-		Remote:        spec.Remote,
-		Dialer:        a.dialer,
-	})
-	if err != nil {
-		if errors.Is(err, ErrLocalPortConflict) {
-			return nil, &core.DomainError{Kind: core.ErrorLocalPortConflict, Retryable: true}
+	for _, port := range allocationPorts(spec.PreferredLocalPort, spec.RequireSamePort) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-		return nil, err
+		endpoint, err := OpenEndpoint(EndpointOptions{
+			PreferredPort: port,
+			Remote:        spec.Remote,
+			Dialer:        a.dialer,
+		})
+		if err == nil {
+			owner := &ownedForward{spec: spec, endpoint: endpoint}
+			if err := ctx.Err(); err != nil {
+				_ = owner.Close(ctx)
+				return nil, err
+			}
+			return owner, nil
+		}
+		if !isAddrInUse(err) {
+			return nil, err
+		}
 	}
-	owner := &ownedForward{spec: spec, endpoint: endpoint}
-	if err := ctx.Err(); err != nil {
-		_ = owner.Close(ctx)
-		return nil, err
+	return nil, &core.DomainError{Kind: core.ErrorLocalPortConflict, Retryable: true}
+}
+
+func allocationPorts(preferred uint16, requireSamePort bool) []uint16 {
+	if preferred == 0 {
+		return nil
 	}
-	return owner, nil
+	if requireSamePort {
+		return []uint16{preferred}
+	}
+	last := min(int(preferred)+fallbackPortRoom, 65535)
+	ports := make([]uint16, 0, last-int(preferred)+1)
+	for port := int(preferred); port <= last; port++ {
+		ports = append(ports, uint16(port))
+	}
+	return ports
+}
+
+func isAddrInUse(err error) bool {
+	return errors.Is(err, syscall.EADDRINUSE)
 }
 
 func (f *ownedForward) Projection() core.ForwardSnapshot {

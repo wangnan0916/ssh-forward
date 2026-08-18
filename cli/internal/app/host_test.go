@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,6 +100,32 @@ func TestResolveHostInteractiveRejectsGarbage(t *testing.T) {
 	}
 	if !strings.Contains(prompt.String(), "invalid choice") {
 		t.Fatalf("prompt = %q, want the invalid-choice retry", prompt.String())
+	}
+}
+
+func TestResolveHostUsesPickHost(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SSH_FORWARD_CONFIG_DIR", t.TempDir())
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), []byte("Host ubuntu devbox\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	host, err := ResolveHost(Options{
+		PickHost: func(hosts []string, stdin io.Reader, stdout io.Writer) (string, error) {
+			if len(hosts) != 2 || hosts[0] != "ubuntu" || hosts[1] != "devbox" {
+				t.Fatalf("picker hosts = %v, want ubuntu then devbox", hosts)
+			}
+			return "devbox", nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("ResolveHost: %v", err)
+	}
+	if host != "devbox" {
+		t.Fatalf("host = %q, want the picker result", host)
 	}
 }
 

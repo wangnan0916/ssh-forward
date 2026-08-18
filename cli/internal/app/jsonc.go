@@ -1,7 +1,10 @@
 package app
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -96,4 +99,37 @@ func writeAtomic(path string, data []byte, tmpPattern string) error {
 		return err
 	}
 	return os.Rename(tmpPath, path)
+}
+
+func readJSONC(path, label string, dest any) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	plain, err := stripJSONC(content)
+	if err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(plain))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dest); err != nil {
+		return fmt.Errorf("%s: %w", label, err)
+	}
+	return nil
+}
+
+func writeJSONC(path, tmpPattern string, value any) error {
+	encoded, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	encoded = append(encoded, '\n')
+	return writeAtomic(path, encoded, tmpPattern)
+}
+
+func checkSchemaVersion(label string, got, want int) error {
+	if got != want {
+		return fmt.Errorf("%s: unsupported schema_version %d (want %d)", label, got, want)
+	}
+	return nil
 }

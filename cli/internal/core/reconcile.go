@@ -203,7 +203,6 @@ func (m *manager) reconcileOnce(kind wakeKind) {
 	m.mu.RUnlock()
 
 	toCreate, toRemove := m.reconciler.decide(host.ListenerObservations, managedEntries, policies, policyChanged)
-
 	if len(toCreate) == 0 && len(toRemove) == 0 {
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -220,26 +219,37 @@ func (m *manager) reconcileOnce(kind wakeKind) {
 		return
 	}
 
-	type createdForward struct {
-		owner OwnedForward
-		key   remoteListenerKey
-	}
-	var created []createdForward
-	failed := make(map[remoteListenerKey]struct{})
+	created, conflicts, retry := m.allocateIntent(toCreate)
+	m.applyIntent(created, conflicts, retry, toRemove, policies, diagnostic, policyChanged, diagnosticChanged)
+}
+
+type createdForward struct {
+	owner OwnedForward
+	key   remoteListenerKey
+}
+
+func (m *manager) allocateIntent(toCreate []ForwardSpec) (created []createdForward, conflicts, retry map[remoteListenerKey]struct{}) {
+	conflicts = make(map[remoteListenerKey]struct{})
+	retry = make(map[remoteListenerKey]struct{})
 	for _, spec := range toCreate {
 		owner, err := m.forwardAllocator.Allocate(context.Background(), spec)
 		if err != nil {
 			var domain *DomainError
 			if errors.As(err, &domain) && domain.Kind == ErrorLocalPortConflict {
-				failed[spec.key] = struct{}{}
+				conflicts[spec.key] = struct{}{}
+				continue
 			}
+			retry[spec.key] = struct{}{}
 			continue
 		}
 		created = append(created, createdForward{owner: owner, key: spec.key})
 	}
+	return created, conflicts, retry
+}
 
-	// Map mutations stay under the Manager lock; Allocate already ran
-	// outside it and Close runs after Unlock.
+// applyIntent commits policy state and mutates the Forward table. Allocate
+// already ran outside the Manager lock; Close runs after Unlock.
+func (m *manager) applyIntent(created []createdForward, conflicts, retry map[remoteListenerKey]struct{}, toRemove []ForwardID, policies []ForwardingPolicy, diagnostic string, policyChanged, diagnosticChanged bool) {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
@@ -253,9 +263,12 @@ func (m *manager) reconcileOnce(kind wakeKind) {
 		m.reconciler.resetHysteresis()
 	}
 	changed := policyChanged || diagnosticChanged
-	for key := range failed {
+	for key := range conflicts {
 		m.reconciler.recordConflict(key)
 		changed = true
+	}
+	for key := range retry {
+		m.reconciler.createState[key] = 1
 	}
 	var extraClose []OwnedForward
 	for _, item := range created {

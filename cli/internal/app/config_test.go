@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,6 +50,21 @@ func TestLoadConfigRejectsBadJSONC(t *testing.T) {
 func TestLoadConfigMissingFile(t *testing.T) {
 	if _, err := LoadConfig(filepath.Join(t.TempDir(), "absent.jsonc")); err == nil {
 		t.Fatal("LoadConfig on a missing file succeeded")
+	}
+}
+
+func TestPinnedHost(t *testing.T) {
+	path := writePolicyFile(t, `{"schema_version": 1, "default_host": "ubuntu"}`)
+	host, err := PinnedHost(path)
+	if err != nil || host != "ubuntu" {
+		t.Fatalf("PinnedHost = %q, %v; want ubuntu", host, err)
+	}
+	if _, err := PinnedHost(filepath.Join(t.TempDir(), "absent.jsonc")); !errors.Is(err, ErrNoHost) {
+		t.Fatalf("missing file err = %v, want ErrNoHost", err)
+	}
+	empty := writePolicyFile(t, `{"schema_version": 1}`)
+	if _, err := PinnedHost(empty); !errors.Is(err, ErrNoHost) {
+		t.Fatalf("empty default err = %v, want ErrNoHost", err)
 	}
 }
 

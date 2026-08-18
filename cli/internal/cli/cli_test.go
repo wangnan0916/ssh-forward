@@ -396,3 +396,17 @@ func TestAddHelp(t *testing.T) {
 		t.Fatalf("add --help still lists --family:\n%s", output)
 	}
 }
+
+func TestIntentCommandsSkipManager(t *testing.T) {
+	root := (&App{}).RootCommand()
+	skip := map[string]bool{
+		"add": true, "remove": true, "policy": true, "host": true,
+		"default": true, "manager": true, "help": true,
+	}
+	for _, cmd := range root.Commands() {
+		got := cmd.Annotations[skipManagerKey] == "1"
+		if got != skip[cmd.Name()] {
+			t.Errorf("command %q skip-manager = %v, want %v", cmd.Name(), got, skip[cmd.Name()])
+		}
+	}
+}

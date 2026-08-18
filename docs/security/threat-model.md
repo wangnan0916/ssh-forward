@@ -39,7 +39,7 @@ Enforced today:
 - Bounded versioned frames with hex-encoded metadata keep observation stdout separate from diagnostic stderr (openssh/scanner.go, session.go); repeated invalid observations stop parsing but keep stdout drained.
 - Socket-to-endpoint relationships are validated before process evidence expands (core/forward_ownership.go).
 - Process Metadata is evidence-only; no credential is stored anywhere.
-- The product config directory is created `0700`, and the manager socket is `0600`. A second `manager serve` is refused while a live manager answers; a stale socket file is replaced only after a connection probe proves no live manager owns it (`ipc/server.go`). Manager IPC trusts the current OS user (ADR-0017); there is no additional application token.
+- The product config directory is created `0700`, and the manager socket is `0600`. A second `manager serve` is refused while a live manager answers; a stale socket file is replaced only after a connection probe proves no live manager owns it (`jsonrpc` Listen). Manager IPC trusts the current OS user (ADR-0017); there is no additional application token.
 
 Lands with later slices:
 

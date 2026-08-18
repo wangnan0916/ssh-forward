@@ -1,31 +1,51 @@
-package jsonrpc
+package jsonrpc_test
 
 import (
 	"context"
 	"errors"
+	"net"
 	"testing"
 	"testing/synctest"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/jsonrpc"
 )
 
-func TestSocketStreamCoalescesUnreadSnapshots(t *testing.T) {
-	stream := newSocketStream(&managerClient{}, "watch-1", []byte(`{"revision":1}`))
-	stream.push([]byte(`{"revision":2}`))
-	stream.push([]byte(`{"revision":4}`))
-	first, err := stream.Next(context.Background())
-	if err != nil || first.Revision != 1 {
-		t.Fatalf("first = %#v, %v; want revision 1", first, err)
-	}
-	second, err := stream.Next(context.Background())
-	if err != nil || second.Revision != 4 {
-		t.Fatalf("second = %#v, %v; want coalesced revision 4", second, err)
-	}
+func TestDialWatchCoalescesUnreadSnapshots(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		upstream := newScriptedSnapshotStream(core.Snapshot{Revision: 1})
+		client, cleanup := dialWatchManager(t, upstream)
+		defer cleanup()
+		stream, err := client.Watch(t.Context())
+		if err != nil {
+			t.Fatalf("Watch: %v", err)
+		}
+		first, err := stream.Next(t.Context())
+		if err != nil || first.Revision != 1 {
+			t.Fatalf("first = %#v, %v; want revision 1", first, err)
+		}
+		upstream.snapshots <- core.Snapshot{Revision: 2}
+		upstream.snapshots <- core.Snapshot{Revision: 4}
+		synctest.Wait()
+		second, err := stream.Next(t.Context())
+		if err != nil || second.Revision != 4 {
+			t.Fatalf("second = %#v, %v; want coalesced revision 4", second, err)
+		}
+	})
 }
 
-func TestSocketStreamRejectsConcurrentNext(t *testing.T) {
+func TestDialWatchRejectsConcurrentNext(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		stream := &socketStream{ready: make(chan struct{}, 1)}
+		upstream := newScriptedSnapshotStream(core.Snapshot{Revision: 1})
+		client, cleanup := dialWatchManager(t, upstream)
+		defer cleanup()
+		stream, err := client.Watch(t.Context())
+		if err != nil {
+			t.Fatalf("Watch: %v", err)
+		}
+		if _, err := stream.Next(t.Context()); err != nil {
+			t.Fatalf("initial Next: %v", err)
+		}
 		firstContext, cancelFirst := context.WithCancel(t.Context())
 		firstDone := make(chan error, 1)
 		go func() {
@@ -41,4 +61,34 @@ func TestSocketStreamRejectsConcurrentNext(t *testing.T) {
 			t.Fatalf("cancelled Next error = %v, want context.Canceled", err)
 		}
 	})
+}
+
+func dialWatchManager(t *testing.T, stream core.SnapshotStream) (core.Manager, func()) {
+	t.Helper()
+	serverConn, clientConn := net.Pipe()
+	manager := &watchManager{
+		snapshotManager: &snapshotManager{},
+		stream:          stream,
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = jsonrpc.ServeConn(ctx, serverConn, manager)
+	}()
+	client, err := jsonrpc.DialConn(ctx, clientConn)
+	if err != nil {
+		cancel()
+		_ = serverConn.Close()
+		_ = clientConn.Close()
+		<-done
+		t.Fatalf("DialConn: %v", err)
+	}
+	return client, func() {
+		_ = client.Close(context.Background())
+		cancel()
+		_ = serverConn.Close()
+		_ = clientConn.Close()
+		<-done
+	}
 }

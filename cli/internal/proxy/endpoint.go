@@ -8,7 +8,6 @@ import (
 	"net/netip"
 	"strconv"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
@@ -18,8 +17,6 @@ const (
 	defaultDrainTimeout     = 30 * time.Second
 	defaultHandshakeTimeout = 10 * time.Second
 )
-
-var ErrLocalPortConflict = errors.New("local port fallback range is occupied")
 
 type EndpointOptions struct {
 	PreferredPort    uint16
@@ -49,47 +46,40 @@ type Endpoint struct {
 	closeErr  error
 }
 
-// fallbackPortRoom is the ADR-0008 bounded fallback width: allocation tries
-// the Preferred Local Port, then each successor up to +fallbackPortRoom.
-const fallbackPortRoom = 100
-
+// OpenEndpoint binds one dual-stack Local Endpoint at PreferredPort.
+// Local Port Conflict policy (fallback width, RequireSamePort) lives on
+// the allocator, not here.
 func OpenEndpoint(options EndpointOptions) (*Endpoint, error) {
-	lastCandidate := min(int(options.PreferredPort)+fallbackPortRoom, 65535)
-	for candidate := int(options.PreferredPort); candidate <= lastCandidate; candidate++ {
-		listeners, err := listenOnLoopback(uint16(candidate))
-		if err == nil {
-			ctx, cancel := context.WithCancel(context.Background())
-			drainTimeout := options.DrainTimeout
-			if drainTimeout <= 0 {
-				drainTimeout = defaultDrainTimeout
-			}
-			handshakeTimeout := options.HandshakeTimeout
-			if handshakeTimeout <= 0 {
-				handshakeTimeout = defaultHandshakeTimeout
-			}
-			endpoint := &Endpoint{
-				localPort:   uint16(candidate),
-				listeners:   listeners,
-				remote:      options.Remote,
-				dialer:      options.Dialer,
-				drain:       drainTimeout,
-				handshake:   handshakeTimeout,
-				ctx:         ctx,
-				cancel:      cancel,
-				done:        make(chan struct{}),
-				connections: make(map[net.Conn]struct{}),
-			}
-			endpoint.workers.Add(len(listeners))
-			for _, listener := range listeners {
-				go endpoint.accept(listener)
-			}
-			return endpoint, nil
-		}
-		if !errors.Is(err, syscall.EADDRINUSE) {
-			return nil, err
-		}
+	listeners, err := listenOnLoopback(options.PreferredPort)
+	if err != nil {
+		return nil, err
 	}
-	return nil, ErrLocalPortConflict
+	ctx, cancel := context.WithCancel(context.Background())
+	drainTimeout := options.DrainTimeout
+	if drainTimeout <= 0 {
+		drainTimeout = defaultDrainTimeout
+	}
+	handshakeTimeout := options.HandshakeTimeout
+	if handshakeTimeout <= 0 {
+		handshakeTimeout = defaultHandshakeTimeout
+	}
+	endpoint := &Endpoint{
+		localPort:   options.PreferredPort,
+		listeners:   listeners,
+		remote:      options.Remote,
+		dialer:      options.Dialer,
+		drain:       drainTimeout,
+		handshake:   handshakeTimeout,
+		ctx:         ctx,
+		cancel:      cancel,
+		done:        make(chan struct{}),
+		connections: make(map[net.Conn]struct{}),
+	}
+	endpoint.workers.Add(len(listeners))
+	for _, listener := range listeners {
+		go endpoint.accept(listener)
+	}
+	return endpoint, nil
 }
 
 func listenOnLoopback(portNumber uint16) ([]net.Listener, error) {

@@ -141,6 +141,7 @@ func TestMain(m *testing.M) {
 func isolateUserEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("SSH_FORWARD_NO_AUTOSPAWN", "1")
+	t.Setenv("SSH_FORWARD_MANAGER_SERVE", "")
 	t.Setenv("HOME", t.TempDir())
 }
 

@@ -352,8 +352,8 @@ func sendError(frames channel.Channel, id json.RawMessage, code jrpc2.Code, mess
 	})
 }
 
-func sendEnvelope(frames channel.Channel, response responseEnvelope) error {
-	encoded, err := json.Marshal(response)
+func sendEnvelope(frames channel.Channel, value any) error {
+	encoded, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}

@@ -1,14 +1,5 @@
 package app
 
-import (
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"os"
-)
-
-// configSchemaVersion is the config.jsonc schema version (ADR-0005's
-// independent-versioning convention, shared with policies.jsonc).
 const configSchemaVersion = 1
 
 // configFile is the config.jsonc shape (cli-and-state.md, Persistent
@@ -24,22 +15,12 @@ type configFile struct {
 // (bad JSONC, unknown fields, unsupported schema) is rejected wholesale:
 // a corrupt configuration must not silently drop the default host.
 func LoadConfig(path string) (configFile, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return configFile{}, err
-	}
-	plain, err := stripJSONC(content)
-	if err != nil {
-		return configFile{}, err
-	}
 	var config configFile
-	decoder := json.NewDecoder(bytes.NewReader(plain))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&config); err != nil {
-		return configFile{}, fmt.Errorf("config.jsonc: %w", err)
+	if err := readJSONC(path, "config.jsonc", &config); err != nil {
+		return configFile{}, err
 	}
-	if config.SchemaVersion != configSchemaVersion {
-		return configFile{}, fmt.Errorf("config.jsonc: unsupported schema_version %d (want %d)", config.SchemaVersion, configSchemaVersion)
+	if err := checkSchemaVersion("config.jsonc", config.SchemaVersion, configSchemaVersion); err != nil {
+		return configFile{}, err
 	}
 	return config, nil
 }
@@ -48,11 +29,8 @@ func LoadConfig(path string) (configFile, error) {
 // replacing the file atomically. The schema today has exactly two fields;
 // future fields land with the desktop's configuration surface.
 func SetDefaultHost(path, host string) error {
-	config := configFile{SchemaVersion: configSchemaVersion, DefaultHost: host}
-	encoded, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-	encoded = append(encoded, '\n')
-	return writeAtomic(path, encoded, ".config-*.tmp")
+	return writeJSONC(path, ".config-*.tmp", configFile{
+		SchemaVersion: configSchemaVersion,
+		DefaultHost:   host,
+	})
 }

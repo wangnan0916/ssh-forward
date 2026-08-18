@@ -52,30 +52,70 @@ func TestOpenEndpointBindsBothLocalFamiliesAtPreferredPort(t *testing.T) {
 	}
 }
 
-func TestOpenEndpointFallsBackWhenPreferredPortIsOccupied(t *testing.T) {
-	occupied, preferred := occupyPortWithFreeSuccessor(t)
+func TestOpenEndpointFailsWhenPreferredPortIsOccupied(t *testing.T) {
+	occupied, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("occupy preferred port: %v", err)
+	}
 	defer occupied.Close()
+	preferred := uint16(occupied.Addr().(*net.TCPAddr).Port)
 	endpoint, err := proxy.OpenEndpoint(proxy.EndpointOptions{
 		PreferredPort: preferred,
 		Remote:        netip.MustParseAddrPort("127.0.0.1:8080"),
 		Dialer:        unusedDialer{},
 	})
+	if endpoint != nil {
+		t.Cleanup(func() { _ = endpoint.Close(context.Background()) })
+		t.Fatal("OpenEndpoint unexpectedly bound an occupied port")
+	}
+	if err == nil {
+		t.Fatal("OpenEndpoint error = nil, want a bind failure")
+	}
+}
+
+func TestAllocatorFallsBackWhenPreferredPortIsOccupied(t *testing.T) {
+	occupied, preferred := occupyPortWithFreeSuccessor(t)
+	defer occupied.Close()
+	owner, err := proxy.NewAllocator(unusedDialer{}).Allocate(context.Background(), core.ForwardSpec{
+		ID:                 "managed:test",
+		Remote:             netip.MustParseAddrPort("127.0.0.1:8080"),
+		PreferredLocalPort: preferred,
+	})
 	if err != nil {
-		t.Fatalf("OpenEndpoint: %v", err)
+		t.Fatalf("Allocate: %v", err)
 	}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		if err := endpoint.Close(ctx); err != nil {
-			t.Errorf("close Endpoint: %v", err)
+		if err := owner.Close(ctx); err != nil {
+			t.Errorf("close owner: %v", err)
 		}
 	})
-	if got, want := endpoint.LocalPort(), preferred+1; got != want {
-		t.Fatalf("LocalPort = %d, want fallback port %d", got, want)
+	if got, want := owner.Projection().AllocatedLocalPort, preferred+1; got != want {
+		t.Fatalf("AllocatedLocalPort = %d, want fallback port %d", got, want)
 	}
 }
 
-func TestOpenEndpointReturnsConflictAfterLastValidPort(t *testing.T) {
+func TestAllocatorRequireSamePortDoesNotFallBack(t *testing.T) {
+	occupied, preferred := occupyPortWithFreeSuccessor(t)
+	defer occupied.Close()
+	owner, err := proxy.NewAllocator(unusedDialer{}).Allocate(context.Background(), core.ForwardSpec{
+		ID:                 "managed:test",
+		Remote:             netip.MustParseAddrPort("127.0.0.1:8080"),
+		PreferredLocalPort: preferred,
+		RequireSamePort:    true,
+	})
+	if owner != nil {
+		t.Cleanup(func() { _ = owner.Close(context.Background()) })
+		t.Fatal("Allocate unexpectedly fell back")
+	}
+	var domain *core.DomainError
+	if !errors.As(err, &domain) || domain.Kind != core.ErrorLocalPortConflict {
+		t.Fatalf("Allocate error = %v, want ErrorLocalPortConflict", err)
+	}
+}
+
+func TestAllocatorReturnsConflictAfterLastValidPort(t *testing.T) {
 	const preferred uint16 = 65530
 	occupied := make([]net.Listener, 0, 6)
 	for port := preferred; ; port++ {
@@ -95,27 +135,24 @@ func TestOpenEndpointReturnsConflictAfterLastValidPort(t *testing.T) {
 		defer listener.Close()
 	}
 
-	endpoint, err := proxy.OpenEndpoint(proxy.EndpointOptions{
-		PreferredPort: preferred,
-		Remote:        netip.MustParseAddrPort("127.0.0.1:8080"),
-		Dialer:        unusedDialer{},
+	owner, err := proxy.NewAllocator(unusedDialer{}).Allocate(context.Background(), core.ForwardSpec{
+		ID:                 "managed:test",
+		Remote:             netip.MustParseAddrPort("127.0.0.1:8080"),
+		PreferredLocalPort: preferred,
 	})
-	if endpoint != nil {
-		t.Cleanup(func() { _ = endpoint.Close(context.Background()) })
-		t.Fatal("OpenEndpoint unexpectedly returned an Endpoint")
+	if owner != nil {
+		t.Cleanup(func() { _ = owner.Close(context.Background()) })
+		t.Fatal("Allocate unexpectedly returned an owner")
 	}
-	if !errors.Is(err, proxy.ErrLocalPortConflict) {
-		t.Fatalf("OpenEndpoint error = %v, want ErrLocalPortConflict", err)
+	var domain *core.DomainError
+	if !errors.As(err, &domain) || domain.Kind != core.ErrorLocalPortConflict {
+		t.Fatalf("Allocate error = %v, want ErrorLocalPortConflict", err)
 	}
 }
-
-// Mirrors endpoint.go's fallbackPortRoom (ADR-0008); see the skip below.
-const fallbackRoom = 100
 
 // Mirrors freePort in the core package's tests: the same reserve-
 // 127.0.0.1:0-and-release idiom, kept as a declared cross-package copy per
 // the shellQuote policy (test-package isolation, identity stated in place).
-// This copy adds the fallbackRoom skip below; keep the two in step.
 // Production sibling: reserveSOCKSAddress (openssh/adapter.go).
 func availablePort(t *testing.T) uint16 {
 	t.Helper()
@@ -126,11 +163,6 @@ func availablePort(t *testing.T) uint16 {
 	port := listener.Addr().(*net.TCPAddr).Port
 	if err := listener.Close(); err != nil {
 		t.Fatalf("release preferred port: %v", err)
-	}
-	// 65535-fallbackRoom mirrors endpoint.go's fallbackPortRoom; keep the
-	// two in step so a wider fallback in the implementation fails loudly.
-	if port > 65535-fallbackRoom {
-		t.Skipf("ephemeral port %d leaves no full fallback range", port)
 	}
 	return uint16(port)
 }

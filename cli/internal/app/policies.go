@@ -1,7 +1,6 @@
 package app
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,22 +51,12 @@ type filePortRange struct {
 // rejected wholesale: the file is the single source of truth and a corrupt
 // file must not silently drop policies.
 func LoadPolicies(path string) ([]core.ForwardingPolicy, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	plain, err := stripJSONC(content)
-	if err != nil {
-		return nil, err
-	}
 	var file policyFile
-	decoder := json.NewDecoder(bytes.NewReader(plain))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&file); err != nil {
-		return nil, fmt.Errorf("policies.jsonc: %w", err)
+	if err := readJSONC(path, "policies.jsonc", &file); err != nil {
+		return nil, err
 	}
-	if file.SchemaVersion != policiesSchemaVersion {
-		return nil, fmt.Errorf("policies.jsonc: unsupported schema_version %d (want %d)", file.SchemaVersion, policiesSchemaVersion)
+	if err := checkSchemaVersion("policies.jsonc", file.SchemaVersion, policiesSchemaVersion); err != nil {
+		return nil, err
 	}
 	policies := make([]core.ForwardingPolicy, 0, len(file.Policies))
 	for _, entry := range file.Policies {
@@ -139,6 +128,10 @@ func translateCondition(entry fileCondition) (core.PolicyCondition, error) {
 // (ADR-0005): the versioned file schema is the single contract for the
 // policy file, the CLI's --json output, and the desktop client.
 func MarshalPolicies(policies []core.ForwardingPolicy) ([]byte, error) {
+	return json.Marshal(policiesFile(policies))
+}
+
+func policiesFile(policies []core.ForwardingPolicy) policyFile {
 	file := policyFile{
 		SchemaVersion: policiesSchemaVersion,
 		Policies:      make([]filePolicy, 0, len(policies)),
@@ -146,7 +139,7 @@ func MarshalPolicies(policies []core.ForwardingPolicy) ([]byte, error) {
 	for _, policy := range policies {
 		file.Policies = append(file.Policies, reversePolicy(policy))
 	}
-	return json.Marshal(file)
+	return file
 }
 
 func reversePolicy(policy core.ForwardingPolicy) filePolicy {
@@ -292,14 +285,5 @@ var (
 
 // SavePolicies writes policies.jsonc atomically in the file shape.
 func SavePolicies(path string, policies []core.ForwardingPolicy) error {
-	encoded, err := MarshalPolicies(policies)
-	if err != nil {
-		return err
-	}
-	var indented bytes.Buffer
-	if err := json.Indent(&indented, encoded, "", "  "); err != nil {
-		return err
-	}
-	indented.WriteByte('\n')
-	return writeAtomic(path, indented.Bytes(), ".policies-*.tmp")
+	return writeJSONC(path, ".policies-*.tmp", policiesFile(policies))
 }

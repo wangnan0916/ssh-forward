@@ -17,6 +17,11 @@ import (
 	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
 )
 
+// HostPicker chooses one Development Host alias from a candidate list.
+// ResolveHost uses it when more than one SSH alias is configured and none
+// is pinned. The CLI prompt and a later TUI are adapters at this seam.
+type HostPicker func(hosts []string, stdin io.Reader, stdout io.Writer) (string, error)
+
 // Options configure Connect and Serve: the per-user layout, the Development
 // Host naming inputs, and the streams used when attaching to a live
 // singleton or prompting for a host.
@@ -27,6 +32,7 @@ type Options struct {
 	PoliciesPath  string
 	ConfigPath    string
 	Interactive   bool
+	PickHost      HostPicker
 	Stdin         io.Reader
 	Stdout        io.Writer
 	Stderr        io.Writer
@@ -145,6 +151,32 @@ func inProcess(host, sshConfig, policies string) (Session, error) {
 	}, nil
 }
 
+const (
+	envManagerServe     = "SSH_FORWARD_MANAGER_SERVE"
+	envManagerHost      = "SSH_FORWARD_MANAGER_HOST"
+	envManagerPolicies  = "SSH_FORWARD_MANAGER_POLICIES"
+	envManagerSSHConfig = "SSH_FORWARD_MANAGER_SSH_CONFIG"
+	envConfigDir        = "SSH_FORWARD_CONFIG_DIR"
+)
+
+// TakeManagerServeEnv reports whether this process is the autospawned
+// singleton child and copies its Options encoding into opts. The child
+// enters Serve without parsing a Cobra command tree.
+func TakeManagerServeEnv(opts *Options) bool {
+	if os.Getenv(envManagerServe) != "1" {
+		return false
+	}
+	_ = os.Unsetenv(envManagerServe)
+	opts.HostFlag = os.Getenv(envManagerHost)
+	if policies := os.Getenv(envManagerPolicies); policies != "" {
+		opts.PoliciesPath = policies
+	}
+	if sshConfig := os.Getenv(envManagerSSHConfig); sshConfig != "" {
+		opts.SSHConfigPath = sshConfig
+	}
+	return true
+}
+
 func spawn(opts Options, host string) error {
 	executable := os.Getenv("SSH_FORWARD_MANAGER_BINARY")
 	if executable == "" {
@@ -161,11 +193,17 @@ func spawn(opts Options, host string) error {
 	if err != nil {
 		return err
 	}
-	args := []string{"--host", host, "--policies", opts.PoliciesPath, "manager", "serve"}
-	if opts.SSHConfigPath != "" {
-		args = append(args, "--ssh-config", opts.SSHConfigPath)
+	command := exec.Command(executable)
+	extra := []string{
+		envManagerServe + "=1",
+		envManagerHost + "=" + host,
+		envManagerPolicies + "=" + opts.PoliciesPath,
+		envConfigDir + "=" + opts.Layout.Dir,
 	}
-	command := exec.Command(executable, args...)
+	if opts.SSHConfigPath != "" {
+		extra = append(extra, envManagerSSHConfig+"="+opts.SSHConfigPath)
+	}
+	command.Env = append(os.Environ(), extra...)
 	command.Stdin = nil
 	command.Stdout = logFile
 	command.Stderr = logFile

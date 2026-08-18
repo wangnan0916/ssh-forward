@@ -57,6 +57,11 @@ func (e *usageError) Is(target error) bool {
 // Commands follow the product domain (cli-and-state.md); every resource
 // command supports --json structured output.
 func (a *App) Run(ctx context.Context, args []string) error {
+	// Autospawned children carry empty argv; the Serve encoding is env, not
+	// a Cobra command tree. A leftover serve env must not swallow real args.
+	if len(args) == 0 && app.TakeManagerServeEnv(&a.Options) {
+		return a.serveManager(ctx)
+	}
 	command := a.RootCommand()
 	command.SetArgs(args)
 	if a.Options.Stdout != nil {
@@ -105,13 +110,30 @@ func (a *App) connectOptions() app.Options {
 	return opts
 }
 
+func (a *App) serveManager(ctx context.Context) error {
+	err := app.Serve(ctx, a.connectOptions())
+	if app.IsResolution(err) {
+		return UsageError(err)
+	}
+	return err
+}
+
+const skipManagerKey = "skip-manager"
+
+func annotateSkipManager(command *cobra.Command) *cobra.Command {
+	if command.Annotations == nil {
+		command.Annotations = map[string]string{}
+	}
+	command.Annotations[skipManagerKey] = "1"
+	return command
+}
+
 func needsManager(cmd *cobra.Command) bool {
 	if cmd.Parent() == nil {
 		return false
 	}
 	for current := cmd; current != nil; current = current.Parent() {
-		switch current.Name() {
-		case "host", "default", "manager", "help", "add", "remove", "policy":
+		if current.Annotations[skipManagerKey] == "1" {
 			return false
 		}
 	}
