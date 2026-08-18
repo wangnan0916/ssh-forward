@@ -20,7 +20,7 @@ type managerOptions struct {
 	connector        HostConnector
 	forwardAllocator ForwardAllocator
 	newAllocator     func(Dialer) ForwardAllocator
-	publishHost      func(HostSnapshot)
+	publishHost      func(hostView)
 	retryDelay       func(int) time.Duration
 	retryWait        func(context.Context, time.Duration) bool
 	// policies is the Forwarding Policy source seam: the reconciliation
@@ -40,7 +40,7 @@ type manager struct {
 	host             HostAlias
 	forwardAllocator ForwardAllocator
 	revision         Revision
-	hostSnapshot     HostSnapshot
+	view             hostView
 	actor            *hostActor
 	forwards         forwardTable
 	snapshot         Snapshot
@@ -66,8 +66,8 @@ const defaultPolicyPoll = 250 * time.Millisecond
 
 // NewConfiguredManager is the production seam: it wires the host, the host
 // connector, the Local Endpoint allocator factory, and the Forwarding Policy
-// source into the Manager. app.Connect / app.Serve are its production callers;
-// tests inject through managerOptions instead.
+// source into the Manager. app.Connect / app.Serve and integration tests are
+// its callers; core tests inject through managerOptions instead.
 func NewConfiguredManager(host HostAlias, connector HostConnector, newAlloc func(Dialer) ForwardAllocator, policySources ...func() []ForwardingPolicy) Manager {
 	var policies func() []ForwardingPolicy
 	if len(policySources) != 0 {
@@ -110,7 +110,7 @@ func newManager(options managerOptions) *manager {
 		forwards:         newForwardTable(),
 		watchers:         make(map[uint64]*snapshotStream),
 		reconciler:       newReconciler(policySource),
-		hostSnapshot:     emptyHostSnapshot(options.host),
+		view:             emptyHostView(options.host),
 		ctx:              ctx,
 		cancel:           cancel,
 	}
@@ -132,32 +132,20 @@ func newManager(options managerOptions) *manager {
 		onObservation: m.reconciler.notify,
 		ctx:           ctx,
 	}, retryDelay, retryWait)
-	m.snapshot = m.buildSnapshotLocked()
+	m.snapshot = m.composeSnapshotLocked()
 	if options.connector != nil && options.host != "" {
 		m.ensureConnected()
 	}
 	return m
 }
 
-// emptyHostSnapshot is the single construction of the pre-connection state
-// shape: the Manager seeds its mirror with it, and the hostActor's internal
-// state starts from it, so the two cannot drift in initial shape.
-func emptyHostSnapshot(host HostAlias) HostSnapshot {
-	return HostSnapshot{
-		Alias:                host,
-		Connection:           ConnectionDisconnected,
-		Discovery:            stoppedDiscovery(),
-		ListenerObservations: make([]ListenerObservation, 0),
-	}
-}
-
-func (m *manager) publishHostState(state HostSnapshot) {
+func (m *manager) publishHostState(view hostView) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
 		return
 	}
-	m.hostSnapshot = state
+	m.view = view
 	m.publishLocked()
 }
 

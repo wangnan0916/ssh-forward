@@ -74,8 +74,8 @@ const (
 	// ReasonObservationLost reports that the adapter could not continue
 	// producing observations.
 	ReasonObservationLost DiscoveryReason = "observation_lost"
-	// ReasonSessionInvalid reports a fact the actor's re-validation gate
-	// rejected (defense against a misbehaving adapter).
+	// ReasonSessionInvalid reports a fact core admission rejected
+	// (defense against a misbehaving adapter).
 	ReasonSessionInvalid DiscoveryReason = "session_invalid"
 )
 

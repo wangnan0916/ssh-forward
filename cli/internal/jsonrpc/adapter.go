@@ -15,9 +15,7 @@ import (
 )
 
 func Serve(ctx context.Context, conn net.Conn, manager core.Manager) error {
-	line := newBoundedLineChannel(conn, maxFrameBytes)
-	serialized := &serializedChannel{Channel: line}
-	frames := &validatingChannel{Channel: serialized}
+	frames := newFrameChannel(conn, maxFrameBytes)
 	// Negotiate before starting jrpc2 so pipelined or built-in methods cannot
 	// overtake the session handshake.
 	stopHandshake := context.AfterFunc(ctx, func() { _ = frames.Close() })
@@ -30,9 +28,8 @@ func Serve(ctx context.Context, conn net.Conn, manager core.Manager) error {
 		return nil
 	}
 
-	pending := newPendingChannel(frames, maxPendingCalls)
 	session := newConnectionSession(ctx, manager, capabilities)
-	pending.onResponse = session.onResponseSent
+	frames.bindPending(maxPendingCalls, session.onResponseSent)
 	defer session.close()
 	methods := handler.Map{
 		methodSnapshot: func(ctx context.Context, request *jrpc2.Request) (any, error) {
@@ -41,7 +38,7 @@ func Serve(ctx context.Context, conn net.Conn, manager core.Manager) error {
 		methodWatch:   session.handleWatch,
 		methodUnwatch: session.handleUnwatch,
 	}
-	stopSession := context.AfterFunc(ctx, func() { _ = pending.Close() })
+	stopSession := context.AfterFunc(ctx, func() { _ = frames.Close() })
 	defer stopSession()
 	server := jrpc2.NewServer(methods, &jrpc2.ServerOptions{
 		AllowPush:      capabilities.watchSnapshot,
@@ -50,7 +47,7 @@ func Serve(ctx context.Context, conn net.Conn, manager core.Manager) error {
 		NewContext:     func() context.Context { return session.ctx },
 	})
 	session.server = server
-	server.Start(pending)
+	server.Start(frames)
 	return normalizeServeError(server.Wait())
 }
 

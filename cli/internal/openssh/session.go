@@ -216,3 +216,115 @@ func (b *boundedBuffer) String() string {
 	defer b.mu.Unlock()
 	return string(b.data)
 }
+
+const maxQueuedSessionFacts = 8
+
+// sessionFactQueue is Session.Next's private buffer. On overflow it replaces
+// the newest pending fact rather than dropping the oldest, so the head —
+// where the first ObservationSet sits — survives. That first set is the
+// Discovery Baseline and is never evicted. Every later set may be replaced
+// by newer evidence. A real scanner emits at most two facts per connection,
+// so with a cap of 8 the overflow branches are unreachable today; they keep
+// the Baseline guarantee if a future producer outpaces the consumer.
+type sessionFactQueue struct {
+	mu                sync.Mutex
+	items             []core.SessionFact
+	notify            chan struct{}
+	closed            bool
+	firstSetDelivered bool
+	terminalDiscovery *core.DiscoveryChange
+}
+
+func newSessionFactQueue() *sessionFactQueue {
+	return &sessionFactQueue{
+		items:  make([]core.SessionFact, 0, maxQueuedSessionFacts),
+		notify: make(chan struct{}, 1),
+	}
+}
+
+func (q *sessionFactQueue) push(fact core.SessionFact) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.closed {
+		return
+	}
+	if change, ok := fact.(core.DiscoveryChange); ok && change.State == core.DiscoveryFailed {
+		q.terminalDiscovery = &change
+		q.signalLocked()
+		return
+	}
+	if len(q.items) < maxQueuedSessionFacts {
+		q.items = append(q.items, fact)
+		q.signalLocked()
+		return
+	}
+	last := len(q.items) - 1
+	if !q.firstSetDelivered {
+		if _, protected := q.items[last].(core.ObservationSet); protected {
+			q.signalLocked()
+			return
+		}
+	}
+	q.items[last] = fact
+	q.signalLocked()
+}
+
+func (q *sessionFactQueue) next(ctx context.Context, sessionDone <-chan struct{}) (core.SessionFact, bool, error) {
+	for {
+		q.mu.Lock()
+		fact, found, drained := q.popLocked()
+		q.mu.Unlock()
+		if found {
+			return fact, false, nil
+		}
+		if drained {
+			select {
+			case <-sessionDone:
+				return nil, true, nil
+			case <-ctx.Done():
+				return nil, false, ctx.Err()
+			}
+		}
+		select {
+		case <-q.notify:
+		case <-sessionDone:
+		case <-ctx.Done():
+			return nil, false, ctx.Err()
+		}
+	}
+}
+
+func (q *sessionFactQueue) popLocked() (core.SessionFact, bool, bool) {
+	if len(q.items) == 0 {
+		if q.terminalDiscovery == nil {
+			return nil, false, q.closed
+		}
+		fact := *q.terminalDiscovery
+		q.terminalDiscovery = nil
+		return fact, true, q.closed
+	}
+	fact := q.items[0]
+	copy(q.items, q.items[1:])
+	q.items = q.items[:len(q.items)-1]
+	if _, ok := fact.(core.ObservationSet); ok {
+		q.firstSetDelivered = true
+	}
+	return fact, true, q.closed
+}
+
+func (q *sessionFactQueue) close() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.closed {
+		return
+	}
+	q.closed = true
+	q.signalLocked()
+}
+
+func (q *sessionFactQueue) signalLocked() {
+	select {
+	case q.notify <- struct{}{}:
+	default:
+	}
+}

@@ -8,12 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangnan0916/ssh-forward/cli/internal/app"
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 func TestAgentlessDiscoveryThroughDisposableDevelopmentHost(t *testing.T) {
-	manager := app.NewManager(core.HostAlias(testHostAlias()), testHostConnector(t))
+	manager := testConfiguredManager(t, testHostConnector(t))
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

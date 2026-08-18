@@ -296,24 +296,3 @@ func SavePolicies(path string, policies []core.ForwardingPolicy) error {
 	indented.WriteByte('\n')
 	return writeAtomic(path, indented.Bytes(), ".policies-*.tmp")
 }
-
-// AddAutoForwardPort remembers a remote port into policies.jsonc.
-func AddAutoForwardPort(path string, port uint16) (bool, error) {
-	return NewFilePolicyReader(path).AddPort(port)
-}
-
-// AddAutoForwardDir remembers a Development Host working-directory tree
-// into policies.jsonc. The returned string is the stored path.
-func AddAutoForwardDir(path, dir string) (bool, string, error) {
-	return NewFilePolicyReader(path).AddDir(dir)
-}
-
-// RemoveAutoForwardPort drops the simple port Auto-forward written by add.
-func RemoveAutoForwardPort(path string, port uint16) (bool, error) {
-	return NewFilePolicyReader(path).RemovePort(port)
-}
-
-// RemoveAutoForwardDir drops the simple directory Auto-forward written by add.
-func RemoveAutoForwardDir(path, dir string) (bool, string, error) {
-	return NewFilePolicyReader(path).RemoveDir(dir)
-}

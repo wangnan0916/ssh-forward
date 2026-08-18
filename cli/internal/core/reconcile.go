@@ -184,7 +184,7 @@ func (m *manager) reconcileOnce(kind wakeKind) {
 		m.mu.RUnlock()
 		return
 	}
-	host := m.hostSnapshot
+	host := m.view
 	managedEntries := m.forwards.managedForwardsLocked()
 	m.mu.RUnlock()
 
@@ -265,26 +265,12 @@ func (m *manager) reconcileOnce(kind wakeKind) {
 		}
 		created = append(created, createdForward{owner: owner, key: spec.key})
 	}
-	type removedForward struct {
-		id    ForwardID
-		key   remoteListenerKey
-		owner OwnedForward
-	}
-	var removed []removedForward
-	removedKeys := make(map[ForwardID]remoteListenerKey, len(managedEntries))
-	for _, entry := range managedEntries {
-		removedKeys[entry.id] = entry.key
-	}
-	for _, id := range toRemove {
-		owner, found := m.forwards.removeDirect(id)
-		if found {
-			removed = append(removed, removedForward{id: id, key: removedKeys[id], owner: owner})
-		}
-	}
 
+	// Map mutations stay under the Manager lock; Allocate already ran
+	// outside it and Close runs after Unlock.
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.closed {
+		m.mu.Unlock()
 		for _, item := range created {
 			_ = item.owner.Close(context.Background())
 		}
@@ -299,22 +285,31 @@ func (m *manager) reconcileOnce(kind wakeKind) {
 		m.reconciler.recordConflict(key)
 		changed = true
 	}
+	var extraClose []OwnedForward
 	for _, item := range created {
 		if !m.forwards.add(item.owner, item.key) {
-			_ = item.owner.Close(context.Background())
+			extraClose = append(extraClose, item.owner)
 			continue
 		}
 		m.reconciler.clearConflict(item.key)
 		changed = true
 	}
-	for _, forward := range removed {
-		_ = forward.owner.Close(context.Background())
-		delete(m.reconciler.removalState, forward.id)
-		m.reconciler.clearConflict(forward.key)
+	for _, id := range toRemove {
+		owner, key, found := m.forwards.removeDirect(id)
+		if !found {
+			continue
+		}
+		extraClose = append(extraClose, owner)
+		delete(m.reconciler.removalState, id)
+		m.reconciler.clearConflict(key)
 		changed = true
 	}
 	if changed {
 		m.publishLocked()
+	}
+	m.mu.Unlock()
+	for _, owner := range extraClose {
+		_ = owner.Close(context.Background())
 	}
 }
 

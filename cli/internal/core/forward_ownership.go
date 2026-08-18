@@ -63,13 +63,15 @@ func (t *forwardTable) add(owner OwnedForward, key remoteListenerKey) bool {
 	return true
 }
 
-func (t *forwardTable) removeDirect(id ForwardID) (OwnedForward, bool) {
+// removeDirect extracts one Forward. The caller must hold the Manager lock;
+// Close of the returned owner runs after Unlock.
+func (t *forwardTable) removeDirect(id ForwardID) (OwnedForward, remoteListenerKey, bool) {
 	entry, found := t.entries[id]
 	if !found {
-		return nil, false
+		return nil, remoteListenerKey{}, false
 	}
 	delete(t.entries, id)
-	return entry.owner, true
+	return entry.owner, entry.key, true
 }
 
 type managedForwardEntry struct {

@@ -595,6 +595,46 @@ func newBubbleForwardingManager(t *testing.T, connector *sequenceConnector) (*ma
 	return manager, closeManager
 }
 
+func TestAdmitObservationSet(t *testing.T) {
+	valid := ObservationSet{Sequence: 2, Capability: fullTestCapability, Budget: fullObservationBudget}
+	cases := []struct {
+		name   string
+		set    ObservationSet
+		last   uint64
+		gapped bool
+		ok     bool
+	}{
+		{name: "next sequence", set: valid, last: 1, ok: true},
+		{name: "gapped sequence", set: ObservationSet{Sequence: 4, Capability: fullTestCapability, Budget: fullObservationBudget}, last: 1, gapped: true, ok: true},
+		{name: "zero sequence", set: ObservationSet{Sequence: 0, Capability: fullTestCapability, Budget: fullObservationBudget}, last: 0},
+		{name: "stale sequence", set: valid, last: 2},
+		{name: "bad budget", set: ObservationSet{Sequence: 1, Capability: fullTestCapability}, last: 0},
+		{name: "bad capability", set: ObservationSet{Sequence: 1, Capability: DiscoveryCapability{RemoteListeners: "nope"}, Budget: fullObservationBudget}, last: 0},
+		{name: "bad reason", set: ObservationSet{Sequence: 1, Capability: fullTestCapability, Budget: fullObservationBudget, CapabilityReason: "nope"}, last: 0},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			gapped, ok := admitObservationSet(test.set, test.last)
+			if gapped != test.gapped || ok != test.ok {
+				t.Fatalf("admitObservationSet = %v, %v, want %v, %v", gapped, ok, test.gapped, test.ok)
+			}
+		})
+	}
+}
+
+func TestAdmitDiscoveryChange(t *testing.T) {
+	valid := DiscoveryChange{State: DiscoveryDegraded, Capability: fullTestCapability, Reason: ReasonObservationLost}
+	if !admitDiscoveryChange(valid) {
+		t.Fatal("admitDiscoveryChange rejected a valid change")
+	}
+	if admitDiscoveryChange(DiscoveryChange{State: DiscoveryHealthy, Capability: fullTestCapability, Reason: ReasonObservationLost}) {
+		t.Fatal("admitDiscoveryChange accepted a healthy report")
+	}
+	if admitDiscoveryChange(DiscoveryChange{State: DiscoveryDegraded, Reason: ReasonObservationLost}) {
+		t.Fatal("admitDiscoveryChange accepted empty capability")
+	}
+}
+
 func TestDiscoveryDiagnostic(t *testing.T) {
 	full := DiscoveryCapability{RemoteListeners: CapabilityFull, SocketIdentity: CapabilityFull, ProcessMetadata: CapabilityFull}
 	partial := DiscoveryCapability{RemoteListeners: CapabilityFull, SocketIdentity: CapabilityFull, ProcessMetadata: CapabilityPartial}

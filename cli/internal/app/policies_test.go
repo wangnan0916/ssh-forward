@@ -325,7 +325,7 @@ func TestMarshalPoliciesPinsEveryConditionField(t *testing.T) {
 
 func TestAddAutoForwardPortCreatesFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "policies.jsonc")
-	added, err := AddAutoForwardPort(path, 5173)
+	added, err := NewFilePolicyReader(path).AddPort(5173)
 	if err != nil || !added {
 		t.Fatalf("AddAutoForwardPort = %v, %v, want added", added, err)
 	}
@@ -348,10 +348,10 @@ func TestAddAutoForwardPortCreatesFile(t *testing.T) {
 
 func TestAddAutoForwardPortIsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "policies.jsonc")
-	if _, err := AddAutoForwardPort(path, 5173); err != nil {
+	if _, err := NewFilePolicyReader(path).AddPort(5173); err != nil {
 		t.Fatal(err)
 	}
-	added, err := AddAutoForwardPort(path, 5173)
+	added, err := NewFilePolicyReader(path).AddPort(5173)
 	if err != nil || added {
 		t.Fatalf("second AddAutoForwardPort = %v, %v, want already present", added, err)
 	}
@@ -368,7 +368,7 @@ func TestAddAutoForwardPreservesOtherPolicies(t *testing.T) {
 	path := writePolicyFile(t, `{"schema_version": 1, "policies": [
 	  {"id": "db", "priority": 5, "action": "ignore", "conditions": [{"remote_ports": {"from": 5432, "to": 5432}}]}
 	]}`)
-	if _, err := AddAutoForwardPort(path, 5173); err != nil {
+	if _, err := NewFilePolicyReader(path).AddPort(5173); err != nil {
 		t.Fatal(err)
 	}
 	policies, err := LoadPolicies(path)
@@ -382,7 +382,7 @@ func TestAddAutoForwardPreservesOtherPolicies(t *testing.T) {
 
 func TestAddAutoForwardDirNormalizesTrailingSlash(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "policies.jsonc")
-	added, stored, err := AddAutoForwardDir(path, "/home/dev/src/app/")
+	added, stored, err := NewFilePolicyReader(path).AddDir("/home/dev/src/app/")
 	if err != nil || !added || stored != "/home/dev/src/app" {
 		t.Fatalf("AddAutoForwardDir = %v, %q, %v", added, stored, err)
 	}
@@ -399,7 +399,7 @@ func TestAddAutoForwardDirNormalizesTrailingSlash(t *testing.T) {
 }
 
 func TestAddAutoForwardDirRejectsRelativePath(t *testing.T) {
-	_, _, err := AddAutoForwardDir(filepath.Join(t.TempDir(), "policies.jsonc"), "src/app")
+	_, _, err := NewFilePolicyReader(filepath.Join(t.TempDir(), "policies.jsonc")).AddDir("src/app")
 	if !errors.Is(err, ErrHostDirectory) {
 		t.Fatalf("err = %v, want ErrHostDirectory", err)
 	}
@@ -411,7 +411,7 @@ func TestRemoveAutoForwardPortLeavesComplexPolicy(t *testing.T) {
 	    {"remote_ports": {"from": 5173, "to": 5173}, "executable": "node"}
 	  ]}
 	]}`)
-	removed, err := RemoveAutoForwardPort(path, 5173)
+	removed, err := NewFilePolicyReader(path).RemovePort(5173)
 	if err != nil || removed {
 		t.Fatalf("RemoveAutoForwardPort = %v, %v, want no simple port rule", removed, err)
 	}
@@ -426,17 +426,18 @@ func TestRemoveAutoForwardPortLeavesComplexPolicy(t *testing.T) {
 
 func TestRemoveAutoForwardPortAndDir(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "policies.jsonc")
-	if _, err := AddAutoForwardPort(path, 5173); err != nil {
+	reader := NewFilePolicyReader(path)
+	if _, err := reader.AddPort(5173); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := AddAutoForwardDir(path, "/srv/app"); err != nil {
+	if _, _, err := reader.AddDir("/srv/app"); err != nil {
 		t.Fatal(err)
 	}
-	removed, err := RemoveAutoForwardPort(path, 5173)
+	removed, err := reader.RemovePort(5173)
 	if err != nil || !removed {
 		t.Fatalf("RemoveAutoForwardPort = %v, %v", removed, err)
 	}
-	removedDir, stored, err := RemoveAutoForwardDir(path, "/srv/app")
+	removedDir, stored, err := reader.RemoveDir("/srv/app")
 	if err != nil || !removedDir || stored != "/srv/app" {
 		t.Fatalf("RemoveAutoForwardDir = %v, %q, %v", removedDir, stored, err)
 	}
@@ -447,7 +448,7 @@ func TestRemoveAutoForwardPortAndDir(t *testing.T) {
 	if len(policies) != 0 {
 		t.Fatalf("policies = %#v, want empty after both removes", policies)
 	}
-	removed, err = RemoveAutoForwardPort(path, 5173)
+	removed, err = reader.RemovePort(5173)
 	if err != nil || removed {
 		t.Fatalf("second RemoveAutoForwardPort = %v, %v, want missing", removed, err)
 	}

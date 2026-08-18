@@ -57,8 +57,8 @@ func validCapabilityAvailability(capability CapabilityAvailability) bool {
 }
 
 // validCapabilityReason accepts the known partiality explanations plus the
-// empty default, so the actor's re-validation gate rejects a misbehaving
-// adapter that reports a reason core cannot translate.
+// empty default, so admission rejects a misbehaving adapter that reports a
+// reason core cannot translate.
 func validCapabilityReason(reason CapabilityReason) bool {
 	switch reason {
 	case CapabilityReasonNone, CapabilityReasonScannerReported, CapabilityReasonEvidenceMissing, CapabilityReasonEvidenceTruncated:
@@ -113,6 +113,23 @@ func validDiscoveryReason(reason DiscoveryReason) bool {
 	default:
 		return false
 	}
+}
+
+// admitObservationSet is the authority on whether an adapter-produced set
+// may reach the host mirror. Sequence, capability, budget, and reason are
+// checked here; the HostSession parser is a cheap stream-local filter.
+func admitObservationSet(set ObservationSet, lastSequence uint64) (gapped bool, ok bool) {
+	if set.Sequence == 0 || set.Sequence <= lastSequence || !validDiscoveryCapability(set.Capability) || !validObservationBudget(set.Budget) || !validCapabilityReason(set.CapabilityReason) {
+		return false, false
+	}
+	return set.Sequence != lastSequence+1, true
+}
+
+// admitDiscoveryChange accepts only Degraded or Failed reports with a known
+// capability and reason; anything else is a misbehaving adapter.
+func admitDiscoveryChange(change DiscoveryChange) bool {
+	return (change.State == DiscoveryDegraded || change.State == DiscoveryFailed) &&
+		validDiscoveryCapability(change.Capability) && validDiscoveryReason(change.Reason)
 }
 
 // validObservationBudget requires the adapter's declared evidence budget to be

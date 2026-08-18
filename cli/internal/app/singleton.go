@@ -14,6 +14,7 @@ import (
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 	"github.com/wangnan0916/ssh-forward/cli/internal/ipc"
 	"github.com/wangnan0916/ssh-forward/cli/internal/openssh"
+	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
 )
 
 // Options configure Connect and Serve: the per-user layout, the Development
@@ -147,7 +148,7 @@ func inProcess(host, sshConfig, policies string) (Session, error) {
 		return Session{}, err
 	}
 	reader := NewFilePolicyReader(policies)
-	manager := NewManager(core.HostAlias(host), adapter, reader.Source())
+	manager := core.NewConfiguredManager(core.HostAlias(host), adapter, proxy.NewAllocator, reader.Source())
 	return Session{
 		Manager:      manager,
 		Host:         core.HostAlias(host),

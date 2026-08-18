@@ -8,26 +8,26 @@ import (
 	"testing"
 )
 
-func TestBoundedLineChannelRecvRejectsOversizedFrame(t *testing.T) {
+func TestFrameChannelRecvRejectsOversizedFrame(t *testing.T) {
 	payload := strings.Repeat("x", maxFrameBytes+1) + "\n"
-	frames := newBoundedLineChannel(readCloser{Reader: strings.NewReader(payload)}, maxFrameBytes)
+	frames := newFrameChannel(readCloser{Reader: strings.NewReader(payload)}, maxFrameBytes)
 	_, err := frames.Recv()
 	if !errors.Is(err, errFrameTooLarge) {
 		t.Fatalf("Recv err = %v, want errFrameTooLarge", err)
 	}
 }
 
-func TestBoundedLineChannelSendRejectsOversizedFrame(t *testing.T) {
-	frames := newBoundedLineChannel(&writeCloser{}, maxFrameBytes)
+func TestFrameChannelSendRejectsOversizedFrame(t *testing.T) {
+	frames := newFrameChannel(&writeCloser{}, maxFrameBytes)
 	err := frames.Send(bytes.Repeat([]byte("x"), maxFrameBytes+1))
 	if !errors.Is(err, errFrameTooLarge) {
 		t.Fatalf("Send err = %v, want errFrameTooLarge", err)
 	}
 }
 
-func TestBoundedLineChannelSendAppendsNewline(t *testing.T) {
+func TestFrameChannelSendAppendsNewline(t *testing.T) {
 	var buf writeCloser
-	frames := newBoundedLineChannel(&buf, maxFrameBytes)
+	frames := newFrameChannel(&buf, maxFrameBytes)
 	if err := frames.Send([]byte(`{"jsonrpc":"2.0"}`)); err != nil {
 		t.Fatalf("Send: %v", err)
 	}

@@ -130,6 +130,7 @@ type LocalPortConflict struct {
 	BindScope    ListenerBindScope
 }
 
+// HostSnapshot is the composed host view on a Snapshot.
 type HostSnapshot struct {
 	Alias                HostAlias
 	Connection           ConnectionState

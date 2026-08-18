@@ -20,7 +20,7 @@ type hostActorOptions struct {
 	host      HostAlias
 	connector HostConnector
 	dialer    *currentDialer
-	publish   func(HostSnapshot)
+	publish   func(hostView)
 	ctx       context.Context
 	// onObservation notifies the Manager that a new observation generation
 	// was applied. It fires once per ObservationSet — not on connection
@@ -37,7 +37,7 @@ type hostActor struct {
 	host       HostAlias
 	connector  HostConnector
 	dialer     *currentDialer
-	publish    func(HostSnapshot)
+	publish    func(hostView)
 	retryDelay func(int) time.Duration
 	retryWait  func(context.Context, time.Duration) bool
 	onObserve  func()
@@ -46,10 +46,10 @@ type hostActor struct {
 	mu                      sync.Mutex
 	active                  atomic.Bool
 	session                 HostSession
-	state                   HostSnapshot
+	state                   hostView
 	lastObservationSequence uint64
 
-	lastPublished HostSnapshot
+	lastPublished hostView
 	done          chan struct{}
 }
 
@@ -63,7 +63,7 @@ func newHostActor(options hostActorOptions, retryDelay func(int) time.Duration, 
 		retryDelay: retryDelay,
 		retryWait:  retryWait,
 		ctx:        options.ctx,
-		state:      emptyHostSnapshot(options.host),
+		state:      emptyHostView(options.host),
 		done:       make(chan struct{}),
 	}
 }
@@ -201,14 +201,11 @@ func (a *hostActor) applySessionFact(fact SessionFact) {
 func (a *hostActor) applyObservationSet(set ObservationSet) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	// Re-validation gate — the authority on what reaches the mirror. The
-	// scanner's parser is a cheap stream-local filter; a misbehaving adapter
-	// (stale sequence, bad capability, unknown budget) is rejected here.
-	if set.Sequence == 0 || set.Sequence <= a.lastObservationSequence || !validDiscoveryCapability(set.Capability) || !validObservationBudget(set.Budget) || !validCapabilityReason(set.CapabilityReason) {
+	gapped, ok := admitObservationSet(set, a.lastObservationSequence)
+	if !ok {
 		a.failDiscoveryLocked(ReasonSessionInvalid)
 		return
 	}
-	gapped := set.Sequence != a.lastObservationSequence+1
 	a.lastObservationSequence = set.Sequence
 	capability := set.Capability
 	reason := set.CapabilityReason
@@ -248,12 +245,11 @@ func (a *hostActor) applyObservationSet(set ObservationSet) {
 func (a *hostActor) applyDiscoveryChange(change DiscoveryChange) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	diagnostic := discoveryFailureDiagnostic(change.Reason)
-	if (change.State != DiscoveryDegraded && change.State != DiscoveryFailed) ||
-		!validDiscoveryCapability(change.Capability) || !validDiscoveryReason(change.Reason) {
+	if !admitDiscoveryChange(change) {
 		a.failDiscoveryLocked(ReasonSessionInvalid)
 		return
 	}
+	diagnostic := discoveryFailureDiagnostic(change.Reason)
 	discovery := a.state.Discovery
 	discovery.State = change.State
 	discovery.Capability = change.Capability
@@ -269,8 +265,8 @@ func (a *hostActor) applyInvalidDiscoveryFact() {
 }
 
 // failDiscoveryLocked is the actor's own failure verdict, reached through
-// its re-validation gate: a misbehaving adapter (stale sequence, bad
-// capability, unknown budget, invalid report) must not corrupt the mirror.
+// admission: a misbehaving adapter (stale sequence, bad capability, unknown
+// budget, invalid report) must not corrupt the mirror.
 func (a *hostActor) failDiscoveryLocked(reason DiscoveryReason) {
 	diagnostic := discoveryFailureDiagnostic(reason)
 	discovery := a.state.Discovery
@@ -289,8 +285,8 @@ func (a *hostActor) publishConnectionFailure() {
 	a.publishLocked()
 }
 
-// publishLocked publishes one per-host snapshot and is the single place that
-// suppresses no-change publications: it compares against the last snapshot it
+// publishLocked publishes one host view and is the single place that
+// suppresses no-change publications: it compares against the last view it
 // handed to the Manager. Callers mutate state and publish unconditionally, so
 // new state fields get dedup for free.
 func (a *hostActor) publishLocked() {

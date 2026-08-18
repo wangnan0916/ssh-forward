@@ -193,8 +193,8 @@ func (p *scannerParser) begin(fields []string) error {
 	}
 	sequence, err := parseUint(fields[2], 64)
 	// Cheap stream-local filter: a non-increasing sequence cannot be a
-	// legitimate observation. The actor's re-validation gate (applyObservationSet)
-	// is the authority; this only avoids passing bad frames up the stream.
+	// legitimate observation. Core admission is the authority; this only
+	// avoids passing bad frames up the stream.
 	if err != nil || sequence == 0 || sequence <= p.lastSequence {
 		return errInvalidScannerFrame
 	}

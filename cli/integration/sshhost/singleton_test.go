@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangnan0916/ssh-forward/cli/internal/app"
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 	"github.com/wangnan0916/ssh-forward/cli/internal/ipc"
 )
@@ -23,7 +22,7 @@ import (
 // visibility, connection state, a second serve refusal, and a watch stream.
 func TestSingletonManagerThroughDisposableDevelopmentHost(t *testing.T) {
 	adapter := testHostConnector(t)
-	manager := app.NewManager(core.HostAlias(testHostAlias()), adapter)
+	manager := testConfiguredManager(t, adapter)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -62,7 +61,7 @@ func TestSingletonManagerThroughDisposableDevelopmentHost(t *testing.T) {
 		t.Fatalf("watch initial = %#v, want the connected singleton state", initial)
 	}
 
-	second := app.NewManager(core.HostAlias(testHostAlias()), adapter)
+	second := testConfiguredManager(t, adapter)
 	defer func() { _ = second.Close(context.Background()) }()
 	if err := ipc.Serve(context.Background(), endpoint, second); !errors.Is(err, ipc.ErrAlreadyRunning) {
 		t.Fatalf("second serve err = %v, want ErrAlreadyRunning", err)

@@ -34,13 +34,39 @@ type snapshotStream struct {
 	terminal       error
 }
 
-func (m *manager) buildSnapshotLocked() Snapshot {
+// hostView is the actor's slice of a HostSnapshot: Connection, Discovery,
+// and Listener Observations. composeSnapshotLocked overlays Forwards and
+// Local Port Conflicts, because the actor overwrites this mirror wholesale.
+type hostView struct {
+	Alias                HostAlias
+	Connection           ConnectionState
+	Discovery            DiscoverySnapshot
+	ListenerObservations []ListenerObservation
+}
+
+func emptyHostView(host HostAlias) hostView {
+	return hostView{
+		Alias:                host,
+		Connection:           ConnectionDisconnected,
+		Discovery:            stoppedDiscovery(),
+		ListenerObservations: make([]ListenerObservation, 0),
+	}
+}
+
+// composeSnapshotLocked is the single construction of an immutable Snapshot:
+// the actor's host view plus the Forward table plus Local Port Conflicts.
+func (m *manager) composeSnapshotLocked() Snapshot {
 	if m.host == "" {
 		return Snapshot{Revision: m.revision}
 	}
-	host := m.hostSnapshot
-	host.Forwards = m.forwards.snapshots()
-	host.LocalPortConflicts = m.reconciler.conflictSnapshots()
+	host := HostSnapshot{
+		Alias:                m.view.Alias,
+		Connection:           m.view.Connection,
+		Discovery:            m.view.Discovery,
+		ListenerObservations: m.view.ListenerObservations,
+		Forwards:             m.forwards.snapshots(),
+		LocalPortConflicts:   m.reconciler.conflictSnapshots(),
+	}
 	return Snapshot{
 		Revision: m.revision,
 		Host:     &host,
@@ -49,7 +75,7 @@ func (m *manager) buildSnapshotLocked() Snapshot {
 
 func (m *manager) publishLocked() {
 	m.revision++
-	m.snapshot = m.buildSnapshotLocked()
+	m.snapshot = m.composeSnapshotLocked()
 	for _, stream := range m.watchers {
 		stream.publish(m.snapshot)
 	}

@@ -312,11 +312,9 @@ func rejectHandshake(frames channel.Channel, id json.RawMessage, code jrpc2.Code
 }
 
 // rejectAndClose sends a wire error, closes the channel through the given
-// closer (each channel layer closes itself: pendingChannel must run its
-// closeOnce), and returns the caller's error. Every rejection path — the
-// validating channel, the pending channel's notification rejection, and the
-// handshake — shares this one close-after-error protocol, so a protocol
-// tweak cannot drift between them.
+// closer, and returns the caller's error. Handshake rejection, UTF-8/batch
+// rejection, and inbound-notification rejection share this one
+// close-after-error protocol.
 func rejectAndClose(frames channel.Channel, closeChannel func() error, id json.RawMessage, code jrpc2.Code, message string, data any, result error) error {
 	err := sendError(frames, id, code, message, data)
 	_ = closeChannel()

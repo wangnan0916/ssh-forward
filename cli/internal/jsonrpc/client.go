@@ -18,7 +18,7 @@ import (
 // Dial negotiates a JSON-RPC v1 session on conn and returns a Manager
 // whose operations are remote calls. The returned Manager owns conn.
 func Dial(ctx context.Context, conn net.Conn) (core.Manager, error) {
-	frames := &serializedChannel{Channel: newBoundedLineChannel(conn, maxFrameBytes)}
+	frames := newFrameChannel(conn, maxFrameBytes)
 	client := &managerClient{
 		frames:  frames,
 		pending: make(map[uint64]chan wireResponse),

@@ -10,6 +10,7 @@ import (
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 	"github.com/wangnan0916/ssh-forward/cli/internal/openssh"
+	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
 )
 
 func testHostConnector(t *testing.T) core.HostConnector {
@@ -23,6 +24,11 @@ func testHostConnector(t *testing.T) core.HostConnector {
 		t.Fatalf("create OpenSSH Adapter: %v", err)
 	}
 	return adapter
+}
+
+func testConfiguredManager(t *testing.T, connector core.HostConnector, policySources ...func() []core.ForwardingPolicy) core.Manager {
+	t.Helper()
+	return core.NewConfiguredManager(core.HostAlias(testHostAlias()), connector, proxy.NewAllocator, policySources...)
 }
 
 // Harness identity, declared once in scripts/internal/harness.env and

@@ -16,7 +16,7 @@ import (
 
 // TestPolicyReconciliationThroughDisposableDevelopmentHost pins the
 // composition-root wiring end to end (slice 5): a file-backed policy source
-// through app.NewManager must reconcile the disposable host's fixture
+// through NewConfiguredManager must reconcile the disposable host's fixture
 // listener into a Managed Forward.
 func TestPolicyReconciliationThroughDisposableDevelopmentHost(t *testing.T) {
 	policiesPath := filepath.Join(t.TempDir(), "policies.jsonc")
@@ -27,7 +27,7 @@ func TestPolicyReconciliationThroughDisposableDevelopmentHost(t *testing.T) {
   ]
 }`, fixturePortV4(), fixturePortV4()))
 
-	manager := app.NewManager(core.HostAlias(testHostAlias()), testHostConnector(t), app.NewFilePolicyReader(policiesPath).Source())
+	manager := testConfiguredManager(t, testHostConnector(t), app.NewFilePolicyReader(policiesPath).Source())
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -54,7 +54,7 @@ func TestPolicyIgnoreThroughDisposableDevelopmentHost(t *testing.T) {
   ]
 }`, fixturePortV4(), fixturePortV4()))
 
-	manager := app.NewManager(core.HostAlias(testHostAlias()), testHostConnector(t), app.NewFilePolicyReader(policiesPath).Source())
+	manager := testConfiguredManager(t, testHostConnector(t), app.NewFilePolicyReader(policiesPath).Source())
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

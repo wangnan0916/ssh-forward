@@ -18,24 +18,61 @@ const outboundWriteTimeout = 5 * time.Second
 
 var errFrameTooLarge = errors.New("JSON-RPC frame exceeds maximum size")
 
-type boundedLineChannel struct {
+// frameChannel is the JSON-RPC session transport: newline framing, serialized
+// Send, UTF-8 and batch rejection on Recv, and — after bindPending — inbound
+// slot accounting plus a response-written hook. Dial and Serve share this
+// one interface; pending slots stay off until the handshake finishes so
+// hello cannot consume a session slot.
+type frameChannel struct {
 	reader *bufio.Reader
 	stream io.ReadWriteCloser
 	max    int
+
+	sendMu sync.Mutex
+
+	slots      chan struct{}
+	done       chan struct{}
+	onResponse func(decodedResponse)
 
 	closeOnce sync.Once
 	closeErr  error
 }
 
-func newBoundedLineChannel(stream io.ReadWriteCloser, maxBytes int) *boundedLineChannel {
-	return &boundedLineChannel{
+func newFrameChannel(stream io.ReadWriteCloser, maxBytes int) *frameChannel {
+	return &frameChannel{
 		reader: bufio.NewReader(stream),
 		stream: stream,
 		max:    maxBytes,
 	}
 }
 
-func (c *boundedLineChannel) Send(message []byte) error {
+func (c *frameChannel) bindPending(maxPending int, onResponse func(decodedResponse)) {
+	c.slots = make(chan struct{}, maxPending)
+	c.done = make(chan struct{})
+	c.onResponse = onResponse
+}
+
+func (c *frameChannel) Send(message []byte) error {
+	if c.slots == nil && c.onResponse == nil {
+		c.sendMu.Lock()
+		defer c.sendMu.Unlock()
+		return c.writeFrame(message)
+	}
+	envelope, response := decodeResponseEnvelope(message)
+	c.sendMu.Lock()
+	err := c.writeFrame(message)
+	c.sendMu.Unlock()
+	if !response {
+		return err
+	}
+	c.release()
+	if err == nil && c.onResponse != nil {
+		c.onResponse(envelope)
+	}
+	return err
+}
+
+func (c *frameChannel) writeFrame(message []byte) error {
 	if len(message) > c.max {
 		_ = c.Close()
 		return errFrameTooLarge
@@ -66,7 +103,43 @@ func (c *boundedLineChannel) Send(message []byte) error {
 	return nil
 }
 
-func (c *boundedLineChannel) Recv() ([]byte, error) {
+func (c *frameChannel) Recv() ([]byte, error) {
+	if err := c.acquire(); err != nil {
+		return nil, err
+	}
+	message, err := c.readFrame()
+	if err != nil {
+		c.release()
+		return nil, err
+	}
+	if !utf8.Valid(message) {
+		c.release()
+		return nil, c.reject(jrpc2.InvalidRequest, "frame is not valid UTF-8", errInvalidUTF8)
+	}
+	if trimmed := bytes.TrimSpace(message); len(trimmed) != 0 && trimmed[0] == '[' {
+		c.release()
+		return nil, c.reject(jrpc2.InvalidRequest, "batch requests are not supported", errBatchUnsupported)
+	}
+	if c.slots != nil && isNotification(message) {
+		c.release()
+		return nil, c.reject(jrpc2.InvalidRequest, "notifications are not negotiated", errNotificationRejected)
+	}
+	return message, nil
+}
+
+func (c *frameChannel) acquire() error {
+	if c.slots == nil {
+		return nil
+	}
+	select {
+	case c.slots <- struct{}{}:
+		return nil
+	case <-c.done:
+		return channel.ErrClosed
+	}
+}
+
+func (c *frameChannel) readFrame() ([]byte, error) {
 	var record []byte
 	for {
 		fragment, err := c.reader.ReadSlice('\n')
@@ -94,44 +167,28 @@ func (c *boundedLineChannel) Recv() ([]byte, error) {
 	}
 }
 
-func (c *boundedLineChannel) Close() error {
+func (c *frameChannel) reject(code jrpc2.Code, message string, result error) error {
+	return rejectAndClose(c, c.Close, nil, code, message, nil, result)
+}
+
+func (c *frameChannel) Close() error {
 	c.closeOnce.Do(func() {
+		if c.done != nil {
+			close(c.done)
+		}
 		c.closeErr = c.stream.Close()
 	})
 	return c.closeErr
 }
 
-type serializedChannel struct {
-	channel.Channel
-	sendMu sync.Mutex
-}
-
-func (c *serializedChannel) Send(message []byte) error {
-	c.sendMu.Lock()
-	defer c.sendMu.Unlock()
-	return c.Channel.Send(message)
-}
-
-type validatingChannel struct {
-	channel.Channel
-}
-
-func (c *validatingChannel) Recv() ([]byte, error) {
-	message, err := c.Channel.Recv()
-	if err != nil {
-		return nil, err
+func (c *frameChannel) release() {
+	if c.slots == nil {
+		return
 	}
-	if !utf8.Valid(message) {
-		return nil, c.reject(jrpc2.InvalidRequest, "frame is not valid UTF-8", errInvalidUTF8)
+	select {
+	case <-c.slots:
+	default:
 	}
-	if trimmed := bytes.TrimSpace(message); len(trimmed) != 0 && trimmed[0] == '[' {
-		return nil, c.reject(jrpc2.InvalidRequest, "batch requests are not supported", errBatchUnsupported)
-	}
-	return message, nil
-}
-
-func (c *validatingChannel) reject(code jrpc2.Code, message string, result error) error {
-	return rejectAndClose(c.Channel, c.Channel.Close, nil, code, message, nil, result)
 }
 
 // envelopeShape is the JSON-RPC envelope decoded once: which members are
@@ -180,61 +237,6 @@ type decodedResponse struct {
 	Result json.RawMessage
 }
 
-// pendingChannel bounds jrpc2's inbound queue. It reports each successfully
-// written response to onResponse (installed by the connection session, which
-// owns any response-triggered activation); the channel itself is
-// protocol-agnostic beyond the response/notification distinction required for
-// slot release.
-type pendingChannel struct {
-	channel.Channel
-	slots chan struct{}
-	done  chan struct{}
-
-	onResponse func(decodedResponse)
-
-	closeOnce sync.Once
-	closeErr  error
-}
-
-func newPendingChannel(base channel.Channel, maxPending int) *pendingChannel {
-	return &pendingChannel{
-		Channel: base,
-		slots:   make(chan struct{}, maxPending),
-		done:    make(chan struct{}),
-	}
-}
-
-func (c *pendingChannel) Recv() ([]byte, error) {
-	select {
-	case c.slots <- struct{}{}:
-	case <-c.done:
-		return nil, channel.ErrClosed
-	}
-	message, err := c.Channel.Recv()
-	if err != nil {
-		c.release()
-		return nil, err
-	}
-	if isNotification(message) {
-		c.release()
-		return nil, rejectAndClose(c.Channel, c.Close, nil, jrpc2.InvalidRequest, "notifications are not negotiated", nil, errNotificationRejected)
-	}
-	return message, nil
-}
-
-func (c *pendingChannel) Send(message []byte) error {
-	envelope, response := decodeResponseEnvelope(message)
-	err := c.Channel.Send(message)
-	if !response {
-		return err
-	}
-	c.release()
-	if err == nil && c.onResponse != nil {
-		c.onResponse(envelope)
-	}
-	return err
-}
-
 // decodeResponseEnvelope decodes a frame once and classifies it: a response
 // has an id and no method; anything else (request, notification, garbage) is
 // not a response.
@@ -247,21 +249,6 @@ func decodeResponseEnvelope(message []byte) (decodedResponse, bool) {
 		ID:     shape.ID,
 		Result: shape.Result,
 	}, true
-}
-
-func (c *pendingChannel) Close() error {
-	c.closeOnce.Do(func() {
-		close(c.done)
-		c.closeErr = c.Channel.Close()
-	})
-	return c.closeErr
-}
-
-func (c *pendingChannel) release() {
-	select {
-	case <-c.slots:
-	default:
-	}
 }
 
 func isNotification(message []byte) bool {

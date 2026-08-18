@@ -7,7 +7,7 @@ Formal implementation uses red-green TDD in vertical slices. Tests exercise beha
 3. JSON-RPC Adapter — shared Go/Swift golden transcripts, framing bounds, version mismatch, typed errors, cancellation, Watch coalescing, and resync.
 4. CLI — subprocess behavior and structured output against a real local Manager.
 5. Proxy — real loopback half-close, cancellation, throughput, allocation, and containerized remote end-to-end tests.
-6. Composition (`app.Connect`, `app.Serve`, `app.NewManager`) — Connect and Serve own the per-user singleton; NewManager is the in-process adapter. Integration tests (the `integration` build tag) cover that wiring end to end; `app` also has focused tests for host naming, Connect/Serve, and the policy-source argument.
+6. Composition (`app.Connect`, `app.Serve`) — Connect and Serve own the per-user singleton; `core.NewConfiguredManager` is the in-process assembly those paths and integration tests use. Integration tests (the `integration` build tag) cover that wiring end to end; `app` also has focused tests for host naming, Connect/Serve, and the in-process policy source.
 7. TUI — after the CLI is ready; same Manager and JSON-RPC, not started yet.
 8. macOS desktop — after the TUI is ready; Swift Manager client and Dashboard, not started yet. Protocol fixtures already exist under `test/protocol/`.
 
