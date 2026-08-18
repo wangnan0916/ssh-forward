@@ -15,6 +15,7 @@ The project lives at `github.com/wangnan0916/ssh-forward`. Hosted macOS and Linu
 │   ├── cmd/ssh-forward
 │   ├── integration/ # disposable-host suites (integration build tag)
 │   └── internal/
+├── .agents/skills/  # usage skill for npx skills / coding agents
 ├── scripts/         # integration harness and Homebrew formula snapshot
 ├── test/            # protocol fixtures + disposable-host image
 ├── docs/

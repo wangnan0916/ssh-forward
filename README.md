@@ -85,6 +85,16 @@ ssh-forward manager serve             # run the singleton in the foreground
 
 `--host` overrides the default host. `--ssh-config PATH` points at an explicit SSH client config. `SSH_FORWARD_CONFIG_DIR` overrides the product config directory.
 
+## Agent skill
+
+Install the usage skill for Cursor, Claude Code, Codex, and other agents:
+
+```bash
+npx skills add wangnan0916/ssh-forward
+```
+
+The skill lives in [`.agents/skills/ssh-forward/`](.agents/skills/ssh-forward/).
+
 ## Forwarding policies
 
 `add` and `remove` write `policies.jsonc`. The manager hot-reloads it about every two seconds. You can still edit the file by hand for more specific matchers.
