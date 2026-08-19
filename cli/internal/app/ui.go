@@ -82,6 +82,9 @@ func StartUI(ctx context.Context, opts Options) (string, error) {
 	if url, err := LiveUIURL(opts.Layout); err == nil {
 		return url, nil
 	}
+	if _, err := ResolveHost(opts); err != nil {
+		return "", err
+	}
 	pid, err := ReadPIDFile(opts.Layout.UIPID)
 	if err != nil || !PIDAlive(pid) {
 		pid, err = spawnUI(opts)

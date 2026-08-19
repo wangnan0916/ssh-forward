@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,28 +15,27 @@ import (
 )
 
 func (a *App) uiCommand() *cobra.Command {
+	runStart := func(cmd *cobra.Command, args []string) error {
+		return a.runUIStart(cmd.Context())
+	}
 	command := &cobra.Command{
 		Use:   "ui",
-		Short: "run the loopback WebUI",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return UsageError(fmt.Errorf("ui needs a subcommand (start, status, stop)"))
-		},
+		Short: "open the loopback page",
+		Args:  cobra.NoArgs,
+		RunE:  runStart,
 	}
 	start := &cobra.Command{
 		Use:   "start",
 		Short: "start the WebUI in the background",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.runUIStart(cmd.Context())
-		},
+		RunE:  runStart,
 	}
 	status := &cobra.Command{
 		Use:   "status",
 		Short: "print the WebUI URL",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			jsonOutput, _ := cmd.Flags().GetBool("json")
-			return a.runUIStatus(jsonOutput)
+			return a.runUIStatus(jsonFlag(cmd))
 		},
 	}
 	status.Flags().Bool("json", false, "emit JSON")
@@ -57,13 +57,20 @@ func (a *App) uiCommand() *cobra.Command {
 		},
 	}
 	command.AddCommand(start, status, stop, serve)
-	return annotateSkipManager(command)
+	return grouped(groupDaily, annotateSkipManager(command))
+}
+
+func uiNotRunning(err error) error {
+	if errors.Is(err, app.ErrUINotRunning) {
+		return fmt.Errorf("WebUI is not running. Start it: ssh-forward ui")
+	}
+	return err
 }
 
 func (a *App) runUIStatus(jsonOutput bool) error {
 	url, err := app.LiveUIURL(a.Options.Layout)
 	if err != nil {
-		return err
+		return uiNotRunning(err)
 	}
 	if jsonOutput {
 		encoded, err := json.Marshal(map[string]string{"url": url})
@@ -79,15 +86,18 @@ func (a *App) runUIStatus(jsonOutput bool) error {
 
 func (a *App) runUIStop() error {
 	if err := app.StopUI(a.Options.Layout); err != nil {
-		return err
+		return uiNotRunning(err)
 	}
-	fmt.Fprintln(a.Options.Stdout, "stopped")
+	fmt.Fprintln(a.Options.Stdout, "Stopped the WebUI.")
 	return nil
 }
 
 func (a *App) runUIStart(ctx context.Context) error {
-	url, err := app.StartUI(ctx, a.Options)
+	url, err := app.StartUI(ctx, a.connectOptions())
 	if err != nil {
+		if app.IsResolution(err) {
+			return UsageError(err)
+		}
 		return err
 	}
 	a.announceUI(url)

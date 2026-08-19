@@ -10,7 +10,7 @@ import (
 
 // ErrNoHost reports that neither --host nor config.jsonc named a
 // Development Host, and the SSH client configuration did not yield one.
-var ErrNoHost = errors.New("no --host given and no config.jsonc default host")
+var ErrNoHost = errors.New("No Development Host is set. List aliases: ssh-forward host\nThen pin one: ssh-forward default ALIAS")
 
 // ResolutionError is a Development Host naming failure that the CLI
 // reports as usage (exit 2).
@@ -41,8 +41,9 @@ func resolution(err error) error {
 // ResolveHost names the Development Host, in order: --host, then
 // config.jsonc's default_host, then — when the SSH client configuration
 // names exactly one literal Host alias — that host. A corrupt config is
-// diagnosed, not bypassed; ambiguous choices are reported with the
-// candidates, or prompted when Interactive.
+// diagnosed, not bypassed. Several hosts and no default: Interactive
+// prompts and pins the choice as default_host; a non-terminal run lists
+// the candidates. An injected PickHost does not pin.
 func ResolveHost(opts Options) (string, error) {
 	if opts.HostFlag != "" {
 		return opts.HostFlag, nil
@@ -75,9 +76,18 @@ func ResolveHost(opts Options) (string, error) {
 			if err != nil {
 				return "", resolution(err)
 			}
+			if opts.PickHost == nil {
+				if err := SetDefaultHost(configPath, host); err == nil {
+					out := opts.Stdout
+					if out == nil {
+						out = io.Discard
+					}
+					fmt.Fprintf(out, "default host set to %s\n", host)
+				}
+			}
 			return host, nil
 		}
-		return "", resolution(fmt.Errorf("no host selected; configured hosts: %s (pass one with --host, or set one with: ssh-forward default <alias>)", strings.Join(hosts, ", ")))
+		return "", resolution(fmt.Errorf("no host selected; configured hosts: %s (pass --host, or pin one: ssh-forward default ALIAS)", strings.Join(hosts, ", ")))
 	}
 }
 
@@ -104,7 +114,7 @@ func pickHost(hosts []string, stdin io.Reader, stdout io.Writer) (string, error)
 	if stdout == nil {
 		stdout = io.Discard
 	}
-	fmt.Fprintln(stdout, "Multiple Development Hosts are configured; pick one:")
+	fmt.Fprintln(stdout, "Multiple Development Hosts are configured; pick one to set as the default:")
 	for index, host := range hosts {
 		fmt.Fprintf(stdout, "  %d) %s\n", index+1, host)
 	}
@@ -118,9 +128,14 @@ func pickHost(hosts []string, stdin io.Reader, stdout io.Writer) (string, error)
 		if _, err := fmt.Sscanf(line, "%d", &choice); err == nil && choice >= 1 && choice <= len(hosts) {
 			return hosts[choice-1], nil
 		}
-		fmt.Fprintln(stdout, "invalid choice; pick a number from the list")
+		for _, host := range hosts {
+			if line == host {
+				return host, nil
+			}
+		}
+		fmt.Fprintln(stdout, "invalid choice; pick a number or a host alias from the list")
 	}
-	return "", errors.New("no host selected (set one with: ssh-forward default <alias>)")
+	return "", errors.New("no host selected (pin one: ssh-forward default ALIAS)")
 }
 
 // IsTerminal reports whether the reader is an interactive terminal.

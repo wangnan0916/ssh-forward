@@ -217,7 +217,7 @@ func attach(ctx context.Context, client core.Manager, opts Options) (Session, er
 		return Session{}, errors.New("the running manager has no Development Host configured")
 	}
 	if opts.HostFlag != "" && opts.HostFlag != string(snapshot.Host.Alias) {
-		fmt.Fprintf(opts.Stderr, "ssh-forward: warning: --host %s ignored; the running manager owns %s\n", opts.HostFlag, snapshot.Host.Alias)
+		fmt.Fprintf(opts.Stderr, "ssh-forward: warning: --host %s ignored; the running manager owns %s. Switch with: ssh-forward manager restart\n", opts.HostFlag, snapshot.Host.Alias)
 	}
 	return Session{
 		Manager:      client,

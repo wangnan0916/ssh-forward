@@ -15,7 +15,7 @@ Discover eligible TCP listeners on a Linux Development Host and expose them on t
 
 Use these terms: Development Host, Remote Listener, Local Endpoint, Forwarding Policy, Managed Forward, Allocated Local Port.
 
-Operate only aliases already listed by `ssh-forward host list`. Do not edit `~/.ssh/config`, store credentials, or run `ssh -L` as a substitute.
+Operate only aliases already listed by `ssh-forward host`. Do not edit `~/.ssh/config`, store credentials, or run `ssh -L` as a substitute.
 
 ## 1. Check the binary
 
@@ -38,18 +38,18 @@ Needs a system OpenSSH client. The Local Machine is macOS or Linux; Windows is n
 ## 2. Name the Development Host
 
 ```bash
-ssh-forward host list --json
+ssh-forward host --json
 ```
 
-Resolution order: `--host`, then `config.jsonc`'s `default_host`, then the single literal Host alias in the SSH client config. Several hosts and no default: a non-terminal run lists candidates in the error (no interactive prompt). Then either:
+Resolution order: `--host`, then `config.jsonc`'s `default_host`, then the single literal Host alias in the SSH client config. Several hosts and no default: a terminal prompts (number or full alias) and pins that choice as `default_host`. A non-terminal run lists candidates in the error (no interactive prompt). Then either:
 
 ```bash
 ssh-forward default ALIAS
 ```
 
-or pass `--host ALIAS` on later commands.
+or pass `--host ALIAS` on later commands. `-h` is help, not the host flag. `ssh-forward default` with no alias prints the pinned host.
 
-Done when one alias is pinned or passed, and it appears in `host list`.
+Done when one alias is pinned or passed, and it appears in `host`.
 
 ## 3. Remember, forget, inspect
 
@@ -62,7 +62,7 @@ ssh-forward add 5173 --json
 ssh-forward add --dir /home/dev/src/app --json
 ssh-forward remove 5173 --json
 ssh-forward remove --dir /home/dev/src/app --json
-ssh-forward policy list --json
+ssh-forward policy --json
 ssh-forward status --json
 ```
 
@@ -75,11 +75,11 @@ Do not run `ssh-forward watch` or `ssh-forward manager serve` unless the user as
 When the user wants the loopback page:
 
 ```bash
-ssh-forward ui start
+ssh-forward ui
 ssh-forward ui status --json
 ```
 
-`start` prints `http://127.0.0.1:PORT/?token=…` (and opens a browser unless `SSH_FORWARD_UI_NO_OPEN=1`). It is idempotent while that process is running. `ui stop` ends only the page; Active Forwards and the Manager keep running. Do not run `ui start` unless the user asked for the WebUI. Do not use a blocking `ssh-forward ui` with no subcommand.
+`ui` prints `http://127.0.0.1:PORT/?token=…` (and opens a browser unless `SSH_FORWARD_UI_NO_OPEN=1`). It is idempotent while that process is running. `ui stop` ends only the page; Active Forwards and the Manager keep running. Do not run `ui` unless the user asked for the WebUI. `ssh-forward ui` starts the background page; it is not a blocking TUI.
 
 ## 4. Report live state
 
@@ -94,7 +94,7 @@ Read:
 
 Tell the user the Allocated Local Port from the snapshot. It may differ from the remote port: same-port is tried first, then `remotePort+1` through `remotePort+100`. Exhausting that range is a Local Port Conflict; never kill the process occupying a candidate port.
 
-Unmatched Remote Listeners stay visible and unforwarded until a policy matches. Offer `ssh-forward add PORT` for those ports.
+Unmatched loopback Remote Listeners stay visible and unforwarded until a policy matches. Offer `ssh-forward add PORT` for those ports. Do not offer `add` for wildcard listeners (already on the Development Host).
 
 One manager owns one Development Host. A conflicting `--host` on a client command is a warning, not an error.
 

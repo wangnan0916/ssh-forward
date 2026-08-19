@@ -1,13 +1,27 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/app"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
+
+const (
+	groupDaily = "daily"
+	groupHost  = "host"
+	groupMore  = "more"
+)
+
+func grouped(id string, command *cobra.Command) *cobra.Command {
+	command.GroupID = id
+	return command
+}
 
 // RootCommand builds the cobra command tree: the command definitions and
 // help text live here. Connect and Serve live in app so WebUI and CLI share
@@ -17,8 +31,9 @@ func (a *App) RootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "ssh-forward",
 		Short: "expose Development Host ports locally through system OpenSSH",
-		Long: "ssh-forward exposes eligible ports on a Linux Development Host " +
-			"through your system OpenSSH connection, preferring the same port locally.",
+		Long: `ssh-forward exposes eligible ports on a Linux Development Host through your system OpenSSH connection, preferring the same port locally.
+
+Name the host with --host ALIAS (-h is help). Pin one with: ssh-forward default ALIAS`,
 		SilenceUsage:      true,
 		SilenceErrors:     true,
 		DisableAutoGenTag: true,
@@ -31,7 +46,12 @@ func (a *App) RootCommand() *cobra.Command {
 	}
 	root.SetFlagErrorFunc(flagError)
 	root.CompletionOptions.DisableDefaultCmd = true
-	root.PersistentFlags().String("host", "", "Development Host alias (default: config.jsonc's default_host)")
+	root.AddGroup(
+		&cobra.Group{ID: groupDaily, Title: "Daily:"},
+		&cobra.Group{ID: groupHost, Title: "Host:"},
+		&cobra.Group{ID: groupMore, Title: "More:"},
+	)
+	root.PersistentFlags().String("host", "", "Development Host alias (not -h; default: the pinned host)")
 	root.PersistentFlags().String("policies", "", "path to policies.jsonc (default: the product config directory)")
 	root.PersistentFlags().String("ssh-config", "", "SSH client config file (default: the user's ~/.ssh/config)")
 	if a.Version != "" {
@@ -51,6 +71,7 @@ func (a *App) RootCommand() *cobra.Command {
 		a.managerCommand(),
 		a.uiCommand(),
 	)
+	root.SetHelpCommandGroupID(groupMore)
 	root.InitDefaultHelpCmd()
 	for _, cmd := range root.Commands() {
 		if cmd.Name() == "help" {
@@ -73,7 +94,7 @@ func (a *App) addCommand() *cobra.Command {
 	}
 	command.Flags().StringVar(&dir, "dir", "", "Development Host working directory to auto-forward")
 	command.Flags().Bool("json", false, "emit JSON")
-	return annotateSkipManager(command)
+	return grouped(groupDaily, annotateSkipManager(command))
 }
 
 func (a *App) removeCommand() *cobra.Command {
@@ -88,7 +109,7 @@ func (a *App) removeCommand() *cobra.Command {
 	}
 	command.Flags().StringVar(&dir, "dir", "", "Development Host working directory to forget")
 	command.Flags().Bool("json", false, "emit JSON")
-	return annotateSkipManager(command)
+	return grouped(groupDaily, annotateSkipManager(command))
 }
 
 func (a *App) runRemember(cmd *cobra.Command, args []string, dir string, adding bool) error {
@@ -96,14 +117,14 @@ func (a *App) runRemember(cmd *cobra.Command, args []string, dir string, adding 
 		return fmt.Errorf("no policies file is configured (--policies)")
 	}
 	if dir != "" && len(args) != 0 {
-		return UsageError(fmt.Errorf("usage: ssh-forward %s PORT  or  ssh-forward %s --dir PATH", cmd.Name(), cmd.Name()))
+		return rememberUsage(cmd.Name())
 	}
-	jsonOutput, _ := cmd.Flags().GetBool("json")
+	jsonOutput := jsonFlag(cmd)
 	if dir != "" {
 		return a.rememberDir(dir, adding, jsonOutput)
 	}
 	if len(args) != 1 {
-		return UsageError(fmt.Errorf("usage: ssh-forward %s PORT  or  ssh-forward %s --dir PATH", cmd.Name(), cmd.Name()))
+		return rememberUsage(cmd.Name())
 	}
 	port, err := requirePort(cmd.Name(), args[0])
 	if err != nil {
@@ -143,7 +164,10 @@ func (a *App) rememberDir(dir string, adding, jsonOutput bool) error {
 		changed, stored, err = a.PolicyReader.RemoveDir(dir)
 	}
 	if err != nil {
-		if errorsIsHostDir(err) {
+		if errors.Is(err, app.ErrHostDirectory) {
+			return UsageError(fmt.Errorf("%s, for example /home/dev/app", err))
+		}
+		if errors.Is(err, app.ErrEmptyDirectory) {
 			return UsageError(err)
 		}
 		return err
@@ -154,17 +178,30 @@ func (a *App) rememberDir(dir string, adding, jsonOutput bool) error {
 	return a.writeRemember(jsonOutput, adding, changed, 0, stored)
 }
 
-func errorsIsHostDir(err error) bool {
-	return errors.Is(err, app.ErrEmptyDirectory) || errors.Is(err, app.ErrHostDirectory)
+func rememberUsage(name string) error {
+	if name == "remove" {
+		return UsageError(fmt.Errorf("forget a remote port: ssh-forward remove PORT  or a host directory: ssh-forward remove --dir /home/dev/app"))
+	}
+	return UsageError(fmt.Errorf("remember a remote port: ssh-forward add PORT  or a host directory: ssh-forward add --dir /home/dev/app"))
 }
 
 func (a *App) statusCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "status",
-		Short: "show the host and the active forwards",
-		Args:  cobra.NoArgs,
+		Short: "show what is forwarded right now",
+		Long: `Show the Development Host, whether SSH is connected, and which remote ports are forwarded locally.
+
+Name the host with --host ALIAS (-h is help). Pin one so later commands skip the prompt:
+
+  ssh-forward default ALIAS
+
+On a terminal, status waits until SSH has connected (or failed) and discovery has a first result. --json prints the current snapshot immediately. --watch streams until interrupted (same as ssh-forward watch).`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			jsonOutput, _ := cmd.Flags().GetBool("json")
+			jsonOutput := jsonFlag(cmd)
+			if watch, _ := cmd.Flags().GetBool("watch"); watch {
+				return a.runWatch(cmd.Context(), jsonOutput)
+			}
 			snapshot, err := a.Manager.Snapshot(cmd.Context())
 			if err != nil {
 				return err
@@ -175,11 +212,61 @@ func (a *App) statusCommand() *cobra.Command {
 			if jsonOutput {
 				return a.writeSnapshotJSON(snapshot)
 			}
+			if a.Options.Interactive {
+				snapshot, err = a.waitForSettledStatus(cmd.Context(), snapshot)
+				if err != nil {
+					return err
+				}
+			}
 			return a.writeStatusHuman(snapshot)
 		},
 	}
 	command.Flags().Bool("json", false, "emit the wire-shaped snapshot")
-	return command
+	command.Flags().Bool("watch", false, "stream live state until interrupted")
+	return grouped(groupDaily, command)
+}
+
+const statusSettleTimeout = 20 * time.Second
+
+func statusSettled(snap core.Snapshot) bool {
+	host := snap.Host
+	if host == nil {
+		return true
+	}
+	if host.Connection == core.ConnectionConnecting {
+		return false
+	}
+	return host.Connection != core.ConnectionConnected || !discoveryIdle(host)
+}
+
+func (a *App) waitForSettledStatus(ctx context.Context, initial core.Snapshot) (core.Snapshot, error) {
+	if statusSettled(initial) {
+		return initial, nil
+	}
+	if initial.Host != nil && a.Options.Stderr != nil {
+		fmt.Fprintf(a.Options.Stderr, "Connecting to %s...\n", initial.Host.Alias)
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, statusSettleTimeout)
+	defer cancel()
+	stream, err := a.Manager.Watch(waitCtx)
+	if err != nil {
+		return initial, nil
+	}
+	defer stream.Close()
+	latest := initial
+	for {
+		snap, err := stream.Next(waitCtx)
+		if err != nil {
+			if ctx.Err() != nil && !errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
+				return latest, ctx.Err()
+			}
+			return latest, nil
+		}
+		latest = snap
+		if statusSettled(snap) {
+			return snap, nil
+		}
+	}
 }
 
 func (a *App) watchCommand() *cobra.Command {
@@ -188,73 +275,66 @@ func (a *App) watchCommand() *cobra.Command {
 		Short: "stream live state until interrupted",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			jsonOutput, _ := cmd.Flags().GetBool("json")
-			return a.runWatch(cmd.Context(), jsonOutput)
+			return a.runWatch(cmd.Context(), jsonFlag(cmd))
 		},
 	}
 	command.Flags().Bool("json", false, "emit one wire-shaped snapshot per line")
-	return command
+	return grouped(groupMore, command)
 }
 
 func (a *App) policyCommand() *cobra.Command {
+	runList := func(cmd *cobra.Command, args []string) error {
+		return a.runPolicyList(jsonFlag(cmd))
+	}
 	command := &cobra.Command{
 		Use:   "policy",
-		Short: "show forwarding policies",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return UsageError(fmt.Errorf("policy needs a subcommand (list)"))
-		},
-	}
-	list := &cobra.Command{
-		Use:   "list",
-		Short: "show the forwarding policies",
+		Short: "list forwarding policies",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			jsonOutput, _ := cmd.Flags().GetBool("json")
-			return a.runPolicyList(jsonOutput)
-		},
+		RunE:  runList,
 	}
-	list.Flags().Bool("json", false, "emit the policies in the file shape")
-	command.AddCommand(list)
-	return annotateSkipManager(command)
+	command.PersistentFlags().Bool("json", false, "emit the policies in the file shape")
+	command.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "list forwarding policies",
+		Args:  cobra.NoArgs,
+		RunE:  runList,
+	})
+	return grouped(groupMore, annotateSkipManager(command))
 }
 
 func (a *App) hostCommand() *cobra.Command {
+	runList := func(cmd *cobra.Command, args []string) error {
+		return a.runHostList(jsonFlag(cmd))
+	}
 	command := &cobra.Command{
 		Use:   "host",
-		Short: "host discovery from the SSH client configuration",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return UsageError(fmt.Errorf("host needs a subcommand (list)"))
-		},
-	}
-	list := &cobra.Command{
-		Use:   "list",
-		Short: "show hosts from the SSH client configuration",
+		Short: "list Host aliases from ~/.ssh/config",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			jsonOutput, _ := cmd.Flags().GetBool("json")
-			return a.runHostList(jsonOutput)
-		},
+		RunE:  runList,
 	}
-	list.Flags().Bool("json", false, "emit the host list as JSON")
-	command.AddCommand(list)
-	return annotateSkipManager(command)
+	command.PersistentFlags().Bool("json", false, "emit the host list as JSON")
+	command.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "list Host aliases from ~/.ssh/config",
+		Args:  cobra.NoArgs,
+		RunE:  runList,
+	})
+	return grouped(groupHost, annotateSkipManager(command))
 }
 
 func (a *App) defaultCommand() *cobra.Command {
 	command := &cobra.Command{
-		Use:   "default <alias>",
-		Short: "pin the default Development Host",
-		Args: func(cmd *cobra.Command, args []string) error {
-			if len(args) != 1 {
-				return UsageError(fmt.Errorf("usage: ssh-forward default ALIAS"))
-			}
-			return nil
-		},
+		Use:   "default [alias]",
+		Short: "show or pin the default Development Host",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return a.runShowDefault()
+			}
 			return a.runSetDefault(args[0])
 		},
 	}
-	return annotateSkipManager(command)
+	return grouped(groupHost, annotateSkipManager(command))
 }
 
 func (a *App) managerCommand() *cobra.Command {
@@ -290,5 +370,5 @@ func (a *App) managerCommand() *cobra.Command {
 		},
 	}
 	command.AddCommand(serve, stop, restart)
-	return annotateSkipManager(command)
+	return grouped(groupMore, annotateSkipManager(command))
 }

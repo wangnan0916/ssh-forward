@@ -28,7 +28,7 @@ func TestRunRequiresHost(t *testing.T) {
 	if code := run(context.Background(), []string{"status"}, &bytes.Buffer{}, &stdout, &stderr); code == 0 {
 		t.Fatal("run without --host succeeded")
 	}
-	if !strings.Contains(stderr.String(), "no --host given") {
+	if !strings.Contains(stderr.String(), "No Development Host is set") {
 		t.Fatalf("stderr = %q, want missing-host message", stderr.String())
 	}
 }
@@ -73,14 +73,14 @@ func TestRunCorruptConfigDiagnosed(t *testing.T) {
 	}
 }
 
-func TestRunRequiresCommand(t *testing.T) {
+func TestRunPrimerWithoutCommand(t *testing.T) {
 	isolateUserEnv(t)
 	var stdout, stderr bytes.Buffer
-	if code := run(context.Background(), []string{"--host", "development"}, &bytes.Buffer{}, &stdout, &stderr); code == 0 {
-		t.Fatal("run without a command succeeded")
+	if code := run(context.Background(), []string{"--host", "development"}, &bytes.Buffer{}, &stdout, &stderr); code != 0 {
+		t.Fatalf("primer exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "Usage:") {
-		t.Fatalf("stderr = %q, want usage", stderr.String())
+	if !strings.Contains(stdout.String(), "Daily") || !strings.Contains(stdout.String(), "status") {
+		t.Fatalf("primer stdout = %q", stdout.String())
 	}
 }
 
@@ -236,7 +236,7 @@ func TestRunHelp(t *testing.T) {
 	if code := run(context.Background(), []string{"--help"}, &bytes.Buffer{}, &stdout, &stderr); code != 0 {
 		t.Fatalf("--help exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "Available Commands:") || !strings.Contains(stdout.String(), "add") || !strings.Contains(stdout.String(), "ui") {
+	if !strings.Contains(stdout.String(), "Daily:") || !strings.Contains(stdout.String(), "add") || !strings.Contains(stdout.String(), "ui") {
 		t.Fatalf("--help output = %q", stdout.String())
 	}
 }
@@ -248,7 +248,7 @@ func TestRunAddRemembersPortWithoutHost(t *testing.T) {
 	if code := run(context.Background(), []string{"--policies", policies, "add", "5173"}, &bytes.Buffer{}, &stdout, &stderr); code != 0 {
 		t.Fatalf("add exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if stdout.String() != "added port 5173\n" {
+	if stdout.String() != "Remembered 5173. Check with: ssh-forward status\n" {
 		t.Fatalf("add output = %q", stdout.String())
 	}
 	loaded, err := app.LoadPolicies(policies)
@@ -340,7 +340,7 @@ func TestRunManagerStopAndRestart(t *testing.T) {
 	if code := run(context.Background(), []string{"manager", "stop"}, &bytes.Buffer{}, &stdout, &stderr); code != 0 {
 		t.Fatalf("manager stop exit = %d, stderr = %s", code, stderr.String())
 	}
-	if stdout.String() != "stopped\n" {
+	if stdout.String() != "Stopped the manager. Forwards will return on the next status.\n" {
 		t.Fatalf("manager stop output = %q", stdout.String())
 	}
 
@@ -358,7 +358,7 @@ func TestRunManagerStopAndRestart(t *testing.T) {
 	if code := run(context.Background(), append(args, "manager", "restart"), &bytes.Buffer{}, &stdout, &stderr); code != 0 {
 		t.Fatalf("manager restart exit = %d, stderr = %s", code, stderr.String())
 	}
-	if stdout.String() != "restarted\n" {
+	if stdout.String() != "Restarted the manager.\n" {
 		t.Fatalf("manager restart output = %q", stdout.String())
 	}
 	secondPID := readManagerPID(t, dir)
@@ -440,13 +440,13 @@ func TestRunSetDefault(t *testing.T) {
 	}
 }
 
-func TestRunUINeedsSubcommand(t *testing.T) {
+func TestRunUIWithoutHost(t *testing.T) {
 	isolateUserEnv(t)
 	var stdout, stderr bytes.Buffer
 	if code := run(context.Background(), []string{"ui"}, &bytes.Buffer{}, &stdout, &stderr); code != 2 {
 		t.Fatalf("ui exit code = %d, want 2, stderr = %s", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "start, status, stop") {
+	if !strings.Contains(stderr.String(), "No Development Host is set") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
@@ -524,7 +524,7 @@ func TestRunUIStartStatusStop(t *testing.T) {
 	if code := invoke(&stdout, io.Discard, "ui", "stop"); code != 0 {
 		t.Fatalf("ui stop exit = %d", code)
 	}
-	if stdout.String() != "stopped\n" {
+	if stdout.String() != "Stopped the WebUI.\n" {
 		t.Fatalf("stop output = %q", stdout.String())
 	}
 	if code := invoke(io.Discard, io.Discard, "ui", "status"); code == 0 {

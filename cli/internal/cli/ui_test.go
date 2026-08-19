@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -43,13 +42,21 @@ func waitUIURL(t *testing.T, layout app.Layout) string {
 	return url
 }
 
-func TestUINeedsSubcommand(t *testing.T) {
-	_, err := runCLI(t, uiTestApp(t, nil), "ui")
-	if err == nil || !errors.Is(err, ErrUsage) {
-		t.Fatalf("ui without subcommand err = %v, want usage", err)
+func TestUIDefaultsToStart(t *testing.T) {
+	surface := uiTestApp(t, nil)
+	url := "http://127.0.0.1:9/?token=already-running"
+	if err := os.WriteFile(surface.Options.Layout.UIPID, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "start, status, stop") {
-		t.Fatalf("ui error = %v", err)
+	if err := os.WriteFile(surface.Options.Layout.UIURL, []byte(url+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output, err := runCLI(t, surface, "ui")
+	if err != nil {
+		t.Fatalf("ui: %v", err)
+	}
+	if strings.TrimSpace(output) != url {
+		t.Fatalf("ui output = %q, want the live URL", output)
 	}
 }
 
@@ -128,7 +135,7 @@ func TestUIStopTerminatesProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ui stop: %v", err)
 	}
-	if output != "stopped\n" {
+	if output != "Stopped the WebUI.\n" {
 		t.Fatalf("stop output = %q", output)
 	}
 	waited := make(chan error, 1)

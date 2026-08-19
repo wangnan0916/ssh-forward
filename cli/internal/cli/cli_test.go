@@ -11,6 +11,7 @@ import (
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/app"
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/present"
 )
 
 // fakeManager is a scriptable core.Manager for CLI tests: commands do not
@@ -93,14 +94,19 @@ func TestStatusHuman(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Host: development — connected",
-		"Discovery: healthy (baseline true, scanner v1)",
-		"New remote ports: 9090 (ssh-forward add PORT)",
-		"managed:ipv4:loopback:8080 → ipv4:8080 (local 8080)",
-		"Local port conflicts:",
-		"loopback ipv4:3000",
+		"8080 → 127.0.0.1:8080",
+		"Available:",
+		"9090  ssh-forward add 9090",
+		"Needs attention:",
+		"3000  could not bind a local port",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("status output missing %q:\n%s", want, output)
+		}
+	}
+	for _, hide := range []string{"scanner", "baseline", "managed:ipv4", "Discovery:"} {
+		if strings.Contains(output, hide) {
+			t.Fatalf("status leaked internal detail %q:\n%s", hide, output)
 		}
 	}
 }
@@ -139,7 +145,7 @@ func TestAdd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add: %v", err)
 	}
-	if output != "added port 5173\n" {
+	if output != "Remembered 5173. Check with: ssh-forward status\n" {
 		t.Fatalf("add output = %q", output)
 	}
 	policies, err := app.LoadPolicies(path)
@@ -174,15 +180,15 @@ func TestAddDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add --dir: %v", err)
 	}
-	if output != "added directory /home/dev/src/app\n" {
+	if output != "Remembered directory /home/dev/src/app. Check with: ssh-forward status\n" {
 		t.Fatalf("add --dir output = %q", output)
 	}
 }
 
 func TestAddRejectsPortAndDir(t *testing.T) {
 	_, err := runApp(t, &fakeManager{}, "add", "5173", "--dir", "/home/dev/src/app")
-	if err == nil || !strings.Contains(err.Error(), "usage:") {
-		t.Fatalf("add port and --dir err = %v, want usage", err)
+	if err == nil || !strings.Contains(err.Error(), "remember a remote port") {
+		t.Fatalf("add port and --dir err = %v, want remember usage", err)
 	}
 }
 
@@ -195,7 +201,7 @@ func TestRemove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("remove: %v", err)
 	}
-	if output != "removed port 5173\n" {
+	if output != "Forgot 5173.\n" {
 		t.Fatalf("remove output = %q", output)
 	}
 }
@@ -236,8 +242,11 @@ func TestPolicyList(t *testing.T) {
 		t.Fatalf("policy list: %v", err)
 	}
 	output := stdout.String()
-	if !strings.Contains(output, "web priority=10 action=auto_forward") || !strings.Contains(output, "db priority=5 action=ignore") {
-		t.Fatalf("policy list output = %q", output)
+	if !strings.Contains(output, "Remembered:") || !strings.Contains(output, "8080") {
+		t.Fatalf("policy list missing remembered port:\n%s", output)
+	}
+	if !strings.Contains(output, "Other policies:") || !strings.Contains(output, "db") || !strings.Contains(output, "ignore") {
+		t.Fatalf("policy list missing hand-edited rule:\n%s", output)
 	}
 }
 
@@ -285,7 +294,7 @@ func TestPolicyListWithReaderShowsLastValidOnCorruptFile(t *testing.T) {
 		t.Fatalf("policy list with reader: %v", err)
 	}
 	output := stdout.String()
-	if !strings.Contains(output, "web priority=10 action=auto_forward") {
+	if !strings.Contains(output, "web") || !strings.Contains(output, "auto-forward") {
 		t.Fatalf("policy list output = %q, want the last valid policies", output)
 	}
 	if !strings.Contains(stderr.String(), "warning:") {
@@ -302,8 +311,8 @@ func TestPolicyListMissingFile(t *testing.T) {
 	if err := app.Run(context.Background(), []string{"policy", "list"}); err != nil {
 		t.Fatalf("policy list on a missing file: %v", err)
 	}
-	if stdout.String() != "no policies\n" {
-		t.Fatalf("policy list output = %q, want no policies", stdout.String())
+	if stdout.String() != "Nothing remembered yet. ssh-forward add PORT\n" {
+		t.Fatalf("policy list output = %q, want the empty state", stdout.String())
 	}
 }
 
@@ -316,7 +325,7 @@ func TestRemoveDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("remove --dir: %v", err)
 	}
-	if output != "removed directory /home/dev/src/app\n" {
+	if output != "Forgot directory /home/dev/src/app.\n" {
 		t.Fatalf("remove --dir output = %q", output)
 	}
 }
@@ -331,8 +340,8 @@ func TestAddIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add: %v", err)
 	}
-	if output != "already added port 8080\n" {
-		t.Fatalf("add output = %q, want already added", output)
+	if output != "Already remembered 8080.\n" {
+		t.Fatalf("add output = %q, want already remembered", output)
 	}
 }
 
@@ -343,15 +352,19 @@ func TestStatusShowsForwardsAndNewPorts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if !strings.Contains(output, "managed:ipv4:loopback:8080 → ipv4:8080 (local 8080)") {
+	if !strings.Contains(output, "8080 → 127.0.0.1:8080") {
 		t.Fatalf("status missing the forward:\n%s", output)
 	}
-	if !strings.Contains(output, "New remote ports: 9090") {
+	if !strings.Contains(output, "9090  ssh-forward add 9090") {
 		t.Fatalf("status missing the new-port summary:\n%s", output)
 	}
 	if strings.Contains(output, "continuous") || strings.Contains(output, "631/") {
 		t.Fatalf("status leaked the listener dump:\n%s", output)
 	}
+}
+
+func addablePorts(host *core.HostSnapshot, policies []core.ForwardingPolicy) []string {
+	return newRemotePorts(host, present.FromSnapshot(host, core.SimpleAutoForwardPorts(policies), policies))
 }
 
 func TestNewRemotePortsSkipsIgnored(t *testing.T) {
@@ -360,11 +373,149 @@ func TestNewRemotePortsSkipsIgnored(t *testing.T) {
 		ID: "deny-9090", Action: core.PolicyIgnore,
 		Conditions: []core.PolicyCondition{{RemotePorts: &core.PortRange{From: 9090, To: 9090}}},
 	}}
-	if got := newRemotePorts(host, policies); len(got) != 0 {
+	if got := addablePorts(host, policies); len(got) != 0 {
 		t.Fatalf("newRemotePorts = %v, want empty (9090 ignored)", got)
 	}
-	if got := newRemotePorts(host, nil); len(got) != 1 || got[0] != "9090" {
+	if got := addablePorts(host, nil); len(got) != 1 || got[0] != "9090" {
 		t.Fatalf("newRemotePorts without policies = %v, want [9090]", got)
+	}
+}
+
+func TestNewRemotePortsSkipsWildcard(t *testing.T) {
+	host := &core.HostSnapshot{
+		ListenerObservations: []core.ListenerObservation{
+			{Family: core.FamilyIPv4, BindScope: core.BindWildcard, RemotePort: 22},
+			{Family: core.FamilyIPv4, BindScope: core.BindLoopback, RemotePort: 7897},
+		},
+	}
+	if got := addablePorts(host, nil); len(got) != 1 || got[0] != "7897" {
+		t.Fatalf("newRemotePorts = %v, want [7897] (wildcard 22 omitted)", got)
+	}
+}
+
+func TestNewRemotePortsSkipsAutoForward(t *testing.T) {
+	host := snapshotWithHost().Host
+	policies := []core.ForwardingPolicy{{
+		ID: "port-9090", Action: core.PolicyAutoForward,
+		Conditions: []core.PolicyCondition{{RemotePorts: &core.PortRange{From: 9090, To: 9090}}},
+	}}
+	if got := addablePorts(host, policies); len(got) != 0 {
+		t.Fatalf("newRemotePorts = %v, want empty (9090 already matched)", got)
+	}
+}
+
+func TestStatusConnectingOmitsScannerInternals(t *testing.T) {
+	snapshot := core.Snapshot{
+		Host: &core.HostSnapshot{
+			Alias:      core.HostAlias("ubuntu"),
+			Connection: core.ConnectionConnecting,
+			Discovery:  core.DiscoverySnapshot{State: core.DiscoveryStopped, ScannerVersion: 0},
+		},
+	}
+	output, err := runApp(t, &fakeManager{snapshot: snapshot}, "status")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(output, "Host: ubuntu — connecting") || !strings.Contains(output, "Still opening the SSH session.") {
+		t.Fatalf("status missing the connecting copy:\n%s", output)
+	}
+	for _, hide := range []string{"scanner", "baseline", "Discovery:"} {
+		if strings.Contains(output, hide) {
+			t.Fatalf("connecting status leaked %q:\n%s", hide, output)
+		}
+	}
+}
+
+func TestStatusDegradedOmitsScannerInternals(t *testing.T) {
+	snapshot := snapshotWithHost()
+	snapshot.Host.Discovery.State = core.DiscoveryDegraded
+	snapshot.Host.Discovery.Diagnostic = "process_metadata_unavailable"
+	output, err := runApp(t, &fakeManager{snapshot: snapshot}, "status")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(output, "Process names are unavailable on this host.") {
+		t.Fatalf("status missing the degraded copy:\n%s", output)
+	}
+	for _, hide := range []string{"scanner", "baseline", "diagnostic:"} {
+		if strings.Contains(output, hide) {
+			t.Fatalf("degraded status leaked %q:\n%s", hide, output)
+		}
+	}
+}
+
+func TestStatusEmptyConnected(t *testing.T) {
+	snapshot := core.Snapshot{
+		Host: &core.HostSnapshot{
+			Alias:      core.HostAlias("ubuntu"),
+			Connection: core.ConnectionConnected,
+			Discovery:  core.DiscoverySnapshot{State: core.DiscoveryHealthy},
+		},
+	}
+	output, err := runApp(t, &fakeManager{snapshot: snapshot}, "status")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(output, "No ports forwarded yet. Remember one with: ssh-forward add PORT") {
+		t.Fatalf("status missing the empty state:\n%s", output)
+	}
+}
+
+func TestStatusWaitsUntilConnected(t *testing.T) {
+	stream := &fakeStream{pending: watchSnapshots(), notify: make(chan struct{}, 4)}
+	var stderr bytes.Buffer
+	output, err := runCLI(t, &App{
+		Manager: &fakeManager{
+			snapshot: watchSnapshots()[0],
+			watch:    func(context.Context) (core.SnapshotStream, error) { return stream, nil },
+		},
+		Host: core.HostAlias("development"),
+		Options: app.Options{
+			Interactive:  true,
+			Stderr:       &stderr,
+			PoliciesPath: filepath.Join(t.TempDir(), "policies.jsonc"),
+		},
+	}, "status")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "Connecting to development...") {
+		t.Fatalf("stderr = %q, want a connecting progress line", stderr.String())
+	}
+	if !strings.Contains(output, "Host: development — connected") {
+		t.Fatalf("status did not wait for connected:\n%s", output)
+	}
+	if strings.Contains(output, "— connecting") {
+		t.Fatalf("status still printed the connecting snapshot:\n%s", output)
+	}
+}
+
+func TestStatusJSONDoesNotWait(t *testing.T) {
+	output, err := runCLI(t, &App{
+		Manager: &fakeManager{snapshot: watchSnapshots()[0]},
+		Host:    core.HostAlias("development"),
+		Options: app.Options{
+			Interactive:  true,
+			PoliciesPath: filepath.Join(t.TempDir(), "policies.jsonc"),
+		},
+	}, "status", "--json")
+	if err != nil {
+		t.Fatalf("status --json: %v", err)
+	}
+	if !strings.Contains(output, `"connection":"connecting"`) {
+		t.Fatalf("status --json should be the current snapshot:\n%s", output)
+	}
+}
+
+func TestStatusHelpNamesHostFlag(t *testing.T) {
+	output, err := runApp(t, &fakeManager{}, "status", "--help")
+	if err != nil {
+		t.Fatalf("status --help: %v", err)
+	}
+	for _, want := range []string{"--host ALIAS", "-h is help", "ssh-forward default"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("status --help missing %q:\n%s", want, output)
+		}
 	}
 }
 
@@ -374,7 +525,9 @@ func TestHelpListsCommands(t *testing.T) {
 		t.Fatalf("--help: %v", err)
 	}
 	for _, want := range []string{
-		"Available Commands:",
+		"Daily:",
+		"Host:",
+		"More:",
 		"add",
 		"remove",
 		"status",
@@ -384,6 +537,8 @@ func TestHelpListsCommands(t *testing.T) {
 		"default",
 		"manager",
 		"ui",
+		"--host ALIAS",
+		"-h is help",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("--help missing %q:\n%s", want, output)
@@ -423,5 +578,92 @@ func TestIntentCommandsSkipManager(t *testing.T) {
 		if got != skip[cmd.Name()] {
 			t.Errorf("command %q skip-manager = %v, want %v", cmd.Name(), got, skip[cmd.Name()])
 		}
+	}
+}
+
+func TestPrimerOnNoCommand(t *testing.T) {
+	output, err := runApp(t, &fakeManager{})
+	if err != nil {
+		t.Fatalf("no command: %v", err)
+	}
+	for _, want := range []string{"Daily", "status", "add PORT", "host", "default ALIAS", "ssh-forward COMMAND --help"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("primer missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestAddWithoutArgsExplainsUsage(t *testing.T) {
+	_, err := runApp(t, &fakeManager{}, "add")
+	if err == nil || !strings.Contains(err.Error(), "ssh-forward add PORT") {
+		t.Fatalf("add without args err = %v, want remember usage", err)
+	}
+}
+
+func TestPolicyWithoutSubcommandLists(t *testing.T) {
+	var stdout bytes.Buffer
+	surface := &App{
+		Manager: &fakeManager{},
+		Options: app.Options{PoliciesPath: filepath.Join(t.TempDir(), "absent.jsonc"), Stdout: &stdout},
+	}
+	if err := surface.Run(context.Background(), []string{"policy"}); err != nil {
+		t.Fatalf("policy: %v", err)
+	}
+	if stdout.String() != "Nothing remembered yet. ssh-forward add PORT\n" {
+		t.Fatalf("policy output = %q", stdout.String())
+	}
+}
+
+func TestDefaultShowsPinnedHost(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("SSH_FORWARD_CONFIG_DIR", dir)
+	path := app.DefaultLayout().Config
+	if err := app.SetDefaultHost(path, "ubuntu"); err != nil {
+		t.Fatal(err)
+	}
+	output, err := runCLI(t, &App{Options: app.Options{ConfigPath: path}}, "default")
+	if err != nil {
+		t.Fatalf("default: %v", err)
+	}
+	if output != "default host: ubuntu\n" {
+		t.Fatalf("default output = %q", output)
+	}
+}
+
+func TestDefaultShowsEmptyState(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("SSH_FORWARD_CONFIG_DIR", dir)
+	output, err := runCLI(t, &App{Options: app.Options{ConfigPath: app.DefaultLayout().Config}}, "default")
+	if err != nil {
+		t.Fatalf("default: %v", err)
+	}
+	if !strings.Contains(output, "No default host.") || !strings.Contains(output, "ssh-forward host") {
+		t.Fatalf("default empty output = %q", output)
+	}
+}
+
+func TestHostWithoutSubcommandLists(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), []byte("Host ubuntu\nHost orb\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	t.Setenv("SSH_FORWARD_CONFIG_DIR", dir)
+	if err := app.SetDefaultHost(app.DefaultLayout().Config, "ubuntu"); err != nil {
+		t.Fatal(err)
+	}
+	output, err := runCLI(t, &App{Options: app.Options{ConfigPath: app.DefaultLayout().Config}}, "host")
+	if err != nil {
+		t.Fatalf("host: %v", err)
+	}
+	if !strings.Contains(output, "ubuntu  (default)") || !strings.Contains(output, "orb") {
+		t.Fatalf("host output = %q", output)
+	}
+	if strings.Contains(output, "* ") {
+		t.Fatalf("host still used a star marker:\n%s", output)
 	}
 }

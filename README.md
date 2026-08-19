@@ -69,24 +69,25 @@ ssh-forward remove --dir /home/dev/src/my-app
 ## Commands
 
 ```text
+ssh-forward                           # how to use it (does not connect)
 ssh-forward add 5173                  # remember a remote port
 ssh-forward add --dir /home/dev/app   # remember a Development Host directory
 ssh-forward remove 5173
 ssh-forward remove --dir /home/dev/app
 ssh-forward default <alias>           # pin the default Development Host
-ssh-forward status [--json]
+ssh-forward status [--json] [--watch]
 ssh-forward watch [--json]            # stream snapshots (JSONL with --json)
-ssh-forward policy list [--json]
-ssh-forward host list [--json]        # hosts from the SSH client config
+ssh-forward policy [--json]           # list policies
+ssh-forward host [--json]             # hosts from the SSH client config
 ssh-forward manager serve             # run the singleton in the foreground
 ssh-forward manager stop              # stop the singleton (recovery)
 ssh-forward manager restart           # stop, then auto-spawn again
-ssh-forward ui start                  # background loopback WebUI
+ssh-forward ui                        # open the loopback page
 ssh-forward ui status [--json]
 ssh-forward ui stop
 ```
 
-`status` shows the host, connection, active forwards, and any new remote ports. Process details are in `--json`. `ui start` opens a loopback page over the same Manager.
+`status` shows the host, connection, forwards, waiting remembered ports, unmatched loopback ports you can `add`, and local bind conflicts. Process details and wildcard listeners are in `--json`. On a terminal it waits until SSH has connected. Name the host with `--host ALIAS` (`-h` is help). `ui` opens a loopback page over the same Manager.
 
 `--host` overrides the default host. `--ssh-config PATH` points at an explicit SSH client config. `SSH_FORWARD_CONFIG_DIR` overrides the product config directory.
 

@@ -99,8 +99,8 @@ func normalizeHostDir(dir string) (string, error) {
 func SimpleAutoForwardPorts(policies []ForwardingPolicy) []uint16 {
 	var ports []uint16
 	for _, policy := range policies {
-		port, ok := simpleRememberedPort(policy)
-		if !ok {
+		port, dir, ok := DescribeSimpleAutoForward(policy)
+		if !ok || dir != "" {
 			continue
 		}
 		ports = append(ports, port)
@@ -111,32 +111,37 @@ func SimpleAutoForwardPorts(policies []ForwardingPolicy) []uint16 {
 
 func portAutoForwardIndex(policies []ForwardingPolicy, port uint16) int {
 	for index, policy := range policies {
-		got, ok := simpleRememberedPort(policy)
-		if ok && got == port {
+		got, dir, ok := DescribeSimpleAutoForward(policy)
+		if ok && dir == "" && got == port {
 			return index
 		}
 	}
 	return -1
 }
 
-func simpleRememberedPort(policy ForwardingPolicy) (uint16, bool) {
+// DescribeSimpleAutoForward reports the port or directory a Remembered
+// Auto-forward rule created. Hand-edited policies return ok=false.
+func DescribeSimpleAutoForward(policy ForwardingPolicy) (port uint16, dir string, ok bool) {
 	if !simpleAutoForward(policy) {
-		return 0, false
+		return 0, "", false
 	}
-	ports := policy.Conditions[0].RemotePorts
-	if ports == nil || ports.From != ports.To {
-		return 0, false
+	condition := policy.Conditions[0]
+	if ports := condition.RemotePorts; ports != nil {
+		if ports.From != ports.To {
+			return 0, "", false
+		}
+		return ports.From, "", true
 	}
-	return ports.From, true
+	if tree := condition.WorkingDirectoryTree; tree != nil {
+		return 0, *tree, true
+	}
+	return 0, "", false
 }
 
 func dirAutoForwardIndex(policies []ForwardingPolicy, dir string) int {
 	for index, policy := range policies {
-		if !simpleAutoForward(policy) {
-			continue
-		}
-		tree := policy.Conditions[0].WorkingDirectoryTree
-		if tree != nil && *tree == dir {
+		_, got, ok := DescribeSimpleAutoForward(policy)
+		if ok && got == dir {
 			return index
 		}
 	}

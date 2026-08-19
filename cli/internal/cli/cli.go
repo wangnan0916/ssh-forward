@@ -12,10 +12,6 @@ import (
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
-// ErrNeedCommand is returned when the user ran the root with no
-// subcommand: the usage text has already been written to stderr.
-var ErrNeedCommand = errors.New("missing command")
-
 // ErrUsage marks a flag or host-resolution failure that should exit 2.
 var ErrUsage = errors.New("usage")
 
@@ -108,10 +104,20 @@ func (a *App) bindDefaults() {
 	}
 }
 
-func (a *App) connectOptions() app.Options {
-	opts := a.Options
-	opts.Interactive = app.IsTerminal(a.Options.Stdin)
+func jsonFlag(cmd *cobra.Command) bool {
+	value, _ := cmd.Flags().GetBool("json")
+	return value
+}
+
+func withInteractive(opts app.Options) app.Options {
+	if app.IsTerminal(opts.Stdin) {
+		opts.Interactive = true
+	}
 	return opts
+}
+
+func (a *App) connectOptions() app.Options {
+	return withInteractive(a.Options)
 }
 
 func (a *App) serveManager(ctx context.Context) error {
@@ -147,6 +153,7 @@ func needsManager(cmd *cobra.Command) bool {
 func (a *App) prepareCommand(cmd *cobra.Command) error {
 	a.bindGlobalFlags(cmd)
 	a.bindDefaults()
+	a.Options = withInteractive(a.Options)
 	if !needsManager(cmd) {
 		return nil
 	}
@@ -176,10 +183,26 @@ func flagError(cmd *cobra.Command, err error) error {
 	return UsageError(err)
 }
 
+const primerText = `ssh-forward — expose Development Host ports on localhost
+
+Daily
+  status          what is forwarded right now
+  add PORT        remember a remote port
+  remove PORT     forget a remembered port
+  ui              open the loopback page
+
+Host
+  host            aliases from ~/.ssh/config
+  default ALIAS   pin the default host
+
+More: watch, policy, manager (recovery)
+
+ssh-forward COMMAND --help for details.
+`
+
 func missingCommand(cmd *cobra.Command) error {
-	cmd.SetOut(cmd.ErrOrStderr())
-	_ = cmd.Usage()
-	return ErrNeedCommand
+	_, err := io.WriteString(cmd.OutOrStdout(), primerText)
+	return err
 }
 
 func requirePort(command, text string) (uint16, error) {

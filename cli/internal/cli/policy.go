@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/app"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 func (a *App) runPolicyList(jsonOutput bool) error {
@@ -24,12 +26,42 @@ func (a *App) runPolicyList(jsonOutput bool) error {
 		fmt.Fprintln(a.Options.Stdout, string(encoded))
 		return nil
 	}
+	return a.writePolicyListHuman(policies)
+}
+
+func (a *App) writePolicyListHuman(policies []core.ForwardingPolicy) error {
 	if len(policies) == 0 {
-		fmt.Fprintln(a.Options.Stdout, "no policies")
+		fmt.Fprintln(a.Options.Stdout, "Nothing remembered yet. ssh-forward add PORT")
 		return nil
 	}
+	var remembered []string
+	var other []core.ForwardingPolicy
 	for _, policy := range policies {
-		fmt.Fprintf(a.Options.Stdout, "%s priority=%d action=%s\n", policy.ID, policy.Priority, policy.Action)
+		if port, dir, ok := core.DescribeSimpleAutoForward(policy); ok {
+			if dir != "" {
+				remembered = append(remembered, "  "+dir)
+			} else {
+				remembered = append(remembered, fmt.Sprintf("  %d", port))
+			}
+			continue
+		}
+		other = append(other, policy)
+	}
+	if len(remembered) != 0 {
+		fmt.Fprintln(a.Options.Stdout, "Remembered:")
+		for _, line := range remembered {
+			fmt.Fprintln(a.Options.Stdout, line)
+		}
+	}
+	if len(other) != 0 {
+		if len(remembered) != 0 {
+			fmt.Fprintln(a.Options.Stdout)
+		}
+		fmt.Fprintln(a.Options.Stdout, "Other policies:")
+		for _, policy := range other {
+			action := strings.ReplaceAll(string(policy.Action), "_", "-")
+			fmt.Fprintf(a.Options.Stdout, "  %s  %s\n", policy.ID, action)
+		}
 	}
 	return nil
 }

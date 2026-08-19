@@ -12,7 +12,7 @@ func (a *App) runManagerStop() error {
 	if err := app.Stop(a.Options.Layout); err != nil {
 		return err
 	}
-	fmt.Fprintln(a.Options.Stdout, "stopped")
+	fmt.Fprintln(a.Options.Stdout, "Stopped the manager. Forwards will return on the next status.")
 	return nil
 }
 
@@ -28,6 +28,6 @@ func (a *App) runManagerRestart(ctx context.Context) error {
 		return err
 	}
 	_ = session.Manager.Close(context.Background())
-	fmt.Fprintln(a.Options.Stdout, "restarted")
+	fmt.Fprintln(a.Options.Stdout, "Restarted the manager.")
 	return nil
 }

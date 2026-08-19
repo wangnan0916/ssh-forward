@@ -79,6 +79,27 @@ func TestWatchEmitsHumanBlocksPerGeneration(t *testing.T) {
 	}
 }
 
+func TestStatusWatchStreamsLikeWatch(t *testing.T) {
+	stream := &fakeStream{pending: watchSnapshots(), notify: make(chan struct{}, 4)}
+	manager := &fakeManager{watch: func(context.Context) (core.SnapshotStream, error) { return stream, nil }}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		<-stream.notify
+		<-stream.notify
+		cancel()
+	}()
+	var stdout strings.Builder
+	app := &App{Manager: manager, Host: core.HostAlias("development"), Options: app.Options{Stdout: &stdout}}
+	if err := app.Run(ctx, []string{"status", "--watch"}); err != nil {
+		t.Fatalf("status --watch: %v", err)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "— connecting") || !strings.Contains(output, "— connected") {
+		t.Fatalf("status --watch output missing a generation:\n%s", output)
+	}
+}
+
 func TestWatchEmitsOneJSONLinePerGeneration(t *testing.T) {
 	stream := &fakeStream{pending: watchSnapshots(), notify: make(chan struct{}, 4)}
 	manager := &fakeManager{watch: func(context.Context) (core.SnapshotStream, error) { return stream, nil }}

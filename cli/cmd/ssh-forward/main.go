@@ -56,9 +56,6 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	surface.Options.Stdout = stdout
 	surface.Options.Stderr = stderr
 	if err := surface.Run(ctx, args); err != nil {
-		if errors.Is(err, cli.ErrNeedCommand) {
-			return 2
-		}
 		fmt.Fprintf(stderr, "ssh-forward: %v\n", err)
 		if errors.Is(err, cli.ErrUsage) {
 			return 2

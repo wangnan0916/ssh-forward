@@ -8,7 +8,7 @@ This document describes the Discovery and Policy surface in two registers. Enfor
 
 After a Development Host connects, the first complete observation is the Discovery Baseline.
 
-Slice 5 adds policy application on top of the Baseline: existing policies are applied immediately; Remote Listeners without a matching policy remain visible and are not forwarded. `status` lists those ports as a one-line heads-up (`ssh-forward add PORT`).
+Slice 5 adds policy application on top of the Baseline: existing policies are applied immediately; Remote Listeners without a matching policy remain visible and are not forwarded. Human `status` lists unmatched loopback ports under Available (`ssh-forward add PORT`); wildcard listeners stay out of that list because they are already on the Development Host.
 
 ## Initial policy matchers
 

@@ -11,24 +11,26 @@ Still planned: comment-preserving HuJSON patches, idle manager exit, Monitor at 
 The Go CLI is designed independently for this product and has no command, output, file, socket, or runtime-compatibility obligation to any similarly named tool. Its command surface follows the product domain:
 
 ```text
+ssh-forward                           # grouped primer (exit 0; does not connect)
 ssh-forward add 5173                  # remember a remote port
 ssh-forward add --dir /home/dev/app   # remember a Development Host directory
 ssh-forward remove 5173
 ssh-forward remove --dir /home/dev/app
-ssh-forward default <alias>           # pin the default Development Host
-ssh-forward status [--json]
+ssh-forward default                   # show the pinned host
+ssh-forward default ALIAS             # pin the default Development Host
+ssh-forward status [--json] [--watch]
 ssh-forward watch [--json]            # stream snapshots (JSONL with --json)
-ssh-forward policy list [--json]
-ssh-forward host list [--json]        # hosts from the SSH client config
+ssh-forward policy [--json]           # list policies (`policy list` is an alias)
+ssh-forward host [--json]             # hosts from the SSH client config (`host list` is an alias)
 ssh-forward manager serve             # run the singleton in the foreground
 ssh-forward manager stop              # stop the singleton (recovery)
 ssh-forward manager restart           # stop, then auto-spawn again
-ssh-forward ui start                  # background loopback WebUI
+ssh-forward ui                        # open the loopback page (`ui start` is an alias)
 ssh-forward ui status [--json]
 ssh-forward ui stop
 ```
 
-`add` writes a simple Auto-forward policy (one port, or one working-directory tree) and is idempotent. `remove` forgets that same simple rule. Unmatched listeners are not forwarded; `status` lists new remote ports as a one-line heads-up and lists Local Port Conflicts when allocation could not bind a Local Endpoint. The running Manager applies a saved policy edit against the current observations without waiting for the next scan. The Development Host resolves in order: `--host`, then `config.jsonc`'s `default_host` (set with `ssh-forward default ALIAS`), then the single literal Host alias in the SSH client configuration; with several hosts and no default, a terminal prompts for one per command, and a non-terminal run lists the candidates in the error. There are no legacy numeric shorthands or compatibility aliases. Human-readable output is not an automation contract; every resource command supports structured `--json` output for scripts and desktop clients. `status` and `watch --json` emit the Snapshot codec in `cli/internal/snapshot`, the same shape JSON-RPC embeds.
+`add` writes a simple Auto-forward policy (one port, or one working-directory tree) and is idempotent. `remove` forgets that same simple rule. Unmatched listeners are not forwarded; human `status` groups Forwards, Waiting, Available (unmatched **loopback** ports with `ssh-forward add PORT`), and Needs attention (Local Port Conflicts). Wildcard listeners are already on the Development Host and are omitted from Available (`status --json` still has the full Snapshot). The running Manager applies a saved policy edit against the current observations without waiting for the next scan. The Development Host resolves in order: `--host`, then `config.jsonc`'s `default_host` (set with `ssh-forward default ALIAS`, or by picking one at a terminal prompt — number or full alias), then the single literal Host alias in the SSH client configuration; with several hosts and no default, a terminal prompts once and pins that choice, and a non-terminal run lists the candidates in the error. `-h` is help; name the host with `--host`. On a terminal, human `status` waits until SSH has connected (or failed) and discovery has a first result; `--json` prints the current snapshot with no wait; `--watch` streams like `watch`. `ssh-forward` with no subcommand prints a grouped primer and exits 0. `host`, `policy`, and `ui` with no subcommand do their one useful action. There are no legacy numeric shorthands or compatibility aliases. Human-readable output is not an automation contract; every resource command supports structured `--json` output for scripts and desktop clients. `status` and `watch --json` emit the Snapshot codec in `cli/internal/snapshot`, the same shape JSON-RPC embeds.
 
 ## Remembered Auto-forward
 
@@ -36,7 +38,7 @@ A remembered port forwards when that remote port has a listener, and does not oc
 
 ## Persistent intent
 
-The product persists the `default_host` in `config.jsonc` (set with `ssh-forward default`) and Forwarding Policies in `policies.jsonc`. `Monitor at Login`, host lists, product settings, and revisioned configuration writes land with the desktop slice. Runtime tunnels, Listener Observations, Active Forwards, and live connection state remain runtime-only. After restart, policy-driven state is reconstructed from fresh observations rather than restored from a stale runtime snapshot.
+The product persists the `default_host` in `config.jsonc` (set with `ssh-forward default`, or by picking a host at a terminal prompt) and Forwarding Policies in `policies.jsonc`. `Monitor at Login`, host lists, product settings, and revisioned configuration writes land with the desktop slice. Runtime tunnels, Listener Observations, Active Forwards, and live connection state remain runtime-only. After restart, policy-driven state is reconstructed from fresh observations rather than restored from a stale runtime snapshot.
 
 ## Configuration locations
 
