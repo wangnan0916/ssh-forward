@@ -2,7 +2,8 @@
 name: ssh-forward
 description: >-
   Operates the ssh-forward CLI: remember a remote port or Development Host
-  directory for Auto-forward, pin a default SSH alias, and inspect status.
+  directory for Auto-forward, pin a default SSH alias, inspect status, or
+  start the loopback WebUI.
   Use when forwarding a remote development listener to localhost, running
   ssh-forward, adding or removing a remembered port or --dir, or diagnosing
   why a local port is not reachable.
@@ -69,7 +70,16 @@ ssh-forward status --json
 
 `add` is idempotent. `remove` fails if that simple port or directory rule is not remembered. `add`/`remove` only create or drop those simple Auto-forward rules; hand-edited policies with extra matchers are left alone.
 
-Do not run `ssh-forward watch` or `ssh-forward manager serve` unless the user asked: `watch` streams until interrupt; `serve` holds the singleton in the foreground. There is no TUI. A loopback WebUI (`ssh-forward ui`) is planned and not in the tree yet.
+Do not run `ssh-forward watch` or `ssh-forward manager serve` unless the user asked: `watch` streams until interrupt; `serve` holds the singleton in the foreground. There is no TUI.
+
+When the user wants the loopback page:
+
+```bash
+ssh-forward ui start
+ssh-forward ui status --json
+```
+
+`start` prints `http://127.0.0.1:PORT/?token=…` (and opens a browser unless `SSH_FORWARD_UI_NO_OPEN=1`). It is idempotent while that process is running. `ui stop` ends only the page; Active Forwards and the Manager keep running. Do not run `ui start` unless the user asked for the WebUI. Do not use a blocking `ssh-forward ui` with no subcommand.
 
 ## 4. Report live state
 

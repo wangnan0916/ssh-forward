@@ -43,7 +43,7 @@ Enforced today:
 
 Lands with later slices:
 
-- Loopback WebUI (`ssh-forward ui`): bind `127.0.0.1` only, ephemeral port, unguessable URL token; the browser never speaks Manager IPC directly (ADR-0021).
+- Loopback WebUI (`ssh-forward ui start`): bind `127.0.0.1` only, ephemeral port, unguessable URL token; the browser never speaks Manager IPC directly (ADR-0021).
 - Askpass prompting: desktop phase (research/library-options.md:136).
 - Broader ownership/symlink fail-closed checks on the config directory, logs, and lock files at startup.
 - Log redaction ("never emitted unredacted in normal logs"): with the first log sink (research/library-options.md slog design).

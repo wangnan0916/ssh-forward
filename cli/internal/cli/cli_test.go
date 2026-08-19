@@ -369,6 +369,7 @@ func TestHelpListsCommands(t *testing.T) {
 		"host",
 		"default",
 		"manager",
+		"ui",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("--help missing %q:\n%s", want, output)
@@ -401,7 +402,7 @@ func TestIntentCommandsSkipManager(t *testing.T) {
 	root := (&App{}).RootCommand()
 	skip := map[string]bool{
 		"add": true, "remove": true, "policy": true, "host": true,
-		"default": true, "manager": true, "help": true,
+		"default": true, "manager": true, "ui": true, "help": true,
 	}
 	for _, cmd := range root.Commands() {
 		got := cmd.Annotations[skipManagerKey] == "1"

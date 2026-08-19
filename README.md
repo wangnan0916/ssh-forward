@@ -5,7 +5,7 @@ Discover ports on a Linux development host and use them on localhost through you
 [![CI](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml/badge.svg)](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-The first public release is the **CLI**. Next is a loopback WebUI (`ssh-forward ui`, after the CLI is ready), then a macOS menu-bar app (after the WebUI is ready). Neither later surface is in this repository yet. There is no TUI.
+The first public release is the **CLI**, including a loopback WebUI (`ssh-forward ui start`). Next is a macOS menu-bar app (after the WebUI is ready). The desktop app is not in this repository yet. There is no TUI.
 
 This is not a general SSH tunnel, credential, key, or host-profile manager. Authentication stays with system OpenSSH and `~/.ssh/config`.
 
@@ -79,9 +79,12 @@ ssh-forward watch [--json]            # stream snapshots (JSONL with --json)
 ssh-forward policy list [--json]
 ssh-forward host list [--json]        # hosts from the SSH client config
 ssh-forward manager serve             # run the singleton in the foreground
+ssh-forward ui start                  # background loopback WebUI
+ssh-forward ui status [--json]
+ssh-forward ui stop
 ```
 
-`status` shows the host, connection, active forwards, and any new remote ports. Process details are in `--json`.
+`status` shows the host, connection, active forwards, and any new remote ports. Process details are in `--json`. `ui start` opens a loopback page over the same Manager.
 
 `--host` overrides the default host. `--ssh-config PATH` points at an explicit SSH client config. `SSH_FORWARD_CONFIG_DIR` overrides the product config directory.
 
@@ -130,11 +133,10 @@ Locations:
 
 ## Status
 
-Public **alpha** (`0.1.0-alpha.1`). The CLI covers discovery, remembered Auto-forward for ports and directories, reconnect, and JSON-RPC to a per-user manager.
+Public **alpha** (`0.1.0-alpha.1`). The CLI covers discovery, remembered Auto-forward for ports and directories, reconnect, JSON-RPC to a per-user manager, and a loopback WebUI.
 
 Not in this release:
 
-- loopback WebUI (`ssh-forward ui`)
 - macOS menu-bar app and Dashboard
 - comment-preserving policy writes
 - login monitoring and idle manager exit

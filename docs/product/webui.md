@@ -2,17 +2,21 @@
 
 ## Implementation status
 
-Planned for slice 7. The CLI (slice 6) is ready. This document is the product spec; `ssh-forward ui` is not in the tree yet. ADR-0021 records the choice over a TUI.
+Slice 7 is implemented in the CLI: `ssh-forward ui start` / `status` / `stop`. ADR-0021 records the choice over a TUI. GitHub issue #1 is the original implementation spec.
 
-The list layout, remember/forget port, typed port form, and forget confirmation below are the interaction contract. Visual chrome, spacing, and copy may change when slice 7 is implemented.
+The list layout, remember/forget port, typed port form, and forget confirmation below are the interaction contract. Visual chrome, spacing, and copy may still change.
 
 ## Command
 
 ```text
-ssh-forward ui
+ssh-forward ui start
+ssh-forward ui status [--json]
+ssh-forward ui stop
 ```
 
-Same Manager composition as `status` / `watch`: `app.Connect` auto-spawns the per-user singleton when needed. Not the no-arg default. `--json` does not apply. Closing the command stops the HTTP listener; the Manager keeps running.
+`start` launches a background UI process (at most one per user), prints the loopback URL (token included), and opens the system browser when it can. If the UI is already running, it reprints that URL and succeeds. `status` prints the same URL or fails if nothing is running. `stop` ends the UI process; the Manager keeps running. Closing the terminal that ran `start` does not stop the page. `ui` without a subcommand is usage. Not the no-arg default of `ssh-forward`.
+
+The child attaches to the per-user Manager through `app.Connect` the same way `status` / `watch` do (auto-spawn when needed). Runtime files next to the manager socket: `ui.pid`, `ui.url`, `ui.log`. `SSH_FORWARD_UI_NO_OPEN=1` skips opening a browser. `SSH_FORWARD_UI_BINARY` overrides the spawned executable (tests).
 
 ## Trust
 
@@ -25,7 +29,7 @@ Same Manager composition as `status` / `watch`: `app.Connect` auto-spawns the pe
 
 One table, one type, matching the desktop lists (`docs/product/desktop-experience.md`):
 
-1. **Attention** — unmatched new Remote Listeners and Local Port Conflicts
+1. **Attention** — Local Port Conflicts. Snapshot has no per-listener newness flag, so unmatched observed ports are listed under Available rather than invented as “new.”
 2. **Active** — working Forwards (remote port, Allocated Local Port, process, directory)
 3. **Remembered** — remembered ports with no current listener
 4. **Available** — observed listeners that are neither forwarded nor in Attention

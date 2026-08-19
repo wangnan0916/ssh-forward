@@ -15,6 +15,9 @@ type Layout struct {
 	Socket   string
 	PID      string
 	Log      string
+	UIPID    string
+	UILog    string
+	UIURL    string
 }
 
 // DefaultLayout resolves the product directory per cli-and-state.md:
@@ -29,6 +32,9 @@ func DefaultLayout() Layout {
 		Socket:   filepath.Join(dir, "manager.sock"),
 		PID:      filepath.Join(dir, "manager.pid"),
 		Log:      filepath.Join(dir, "manager.log"),
+		UIPID:    filepath.Join(dir, "ui.pid"),
+		UILog:    filepath.Join(dir, "ui.log"),
+		UIURL:    filepath.Join(dir, "ui.url"),
 	}
 }
 

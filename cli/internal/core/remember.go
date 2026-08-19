@@ -95,17 +95,39 @@ func normalizeHostDir(dir string) (string, error) {
 	return dir, nil
 }
 
-func portAutoForwardIndex(policies []ForwardingPolicy, port uint16) int {
-	for index, policy := range policies {
-		if !simpleAutoForward(policy) {
+// SimpleAutoForwardPorts lists remote ports that RememberPort wrote.
+func SimpleAutoForwardPorts(policies []ForwardingPolicy) []uint16 {
+	var ports []uint16
+	for _, policy := range policies {
+		port, ok := simpleRememberedPort(policy)
+		if !ok {
 			continue
 		}
-		ports := policy.Conditions[0].RemotePorts
-		if ports != nil && ports.From == port && ports.To == port {
+		ports = append(ports, port)
+	}
+	slices.Sort(ports)
+	return ports
+}
+
+func portAutoForwardIndex(policies []ForwardingPolicy, port uint16) int {
+	for index, policy := range policies {
+		got, ok := simpleRememberedPort(policy)
+		if ok && got == port {
 			return index
 		}
 	}
 	return -1
+}
+
+func simpleRememberedPort(policy ForwardingPolicy) (uint16, bool) {
+	if !simpleAutoForward(policy) {
+		return 0, false
+	}
+	ports := policy.Conditions[0].RemotePorts
+	if ports == nil || ports.From != ports.To {
+		return 0, false
+	}
+	return ports.From, true
 }
 
 func dirAutoForwardIndex(policies []ForwardingPolicy, dir string) int {

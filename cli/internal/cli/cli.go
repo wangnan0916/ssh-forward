@@ -143,10 +143,17 @@ func needsManager(cmd *cobra.Command) bool {
 func (a *App) prepareCommand(cmd *cobra.Command) error {
 	a.bindGlobalFlags(cmd)
 	a.bindDefaults()
-	if a.Manager != nil || !needsManager(cmd) {
+	if !needsManager(cmd) {
 		return nil
 	}
-	session, err := app.Connect(cmd.Context(), a.connectOptions())
+	return a.ensureSession(cmd.Context())
+}
+
+func (a *App) ensureSession(ctx context.Context) error {
+	if a.Manager != nil {
+		return nil
+	}
+	session, err := app.Connect(ctx, a.connectOptions())
 	if err != nil {
 		if app.IsResolution(err) {
 			return UsageError(err)

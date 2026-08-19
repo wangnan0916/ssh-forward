@@ -26,7 +26,7 @@ The project lives at `github.com/wangnan0916/ssh-forward`. Hosted macOS and Linu
 └── CONTRIBUTING.md
 ```
 
-A loopback WebUI follows once the CLI is ready; a native macOS app (`desktop/`) follows once the WebUI is ready. Neither directory exists yet. No TUI is planned (ADR-0021). No legacy source directory is included. The transport spike ran on a separate throwaway branch; only its verdict and resulting decision changes returned to `main`.
+A loopback WebUI is in the CLI (`ssh-forward ui start`); a native macOS app (`desktop/`) follows once the WebUI is ready. The `desktop/` directory does not exist yet. No TUI is planned (ADR-0021). No legacy source directory is included. The transport spike ran on a separate throwaway branch; only its verdict and resulting decision changes returned to `main`.
 
 ## Versions
 

@@ -1,7 +1,7 @@
-// Command ssh-forward is the domain-oriented CLI (slice 6,
+// Command ssh-forward is the domain-oriented CLI (slices 6–7,
 // implementation-sequence.md): it auto-spawns a per-user manager, exposes
-// the product domain's command surface, and emits wire-shaped --json output
-// for scripts and desktop clients.
+// the product domain's command surface, emits wire-shaped --json output,
+// and can serve a loopback WebUI.
 package main
 
 import (

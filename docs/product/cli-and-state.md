@@ -2,7 +2,7 @@
 
 ## Status
 
-The command surface below is implemented (slice 6, implementation-sequence.md): `cli/cmd/ssh-forward/` builds the CLI binary. `status` / `watch` auto-spawn a per-user manager and then run as its JSON-RPC client; `SSH_FORWARD_NO_AUTOSPAWN=1` keeps the in-process fallback for scripts and tests. `add` and `remove` write `policies.jsonc` and do not require a manager or Development Host. The Manager reads `policies.jsonc` (hot-reloaded) and `config.jsonc`'s `default_host`. `SSH_FORWARD_CONFIG_DIR` overrides the product config directory. `app.Connect` and `app.Serve` are the composition seam where the CLI, a later WebUI, and a later desktop core all land; in-process assembly goes through `core.NewConfiguredManager`.
+The command surface below is implemented (slices 6–7, implementation-sequence.md): `cli/cmd/ssh-forward/` builds the CLI binary. `status` / `watch` auto-spawn a per-user manager and then run as its JSON-RPC client; `SSH_FORWARD_NO_AUTOSPAWN=1` keeps the in-process fallback for scripts and tests. `add` and `remove` write `policies.jsonc` and do not require a manager or Development Host. The Manager reads `policies.jsonc` (hot-reloaded) and `config.jsonc`'s `default_host`. `SSH_FORWARD_CONFIG_DIR` overrides the product config directory. `app.Connect` and `app.Serve` are the composition seam where the CLI, the loopback WebUI, and a later desktop core all land; in-process assembly goes through `core.NewConfiguredManager`.
 
 Still planned: comment-preserving HuJSON patches, idle manager exit, Monitor at Login, and revisioned configuration writes.
 
@@ -21,7 +21,9 @@ ssh-forward watch [--json]            # stream snapshots (JSONL with --json)
 ssh-forward policy list [--json]
 ssh-forward host list [--json]        # hosts from the SSH client config
 ssh-forward manager serve             # run the singleton in the foreground
-ssh-forward ui                        # planned: loopback WebUI (slice 7)
+ssh-forward ui start                  # background loopback WebUI
+ssh-forward ui status [--json]
+ssh-forward ui stop
 ```
 
 `add` writes a simple Auto-forward policy (one port, or one working-directory tree) and is idempotent. `remove` forgets that same simple rule. Unmatched listeners are not forwarded; `status` lists new remote ports as a one-line heads-up and lists Local Port Conflicts when allocation could not bind a Local Endpoint. The running Manager applies a saved policy edit against the current observations without waiting for the next scan. The Development Host resolves in order: `--host`, then `config.jsonc`'s `default_host` (set with `ssh-forward default ALIAS`), then the single literal Host alias in the SSH client configuration; with several hosts and no default, a terminal prompts for one per command, and a non-terminal run lists the candidates in the error. There are no legacy numeric shorthands or compatibility aliases. Human-readable output is not an automation contract; every resource command supports structured `--json` output for scripts and desktop clients. `status` and `watch --json` emit the Snapshot codec in `cli/internal/snapshot`, the same shape JSON-RPC embeds.
@@ -47,6 +49,8 @@ The planned configuration watch (debounced preview/reconcile of external JSONC e
 ## Manager ownership
 
 Only one manager runs per user (ADR-0016), and the CLI implements it: `ssh-forward manager serve` owns the Manager and listens on the per-user Unix socket (`manager.sock` next to the configuration files, `SSH_FORWARD_CONFIG_DIR`-overridable). `status` and `watch` are then clients of that singleton over the JSON-RPC v1 wire (docs/design/ipc-protocol.md) and share its state; a conflicting `--host` is a warning, not an error. The first `status`/`watch` auto-spawns the singleton in the background (its own executable by absolute path, `manager.log` next to the socket, `manager.pid` recording it) and then executes as its client, so there is no separate start step. Autospawn encodes Serve options as environment (`SSH_FORWARD_MANAGER_SERVE=1`, host, policies path, optional SSH config, and `SSH_FORWARD_CONFIG_DIR`); the child enters `app.Serve` without parsing a Cobra command tree. Foreground `ssh-forward manager serve` still uses Cobra. `SSH_FORWARD_NO_AUTOSPAWN=1` keeps the in-process fallback for scripts and tests, and `SSH_FORWARD_MANAGER_BINARY` overrides the spawned executable. A second serve is refused while one runs; a stale socket file (one no live manager answers) is replaced. Desktop starts its signed bundled core by absolute bundle path rather than searching `$PATH` for a helper. An incompatible client reports the required restart or upgrade and never terminates an unknown manager automatically.
+
+`ssh-forward ui start` is a second per-user background process: it binds loopback HTTP, records `ui.pid` / `ui.url` / `ui.log` next to the manager files, and talks to the Manager through `app.Connect`. `ui stop` ends only that process. `SSH_FORWARD_UI_BINARY` overrides the spawned UI executable; `SSH_FORWARD_UI_NO_OPEN=1` skips opening a browser.
 
 ## Compatibility
 

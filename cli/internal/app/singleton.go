@@ -178,22 +178,10 @@ func TakeManagerServeEnv(opts *Options) bool {
 }
 
 func spawn(opts Options, host string) error {
-	executable := os.Getenv("SSH_FORWARD_MANAGER_BINARY")
-	if executable == "" {
-		var err error
-		executable, err = os.Executable()
-		if err != nil {
-			return err
-		}
-	}
-	if err := os.MkdirAll(opts.Layout.Dir, 0o700); err != nil {
-		return err
-	}
-	logFile, err := os.OpenFile(opts.Layout.Log, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	executable, err := ResolveSpawnBinary("SSH_FORWARD_MANAGER_BINARY")
 	if err != nil {
 		return err
 	}
-	command := exec.Command(executable)
 	extra := []string{
 		envManagerServe + "=1",
 		envManagerHost + "=" + host,
@@ -203,17 +191,36 @@ func spawn(opts Options, host string) error {
 	if opts.SSHConfigPath != "" {
 		extra = append(extra, envManagerSSHConfig+"="+opts.SSHConfigPath)
 	}
-	command.Env = append(os.Environ(), extra...)
+	return StartDetached(executable, nil, extra, opts.Layout.Dir, opts.Layout.Log)
+}
+
+// ResolveSpawnBinary is the test override for a background child: env if
+// set, otherwise this executable. `go test` must not spawn the test binary.
+func ResolveSpawnBinary(envName string) (string, error) {
+	if executable := os.Getenv(envName); executable != "" {
+		return executable, nil
+	}
+	return os.Executable()
+}
+
+// StartDetached launches executable in a new session, appending stdout and
+// stderr to logPath. extraEnv is added to the process environment.
+func StartDetached(executable string, args, extraEnv []string, dir, logPath string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return err
+	}
+	defer logFile.Close()
+	command := exec.Command(executable, args...)
+	command.Env = append(os.Environ(), extraEnv...)
 	command.Stdin = nil
 	command.Stdout = logFile
 	command.Stderr = logFile
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := command.Start(); err != nil {
-		_ = logFile.Close()
-		return err
-	}
-	_ = logFile.Close()
-	return nil
+	return command.Start()
 }
 
 // NewOpenSSHAdapter constructs the OpenSSH adapter, resolving a relative

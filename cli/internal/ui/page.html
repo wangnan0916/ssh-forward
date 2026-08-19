@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ssh-forward</title>
+  <style>
+    :root { --line: #e4e4de; --muted: #6b6b6b; --accent: #2f6fed; --bad: #c43838; --ok: #1f7a4d; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px/1.45 ui-sans-serif, system-ui, sans-serif; background: #f4f4f1; color: #1a1a1a; padding: 20px; }
+    .app { background: #fff; border: 1px solid var(--line); border-radius: 10px; max-width: 960px; overflow: hidden; }
+    .top { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 14px 16px; border-bottom: 1px solid var(--line); align-items: center; }
+    .host { font-weight: 600; }
+    .meta { color: var(--muted); font-size: 13px; }
+    .forms { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    label { color: var(--muted); font-size: 12px; }
+    input { width: 88px; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; }
+    button { border: 1px solid var(--line); background: #fafafa; border-radius: 6px; padding: 6px 10px; font: inherit; cursor: pointer; }
+    button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    button.danger { color: var(--bad); }
+    .tabs { display: flex; border-bottom: 1px solid var(--line); padding: 0 8px; }
+    .tab { background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 10px 12px; color: var(--muted); }
+    .tab.on { color: #1a1a1a; border-bottom-color: var(--accent); font-weight: 600; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
+    th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; }
+    .conflict { color: var(--bad); }
+    .active { color: var(--ok); }
+    .waiting { color: var(--accent); }
+    .empty { color: #aaa; padding: 28px 12px; }
+    .bar { padding: 10px 16px; color: var(--muted); font-size: 13px; background: #fafaf7; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="top">
+      <div>
+        <div class="host" id="host">ssh-forward</div>
+        <div class="meta" id="meta"></div>
+      </div>
+      <form class="forms" id="add-form">
+        <label>Remember port</label>
+        <input name="port" inputmode="numeric" maxlength="5" placeholder="5173" autocomplete="off">
+        <button class="primary" type="submit">Remember</button>
+      </form>
+      <form class="forms" id="forget-form">
+        <label>Forget port</label>
+        <input name="port" inputmode="numeric" maxlength="5" placeholder="3000" autocomplete="off">
+        <button class="danger" type="submit">Forget</button>
+      </form>
+    </div>
+    <div class="tabs" id="tabs"></div>
+    <table>
+      <thead><tr><th>Status</th><th>Remote</th><th>Local</th><th>Process</th><th>Directory</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="bar" id="bar"></div>
+  </div>
+<script>
+const token = new URLSearchParams(location.search).get("token") || "";
+const api = (path, opts) => fetch(path + (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token), opts);
+let view = "attention";
+let snap = { host: null };
+let remembered = [];
+
+function exe(obs) {
+  const chain = (obs.process_chains || [])[0];
+  const proc = chain && (chain.processes || [])[0];
+  return proc ? { exe: proc.executable || "", cwd: proc.working_directory || "" } : { exe: "", cwd: "" };
+}
+
+function lists() {
+  const host = snap.host || { listener_observations: [], forwards: [], local_port_conflicts: [] };
+  const forwarded = new Set((host.forwards || []).map(f => f.remote_port));
+  const conflicted = new Set((host.local_port_conflicts || []).map(c => c.remote_port));
+  const listening = new Set((host.listener_observations || []).map(o => o.remote_port));
+  const obsByPort = {};
+  for (const o of host.listener_observations || []) obsByPort[o.remote_port] = o;
+  const attention = (host.local_port_conflicts || []).map(c => {
+    const o = obsByPort[c.remote_port] || {};
+    const p = exe(o);
+    return { state: "conflict", port: c.remote_port, local: "", exe: p.exe, cwd: p.cwd };
+  });
+  const available = [];
+  for (const o of host.listener_observations || []) {
+    if (forwarded.has(o.remote_port) || conflicted.has(o.remote_port)) continue;
+    const p = exe(o);
+    available.push({ state: "available", port: o.remote_port, local: "", exe: p.exe, cwd: p.cwd });
+  }
+  const active = (host.forwards || []).map(f => {
+    const p = exe(obsByPort[f.remote_port] || {});
+    return { state: "active", port: f.remote_port, local: f.allocated_local_port, exe: p.exe, cwd: p.cwd };
+  });
+  const waiting = remembered.filter(p => !listening.has(p)).map(p => ({
+    state: "waiting", port: p, local: "", exe: "", cwd: "",
+  }));
+  return { attention, active, waiting, available };
+}
+
+function render() {
+  const host = snap.host;
+  document.getElementById("host").textContent = host ? host.alias : "ssh-forward";
+  document.getElementById("meta").textContent = host
+    ? host.connection + " · Discovery " + (host.discovery && host.discovery.state) + (host.connection_diagnostic ? " · " + host.connection_diagnostic : "")
+    : "no Development Host";
+  const grouped = lists();
+  const tabs = [
+    ["attention", "Attention", grouped.attention.length],
+    ["active", "Active", grouped.active.length],
+    ["waiting", "Remembered", grouped.waiting.length],
+    ["available", "Available", grouped.available.length],
+  ];
+  document.getElementById("tabs").innerHTML = tabs.map(([id, title, n]) =>
+    `<button type="button" class="tab${id === view ? " on" : ""}" data-view="${id}">${title} ${n}</button>`
+  ).join("");
+  const rows = grouped[view] || [];
+  const rememberedSet = new Set(remembered);
+  document.getElementById("rows").innerHTML = rows.length ? rows.map(row => {
+    const action = rememberedSet.has(row.port)
+      ? `<button class="danger" data-forget="${row.port}">Forget</button>`
+      : `<button class="primary" data-remember="${row.port}">Remember</button>`;
+    return `<tr>
+      <td class="${row.state}">${row.state}</td>
+      <td>${rememberedSet.has(row.port) ? "● " : ""}${row.port}</td>
+      <td>${row.local || "—"}</td>
+      <td>${row.exe || "—"}</td>
+      <td>${row.cwd || "—"}</td>
+      <td>${action}</td>
+    </tr>`;
+  }).join("") : `<tr><td class="empty" colspan="6">No rows in this list.</td></tr>`;
+}
+
+async function loadRemembered() {
+  const r = await api("/api/remembered").then(x => x.json());
+  remembered = r.remembered_ports || [];
+}
+
+async function refresh() {
+  const [s] = await Promise.all([
+    api("/api/snapshot").then(x => x.json()),
+    loadRemembered(),
+  ]);
+  snap = s;
+  render();
+}
+
+async function post(path, port) {
+  const res = await api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ port }) });
+  const body = await res.json();
+  let message = body.error;
+  if (!message) {
+    if (body.removed) message = "Forgot " + port;
+    else if (body.added === false) message = "Already remembered " + port;
+    else message = "Remembered " + port;
+  }
+  document.getElementById("bar").textContent = message;
+  await refresh();
+}
+
+function forgetPort(port) {
+  if (confirm("Forget port " + port + "?")) post("/api/forget", port);
+}
+
+document.getElementById("tabs").addEventListener("click", e => {
+  const tab = e.target.closest("[data-view]");
+  if (!tab) return;
+  view = tab.getAttribute("data-view");
+  render();
+});
+document.getElementById("rows").addEventListener("click", e => {
+  const rem = e.target.closest("[data-remember]");
+  if (rem) { post("/api/remember", Number(rem.getAttribute("data-remember"))); return; }
+  const fg = e.target.closest("[data-forget]");
+  if (fg) forgetPort(Number(fg.getAttribute("data-forget")));
+});
+document.getElementById("add-form").addEventListener("submit", e => {
+  e.preventDefault();
+  post("/api/remember", Number(e.target.port.value));
+});
+document.getElementById("forget-form").addEventListener("submit", e => {
+  e.preventDefault();
+  forgetPort(Number(e.target.port.value));
+});
+
+function showError(err) {
+  document.getElementById("bar").textContent = String(err);
+}
+
+refresh().catch(showError);
+const events = new EventSource("/api/watch?token=" + encodeURIComponent(token));
+events.onmessage = async (ev) => {
+  try { snap = JSON.parse(ev.data); } catch (e) { showError(e); return; }
+  try { await loadRemembered(); } catch (e) { showError(e); }
+  render();
+};
+</script>
+</body>
+</html>

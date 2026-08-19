@@ -49,6 +49,7 @@ func (a *App) RootCommand() *cobra.Command {
 		a.hostCommand(),
 		a.defaultCommand(),
 		a.managerCommand(),
+		a.uiCommand(),
 	)
 	root.InitDefaultHelpCmd()
 	for _, cmd := range root.Commands() {

@@ -2,7 +2,7 @@
 
 This context describes how eligible TCP listeners on a remote development machine become reachable on a user's local machine, preferring the same port.
 
-Development path: **CLI** (current) → **WebUI** (after the CLI is ready) → **macOS desktop** (after the WebUI is ready). Do not start a later surface early. Details: [docs/product/mvp.md](docs/product/mvp.md). There is no TUI (ADR-0021).
+Development path: **CLI** (includes the loopback WebUI) → **macOS desktop** (after the WebUI is ready). Do not start the desktop early. Details: [docs/product/mvp.md](docs/product/mvp.md). There is no TUI (ADR-0021).
 
 ## Language
 
