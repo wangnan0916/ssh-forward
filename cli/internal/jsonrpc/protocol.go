@@ -138,6 +138,12 @@ type snapshotParams struct {
 	} `json:"scope"`
 }
 
+func allScopeParams() snapshotParams {
+	var params snapshotParams
+	params.Scope.Kind = "all"
+	return params
+}
+
 func parseSnapshotParams(request *jrpc2.Request) error {
 	paramsText := request.ParamString()
 	if paramsText == "" || paramsText == "{}" {

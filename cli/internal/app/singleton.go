@@ -84,7 +84,7 @@ func Connect(ctx context.Context, opts Options) (Session, error) {
 			return Session{}, fmt.Errorf("could not start the manager: %w", err)
 		}
 		if err := jsonrpc.Wait(ctx, opts.Layout.Socket, 5*time.Second); err != nil {
-			return Session{}, fmt.Errorf("manager did not start within %s (see %s)", 5*time.Second, opts.Layout.Log)
+			return Session{}, fmt.Errorf("manager did not start within %s (see %q)", 5*time.Second, opts.Layout.Log)
 		}
 		if client, err := jsonrpc.Dial(ctx, opts.Layout.Socket); err == nil {
 			return attach(ctx, client, opts)
@@ -125,6 +125,9 @@ func attach(ctx context.Context, client core.Manager, opts Options) (Session, er
 	snapshot, err := client.Snapshot(ctx)
 	if err != nil || snapshot.Host == nil {
 		_ = client.Close(context.Background())
+		if err != nil {
+			return Session{}, fmt.Errorf("could not read the running manager: %w", err)
+		}
 		return Session{}, errors.New("the running manager has no Development Host configured")
 	}
 	if opts.HostFlag != "" && opts.HostFlag != string(snapshot.Host.Alias) {
@@ -191,7 +194,8 @@ func spawn(opts Options, host string) error {
 	if opts.SSHConfigPath != "" {
 		extra = append(extra, envManagerSSHConfig+"="+opts.SSHConfigPath)
 	}
-	return StartDetached(executable, nil, extra, opts.Layout.Dir, opts.Layout.Log)
+	_, err = StartDetached(executable, nil, extra, opts.Layout.Dir, opts.Layout.Log)
+	return err
 }
 
 // ResolveSpawnBinary is the test override for a background child: env if
@@ -204,14 +208,16 @@ func ResolveSpawnBinary(envName string) (string, error) {
 }
 
 // StartDetached launches executable in a new session, appending stdout and
-// stderr to logPath. extraEnv is added to the process environment.
-func StartDetached(executable string, args, extraEnv []string, dir, logPath string) error {
+// stderr to logPath. extraEnv is added to the process environment. The
+// returned pid is reaped in the background so a child that exits is not a
+// zombie that still looks alive.
+func StartDetached(executable string, args, extraEnv []string, dir, logPath string) (int, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+		return 0, err
 	}
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer logFile.Close()
 	command := exec.Command(executable, args...)
@@ -220,7 +226,11 @@ func StartDetached(executable string, args, extraEnv []string, dir, logPath stri
 	command.Stdout = logFile
 	command.Stderr = logFile
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	return command.Start()
+	if err := command.Start(); err != nil {
+		return 0, err
+	}
+	go func() { _ = command.Wait() }()
+	return command.Process.Pid, nil
 }
 
 // NewOpenSSHAdapter constructs the OpenSSH adapter, resolving a relative

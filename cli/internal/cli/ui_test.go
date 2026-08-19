@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -36,11 +38,33 @@ func uiTestApp(t *testing.T, manager core.Manager) *App {
 
 func waitUIURL(t *testing.T, layout app.Layout) string {
 	t.Helper()
-	url, err := waitForUI(context.Background(), layout, 2*time.Second)
+	url, err := waitForUI(context.Background(), layout, 2*time.Second, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return url
+}
+
+func TestWaitForUIReportsDeadChild(t *testing.T) {
+	layout := app.DefaultLayout()
+	layout.Dir = t.TempDir()
+	layout.UILog = filepath.Join(layout.Dir, "ui.log")
+	layout.UIPID = filepath.Join(layout.Dir, "ui.pid")
+	layout.UIURL = filepath.Join(layout.Dir, "ui.url")
+	if err := os.WriteFile(layout.UILog, []byte("ssh-forward: could not read the running manager: invalid_scope\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	_, err := waitForUI(context.Background(), layout, 2*time.Second, 1_000_000)
+	if err == nil || !strings.Contains(err.Error(), "invalid_scope") {
+		t.Fatalf("waitForUI err = %v, want the child log line", err)
+	}
+	if !strings.Contains(err.Error(), strconv.Quote(layout.UILog)) {
+		t.Fatalf("waitForUI err = %v, want a quoted log path", err)
+	}
+	if time.Since(start) > 500*time.Millisecond {
+		t.Fatalf("waitForUI took %s, want fail-fast on a dead child", time.Since(start))
+	}
 }
 
 func TestUINeedsSubcommand(t *testing.T) {

@@ -88,7 +88,7 @@ func (c *managerClient) call(ctx context.Context, method string, params, result 
 
 func (c *managerClient) Snapshot(ctx context.Context) (core.Snapshot, error) {
 	var wrapped snapshotResult
-	if err := c.call(ctx, methodSnapshot, struct{}{}, &wrapped); err != nil {
+	if err := c.call(ctx, methodSnapshot, allScopeParams(), &wrapped); err != nil {
 		return core.Snapshot{}, err
 	}
 	return snapshot.Decode(wrapped.Snapshot), nil
@@ -96,7 +96,7 @@ func (c *managerClient) Snapshot(ctx context.Context) (core.Snapshot, error) {
 
 func (c *managerClient) Watch(ctx context.Context) (core.SnapshotStream, error) {
 	var payload watchResult
-	if err := c.call(ctx, methodWatch, struct{}{}, &payload); err != nil {
+	if err := c.call(ctx, methodWatch, allScopeParams(), &payload); err != nil {
 		return nil, err
 	}
 	stream := newRemoteStream(c, payload.WatchID, snapshot.Decode(payload.Snapshot))

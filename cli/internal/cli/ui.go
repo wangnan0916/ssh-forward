@@ -116,12 +116,14 @@ func (a *App) runUIStart(ctx context.Context) error {
 		a.announceUI(url)
 		return nil
 	}
-	if pid, err := readPIDFile(a.Options.Layout.UIPID); err != nil || !pidAlive(pid) {
-		if err := spawnUI(a.Options); err != nil {
+	pid, err := readPIDFile(a.Options.Layout.UIPID)
+	if err != nil || !pidAlive(pid) {
+		pid, err = spawnUI(a.Options)
+		if err != nil {
 			return err
 		}
 	}
-	url, err := waitForUI(ctx, a.Options.Layout, 10*time.Second)
+	url, err := waitForUI(ctx, a.Options.Layout, 10*time.Second, pid)
 	if err != nil {
 		return err
 	}
@@ -212,7 +214,7 @@ func pidAlive(pid int) bool {
 	return err == nil
 }
 
-func waitForUI(ctx context.Context, layout app.Layout, timeout time.Duration) (string, error) {
+func waitForUI(ctx context.Context, layout app.Layout, timeout time.Duration, childPID int) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	ticker := time.NewTicker(20 * time.Millisecond)
@@ -221,10 +223,13 @@ func waitForUI(ctx context.Context, layout app.Layout, timeout time.Duration) (s
 		if url, err := liveUIURL(layout); err == nil {
 			return url, nil
 		}
+		if childPID > 0 && !pidAlive(childPID) {
+			return "", uiStartError(layout, "WebUI failed to start")
+		}
 		select {
 		case <-ctx.Done():
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return "", fmt.Errorf("WebUI did not start within %s (see %s)", timeout, layout.UILog)
+				return "", uiStartError(layout, fmt.Sprintf("WebUI did not start within %s", timeout))
 			}
 			return "", ctx.Err()
 		case <-ticker.C:
@@ -232,10 +237,31 @@ func waitForUI(ctx context.Context, layout app.Layout, timeout time.Duration) (s
 	}
 }
 
-func spawnUI(opts app.Options) error {
+func uiStartError(layout app.Layout, fallback string) error {
+	if line := lastUILogLine(layout); line != "" {
+		return fmt.Errorf("WebUI failed to start: %s (see %q)", line, layout.UILog)
+	}
+	return fmt.Errorf("%s (see %q)", fallback, layout.UILog)
+}
+
+func lastUILogLine(layout app.Layout) string {
+	raw, err := os.ReadFile(layout.UILog)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			return strings.TrimPrefix(line, "ssh-forward: ")
+		}
+	}
+	return ""
+}
+
+func spawnUI(opts app.Options) (int, error) {
 	executable, err := app.ResolveSpawnBinary("SSH_FORWARD_UI_BINARY")
 	if err != nil {
-		return err
+		return 0, err
 	}
 	var args []string
 	if opts.HostFlag != "" {

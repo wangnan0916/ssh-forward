@@ -36,6 +36,43 @@ func TestConnectDialsLiveSocket(t *testing.T) {
 	}
 }
 
+func TestConnectReportsLiveSnapshotError(t *testing.T) {
+	dir := filepath.Join(os.TempDir(), t.Name())
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Setenv("SSH_FORWARD_CONFIG_DIR", dir)
+	layout := DefaultLayout()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = jsonrpc.Serve(ctx, layout.Socket, snapshotErrorManager{}) }()
+	if err := jsonrpc.Wait(context.Background(), layout.Socket, 3*time.Second); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	_, err := Connect(context.Background(), Options{Layout: layout, HostFlag: "development"})
+	if err == nil || !strings.Contains(err.Error(), "could not read the running manager") {
+		t.Fatalf("Connect err = %v, want the Snapshot RPC error", err)
+	}
+	if strings.Contains(err.Error(), "no Development Host configured") {
+		t.Fatalf("Connect collapsed the RPC error into no-host: %v", err)
+	}
+}
+
+type snapshotErrorManager struct{}
+
+func (snapshotErrorManager) Snapshot(context.Context) (core.Snapshot, error) {
+	return core.Snapshot{}, errors.New("boom")
+}
+
+func (snapshotErrorManager) Watch(context.Context) (core.SnapshotStream, error) {
+	return nil, errors.New("unused")
+}
+
+func (snapshotErrorManager) Close(context.Context) error {
+	return nil
+}
+
 func TestTakeManagerServeEnvCopiesOptions(t *testing.T) {
 	t.Setenv("SSH_FORWARD_MANAGER_SERVE", "1")
 	t.Setenv("SSH_FORWARD_MANAGER_HOST", "devbox")
