@@ -54,7 +54,7 @@ ssh-forward add --dir /home/dev/src/my-app
 ssh-forward remove --dir /home/dev/src/my-app
 ```
 
-`status` starts a per-user manager in the background. Later commands talk to that singleton over a user-only Unix socket. Use `ssh-forward manager serve` to run it in the foreground.
+`status` starts a per-user manager in the background. Later commands talk to that singleton over a user-only Unix socket. Use `ssh-forward manager serve` to run it in the foreground. `ssh-forward manager restart` is the recovery path after a CLI upgrade or a stuck singleton.
 
 ## How it compares
 
@@ -79,6 +79,8 @@ ssh-forward watch [--json]            # stream snapshots (JSONL with --json)
 ssh-forward policy list [--json]
 ssh-forward host list [--json]        # hosts from the SSH client config
 ssh-forward manager serve             # run the singleton in the foreground
+ssh-forward manager stop              # stop the singleton (recovery)
+ssh-forward manager restart           # stop, then auto-spawn again
 ssh-forward ui start                  # background loopback WebUI
 ssh-forward ui status [--json]
 ssh-forward ui stop

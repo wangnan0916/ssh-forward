@@ -260,9 +260,9 @@ func (a *App) defaultCommand() *cobra.Command {
 func (a *App) managerCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "manager",
-		Short: "run the singleton manager",
+		Short: "run or recover the singleton manager",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return UsageError(fmt.Errorf("manager needs a subcommand (serve)"))
+			return UsageError(fmt.Errorf("manager needs a subcommand (serve, stop, restart)"))
 		},
 	}
 	serve := &cobra.Command{
@@ -273,6 +273,22 @@ func (a *App) managerCommand() *cobra.Command {
 			return a.serveManager(cmd.Context())
 		},
 	}
-	command.AddCommand(serve)
+	stop := &cobra.Command{
+		Use:   "stop",
+		Short: "stop the singleton manager",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return a.runManagerStop()
+		},
+	}
+	restart := &cobra.Command{
+		Use:   "restart",
+		Short: "restart the singleton manager",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return a.runManagerRestart(cmd.Context())
+		},
+	}
+	command.AddCommand(serve, stop, restart)
 	return annotateSkipManager(command)
 }

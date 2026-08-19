@@ -24,6 +24,11 @@ func probeUnix(path string, timeout time.Duration) bool {
 	return true
 }
 
+// Live reports whether a manager currently answers at path.
+func Live(path string) bool {
+	return probeUnix(path, 250*time.Millisecond)
+}
+
 // Wait blocks until a live manager answers at path or the deadline passes.
 func Wait(ctx context.Context, path string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
@@ -54,7 +59,7 @@ type Endpoint struct {
 // Listen claims the per-user socket. A live listener is ErrAlreadyRunning;
 // a socket file no one answers is stale and is replaced.
 func Listen(path string) (*Endpoint, error) {
-	if probeUnix(path, 250*time.Millisecond) {
+	if Live(path) {
 		return nil, ErrAlreadyRunning
 	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {

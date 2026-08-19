@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -14,22 +17,32 @@ import (
 	"github.com/wangnan0916/ssh-forward/cli/internal/jsonrpc"
 )
 
-func TestConnectDialsLiveSocket(t *testing.T) {
-	dir := filepath.Join(os.TempDir(), t.Name())
+func isolatedLayout(t *testing.T) Layout {
+	t.Helper()
+	dir := filepath.Join(os.TempDir(), fmt.Sprintf("sf-%d", time.Now().UnixNano()))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	t.Setenv("SSH_FORWARD_CONFIG_DIR", dir)
-	layout := DefaultLayout()
-	manager := core.NewManager()
-	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	return DefaultLayout()
+}
+
+func startServing(t *testing.T, layout Layout, manager core.Manager) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go func() { _ = jsonrpc.Serve(ctx, layout.Socket, manager) }()
 	if err := jsonrpc.Wait(context.Background(), layout.Socket, 3*time.Second); err != nil {
 		t.Fatalf("Wait: %v", err)
 	}
+}
+
+func TestConnectDialsLiveSocket(t *testing.T) {
+	layout := isolatedLayout(t)
+	manager := core.NewManager()
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	startServing(t, layout, manager)
 	_, err := Connect(context.Background(), Options{Layout: layout, HostFlag: "development"})
 	if err == nil || !strings.Contains(err.Error(), "no Development Host configured") {
 		t.Fatalf("Connect err = %v, want no-host singleton rejection", err)
@@ -37,25 +50,64 @@ func TestConnectDialsLiveSocket(t *testing.T) {
 }
 
 func TestConnectReportsLiveSnapshotError(t *testing.T) {
-	dir := filepath.Join(os.TempDir(), t.Name())
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	t.Setenv("SSH_FORWARD_CONFIG_DIR", dir)
-	layout := DefaultLayout()
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	go func() { _ = jsonrpc.Serve(ctx, layout.Socket, snapshotErrorManager{}) }()
-	if err := jsonrpc.Wait(context.Background(), layout.Socket, 3*time.Second); err != nil {
-		t.Fatalf("Wait: %v", err)
-	}
+	layout := isolatedLayout(t)
+	startServing(t, layout, snapshotErrorManager{})
 	_, err := Connect(context.Background(), Options{Layout: layout, HostFlag: "development"})
 	if err == nil || !strings.Contains(err.Error(), "could not read the running manager") {
 		t.Fatalf("Connect err = %v, want the Snapshot RPC error", err)
 	}
 	if strings.Contains(err.Error(), "no Development Host configured") {
 		t.Fatalf("Connect collapsed the RPC error into no-host: %v", err)
+	}
+}
+
+func TestConnectReportsIncompatibleLiveManager(t *testing.T) {
+	layout := isolatedLayout(t)
+	listener, err := net.Listen("unix", layout.Socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+	_, err = Connect(context.Background(), Options{Layout: layout, HostFlag: "development"})
+	if err == nil || !errors.Is(err, ErrIncompatibleManager) {
+		t.Fatalf("Connect err = %v, want ErrIncompatibleManager", err)
+	}
+}
+
+func TestStopWhenNotRunning(t *testing.T) {
+	if err := Stop(isolatedLayout(t)); !errors.Is(err, ErrNotRunning) {
+		t.Fatalf("Stop = %v, want ErrNotRunning", err)
+	}
+}
+
+func TestStopDoesNotKillPidWithoutLiveSocket(t *testing.T) {
+	layout := isolatedLayout(t)
+	child := exec.Command("sleep", "30")
+	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = child.Process.Kill()
+		_ = child.Wait()
+	})
+	if err := os.WriteFile(layout.PID, []byte(fmt.Sprintf("%d\n", child.Process.Pid)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Stop(layout); !errors.Is(err, ErrNotRunning) {
+		t.Fatalf("Stop = %v, want ErrNotRunning", err)
+	}
+	if !PIDAlive(child.Process.Pid) {
+		t.Fatalf("Stop killed a pid that did not own the manager socket")
 	}
 }
 
@@ -94,21 +146,10 @@ func TestTakeManagerServeEnvCopiesOptions(t *testing.T) {
 }
 
 func TestServeLeavesLivePidAlone(t *testing.T) {
-	dir := filepath.Join(os.TempDir(), fmt.Sprintf("sf-pid-%d", time.Now().UnixNano()))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	t.Setenv("SSH_FORWARD_CONFIG_DIR", dir)
-	layout := DefaultLayout()
+	layout := isolatedLayout(t)
 	manager := core.NewManager()
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	go func() { _ = jsonrpc.Serve(ctx, layout.Socket, manager) }()
-	if err := jsonrpc.Wait(context.Background(), layout.Socket, 3*time.Second); err != nil {
-		t.Fatalf("Wait: %v", err)
-	}
+	startServing(t, layout, manager)
 	if err := os.WriteFile(layout.PID, []byte("4242\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

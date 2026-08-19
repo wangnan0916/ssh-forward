@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -65,13 +67,28 @@ func (o Options) WithDefaults() Options {
 	return o
 }
 
+var (
+	// ErrNotRunning reports that this user's manager pid/socket is not live.
+	ErrNotRunning = errors.New("manager is not running")
+	// ErrIncompatibleManager reports that a live singleton does not speak
+	// this client's protocol. Callers must not spawn a second manager.
+	ErrIncompatibleManager = errors.New("the running manager is incompatible; restart it with: ssh-forward manager restart")
+)
+
 // Connect returns a Manager for this user: dial the live singleton, else
 // auto-spawn it and dial, else (SSH_FORWARD_NO_AUTOSPAWN=1) build an
 // in-process Manager. The caller owns Session.Manager and must Close it.
 func Connect(ctx context.Context, opts Options) (Session, error) {
 	opts = opts.WithDefaults()
-	if client, err := jsonrpc.Dial(ctx, opts.Layout.Socket); err == nil {
+	client, err := jsonrpc.Dial(ctx, opts.Layout.Socket)
+	if err == nil {
 		return attach(ctx, client, opts)
+	}
+	if ctx.Err() != nil {
+		return Session{}, ctx.Err()
+	}
+	if jsonrpc.Live(opts.Layout.Socket) {
+		return Session{}, ErrIncompatibleManager
 	}
 
 	host, err := ResolveHost(opts)
@@ -92,6 +109,70 @@ func Connect(ctx context.Context, opts Options) (Session, error) {
 	}
 
 	return inProcess(host, opts.SSHConfigPath, opts.PoliciesPath)
+}
+
+// Stop ends this user's manager if we wrote its pid and it still answers
+// the singleton socket. A live pid without that socket is left alone.
+func Stop(layout Layout) error {
+	if layout.Dir == "" {
+		layout = DefaultLayout()
+	}
+	pid, err := ReadPIDFile(layout.PID)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ErrNotRunning
+		}
+		return err
+	}
+	if !PIDAlive(pid) {
+		_ = os.Remove(layout.PID)
+		return ErrNotRunning
+	}
+	if !jsonrpc.Live(layout.Socket) {
+		return ErrNotRunning
+	}
+	if err := TerminatePID(pid); err != nil {
+		return fmt.Errorf("stop manager: %w", err)
+	}
+	gone := time.Now().Add(2 * time.Second)
+	for jsonrpc.Live(layout.Socket) && time.Now().Before(gone) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	_ = os.Remove(layout.PID)
+	return nil
+}
+
+// ReadPIDFile reads a decimal pid from path.
+func ReadPIDFile(path string) (int, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil || pid <= 0 {
+		return 0, fmt.Errorf("invalid pid file")
+	}
+	return pid, nil
+}
+
+// PIDAlive reports whether pid still exists.
+func PIDAlive(pid int) bool {
+	return syscall.Kill(pid, 0) == nil
+}
+
+// TerminatePID sends SIGTERM, waits up to 3s, then SIGKILL if needed.
+func TerminatePID(pid int) error {
+	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for PIDAlive(pid) && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if PIDAlive(pid) {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+	}
+	return nil
 }
 
 // Serve runs the per-user singleton in this process until ctx ends.
@@ -123,11 +204,16 @@ func Serve(ctx context.Context, opts Options) error {
 
 func attach(ctx context.Context, client core.Manager, opts Options) (Session, error) {
 	snapshot, err := client.Snapshot(ctx)
-	if err != nil || snapshot.Host == nil {
+	if err != nil {
 		_ = client.Close(context.Background())
-		if err != nil {
-			return Session{}, fmt.Errorf("could not read the running manager: %w", err)
+		var domain *core.DomainError
+		if errors.As(err, &domain) && domain.Kind == "invalid_scope" {
+			return Session{}, ErrIncompatibleManager
 		}
+		return Session{}, fmt.Errorf("could not read the running manager: %w", err)
+	}
+	if snapshot.Host == nil {
+		_ = client.Close(context.Background())
 		return Session{}, errors.New("the running manager has no Development Host configured")
 	}
 	if opts.HostFlag != "" && opts.HostFlag != string(snapshot.Host.Alias) {

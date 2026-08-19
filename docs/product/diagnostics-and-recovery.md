@@ -14,7 +14,7 @@ The public CLI is built from source or installed as a HEAD Homebrew formula. An 
 
 ## Crash recovery
 
-The desktop restarts an unexpectedly exited manager with backoff at most three consecutive times. The manager reconstructs policy-driven behavior from persisted intent and fresh observations. After repeated failure the desktop stops restarting and exposes diagnostics. A stale Unix socket or named pipe is removed only after proving that no live manager owns it.
+The desktop restarts an unexpectedly exited manager with backoff at most three consecutive times. The manager reconstructs policy-driven behavior from persisted intent and fresh observations. After repeated failure the desktop stops restarting and exposes diagnostics. A stale Unix socket or named pipe is removed only after proving that no live manager owns it. The CLI recovery path is explicit: `ssh-forward manager stop` signals only the recorded singleton pid after it still answers the socket; `ssh-forward manager restart` then auto-spawns. An incompatible live manager is reported rather than killed.
 
 ## Implementation status
 
@@ -24,6 +24,7 @@ Enforced today:
 
 - No analytics, crash reporting, or uploads by default; the product never sends Development Host, Listener Observation, or Process Metadata anywhere.
 - The CLI is installed from source or Homebrew HEAD; no updater dependency exists.
+- `ssh-forward manager stop` / `restart` recover the per-user singleton; a live pid that does not own the manager socket is not killed. An incompatible live manager is reported (`ssh-forward manager restart`) instead of spawning a second one.
 
 Lands with later slices:
 

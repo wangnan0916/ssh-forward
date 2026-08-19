@@ -291,15 +291,7 @@ func TestRunAutospawnsTheSingleton(t *testing.T) {
 	// The singleton is up, recorded its pid, and answers a second command
 	// without spawning anything new.
 	waitForEndpoint(t, app.DefaultLayout().Socket)
-	pidFile := filepath.Join(dir, "manager.pid")
-	raw, err := os.ReadFile(pidFile)
-	if err != nil {
-		t.Fatalf("manager.pid: %v", err)
-	}
-	var pid int
-	if _, err := fmt.Sscanf(string(raw), "%d", &pid); err != nil || pid <= 0 {
-		t.Fatalf("manager.pid = %q, want a pid", raw)
-	}
+	pid := readManagerPID(t, dir)
 
 	// A second client reuses the same singleton.
 	var second bytes.Buffer
@@ -321,7 +313,7 @@ func TestRunAutospawnsTheSingleton(t *testing.T) {
 	}
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		if _, err := os.Stat(pidFile); errors.Is(err, os.ErrNotExist) {
+		if _, err := os.Stat(filepath.Join(dir, "manager.pid")); errors.Is(err, os.ErrNotExist) {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -329,6 +321,70 @@ func TestRunAutospawnsTheSingleton(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+func TestRunManagerStopAndRestart(t *testing.T) {
+	t.Setenv("SSH_FORWARD_MANAGER_BINARY", managerBinary)
+	dir := shortConfigDir(t)
+	t.Setenv("SSH_FORWARD_CONFIG_DIR", dir)
+	policies := filepath.Join(dir, "absent.jsonc")
+	args := []string{"--host", "development", "--policies", policies}
+
+	if code := run(context.Background(), append(args, "status"), &bytes.Buffer{}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("status autospawn failed")
+	}
+	firstPID := readManagerPID(t, dir)
+
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), []string{"manager", "stop"}, &bytes.Buffer{}, &stdout, &stderr); code != 0 {
+		t.Fatalf("manager stop exit = %d, stderr = %s", code, stderr.String())
+	}
+	if stdout.String() != "stopped\n" {
+		t.Fatalf("manager stop output = %q", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := run(context.Background(), []string{"manager", "stop"}, &bytes.Buffer{}, &stdout, &stderr); code == 0 {
+		t.Fatal("second manager stop succeeded")
+	}
+	if !strings.Contains(stderr.String(), "manager is not running") {
+		t.Fatalf("second stop stderr = %q", stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := run(context.Background(), append(args, "manager", "restart"), &bytes.Buffer{}, &stdout, &stderr); code != 0 {
+		t.Fatalf("manager restart exit = %d, stderr = %s", code, stderr.String())
+	}
+	if stdout.String() != "restarted\n" {
+		t.Fatalf("manager restart output = %q", stdout.String())
+	}
+	secondPID := readManagerPID(t, dir)
+	if secondPID == firstPID {
+		t.Fatalf("restart reused pid %d", secondPID)
+	}
+
+	stdout.Reset()
+	if code := run(context.Background(), []string{"status"}, &bytes.Buffer{}, &stdout, io.Discard); code != 0 {
+		t.Fatalf("status after restart exit = %d", code)
+	}
+	if !strings.Contains(stdout.String(), "Host: development") {
+		t.Fatalf("status after restart = %q", stdout.String())
+	}
+
+	if code := run(context.Background(), []string{"manager", "stop"}, &bytes.Buffer{}, io.Discard, io.Discard); code != 0 {
+		t.Fatal("cleanup manager stop failed")
+	}
+}
+
+func readManagerPID(t *testing.T, dir string) int {
+	t.Helper()
+	pid, err := app.ReadPIDFile(filepath.Join(dir, "manager.pid"))
+	if err != nil {
+		t.Fatalf("manager.pid: %v", err)
+	}
+	return pid
 }
 
 // TestRunHostList pins the discovery surface: hosts come from the SSH

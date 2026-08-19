@@ -70,7 +70,7 @@ ssh-forward status --json
 
 `add` is idempotent. `remove` fails if that simple port or directory rule is not remembered. `add`/`remove` only create or drop those simple Auto-forward rules; hand-edited policies with extra matchers are left alone.
 
-Do not run `ssh-forward watch` or `ssh-forward manager serve` unless the user asked: `watch` streams until interrupt; `serve` holds the singleton in the foreground. There is no TUI.
+Do not run `ssh-forward watch` or `ssh-forward manager serve` unless the user asked: `watch` streams until interrupt; `serve` holds the singleton in the foreground. `manager stop` / `manager restart` interrupt Active Forwards; run them only when the user asked to recover the singleton (CLI upgrade, incompatible manager, leftover runtime forwards). There is no TUI.
 
 When the user wants the loopback page:
 

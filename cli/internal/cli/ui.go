@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -85,26 +83,19 @@ func (a *App) runUIStatus(jsonOutput bool) error {
 }
 
 func (a *App) runUIStop() error {
-	pid, err := readPIDFile(a.Options.Layout.UIPID)
+	pid, err := app.ReadPIDFile(a.Options.Layout.UIPID)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return errUINotRunning
 		}
 		return err
 	}
-	if !pidAlive(pid) {
+	if !app.PIDAlive(pid) {
 		removeUIFiles(a.Options.Layout)
 		return errUINotRunning
 	}
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+	if err := app.TerminatePID(pid); err != nil {
 		return fmt.Errorf("stop WebUI: %w", err)
-	}
-	deadline := time.Now().Add(3 * time.Second)
-	for pidAlive(pid) && time.Now().Before(deadline) {
-		time.Sleep(20 * time.Millisecond)
-	}
-	if pidAlive(pid) {
-		_ = syscall.Kill(pid, syscall.SIGKILL)
 	}
 	removeUIFiles(a.Options.Layout)
 	fmt.Fprintln(a.Options.Stdout, "stopped")
@@ -116,8 +107,8 @@ func (a *App) runUIStart(ctx context.Context) error {
 		a.announceUI(url)
 		return nil
 	}
-	pid, err := readPIDFile(a.Options.Layout.UIPID)
-	if err != nil || !pidAlive(pid) {
+	pid, err := app.ReadPIDFile(a.Options.Layout.UIPID)
+	if err != nil || !app.PIDAlive(pid) {
 		pid, err = spawnUI(a.Options)
 		if err != nil {
 			return err
@@ -168,14 +159,14 @@ func (a *App) runUIServe(ctx context.Context) error {
 }
 
 func liveUIURL(layout app.Layout) (string, error) {
-	pid, err := readPIDFile(layout.UIPID)
+	pid, err := app.ReadPIDFile(layout.UIPID)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return "", errUINotRunning
 		}
 		return "", err
 	}
-	if !pidAlive(pid) {
+	if !app.PIDAlive(pid) {
 		return "", errUINotRunning
 	}
 	raw, err := os.ReadFile(layout.UIURL)
@@ -197,23 +188,6 @@ func removeUIFiles(layout app.Layout) {
 	_ = os.Remove(layout.UIURL)
 }
 
-func readPIDFile(path string) (int, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return 0, err
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
-	if err != nil || pid <= 0 {
-		return 0, fmt.Errorf("invalid pid file")
-	}
-	return pid, nil
-}
-
-func pidAlive(pid int) bool {
-	err := syscall.Kill(pid, 0)
-	return err == nil
-}
-
 func waitForUI(ctx context.Context, layout app.Layout, timeout time.Duration, childPID int) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -223,7 +197,7 @@ func waitForUI(ctx context.Context, layout app.Layout, timeout time.Duration, ch
 		if url, err := liveUIURL(layout); err == nil {
 			return url, nil
 		}
-		if childPID > 0 && !pidAlive(childPID) {
+		if childPID > 0 && !app.PIDAlive(childPID) {
 			return "", uiStartError(layout, "WebUI failed to start")
 		}
 		select {
