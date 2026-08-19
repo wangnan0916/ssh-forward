@@ -8,8 +8,8 @@ Formal implementation uses red-green TDD in vertical slices. Tests exercise beha
 4. CLI — subprocess behavior and structured output against a real local Manager.
 5. Proxy — real loopback half-close, cancellation, throughput, allocation, and containerized remote end-to-end tests.
 6. Composition (`app.Connect`, `app.Serve`) — Connect and Serve own the per-user singleton; `core.NewConfiguredManager` is the in-process assembly those paths and integration tests use. Integration tests (the `integration` build tag) cover that wiring end to end; `app` also has focused tests for host naming, Connect/Serve, and the in-process policy source.
-7. TUI — after the CLI is ready; same Manager and JSON-RPC, not started yet.
-8. macOS desktop — after the TUI is ready; Swift Manager client and Dashboard, not started yet. Protocol fixtures already exist under `test/protocol/`.
+7. WebUI — after the CLI is ready; loopback HTTP adapter over the same Manager and JSON-RPC, not started yet.
+8. macOS desktop — after the WebUI is ready; Swift Manager client and Dashboard, not started yet. Protocol fixtures already exist under `test/protocol/`.
 
 Tests do not address actor mailboxes, private matcher helpers, or internal fields. Manager tests drive the per-host actor deterministically through the declared `managerOptions` test seam — connector and publisher injection — and deliberately pin specific publication counts (Connecting at construction shares a revision with the first visible transition; no-change snapshots are deduplicated; both are exactly the behaviors that drift). Policy reconciliation added further publication sites; when those pins break, relax the count, not the monotone progression. Other packages stay black-box through their module interfaces. Race runs (`go test -race`) currently supplement behavioral slices; fuzz, leak, fault-injection, and benchmark targets join when their surfaces land.
 

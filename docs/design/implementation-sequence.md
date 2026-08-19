@@ -16,7 +16,7 @@ Slice 5's observation-path hysteresis is two consecutive observations for create
 4. Add agentless discovery and Snapshot Watch.
 5. Add Policy and continuous reconciliation.
 6. Complete the domain-oriented CLI.
-7. Build the TUI (after the CLI is ready).
-8. Build the macOS desktop (after the TUI is ready), then packaging, signing, notarization, and release checks.
+7. Build the loopback WebUI (after the CLI is ready).
+8. Build the macOS desktop (after the WebUI is ready), then packaging, signing, notarization, and release checks.
 
 Each formal slice starts with one failing behavior test at an agreed Seam, adds only enough Implementation to pass, and then advances to the next behavior.

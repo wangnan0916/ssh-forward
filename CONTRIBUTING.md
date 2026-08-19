@@ -2,7 +2,7 @@
 
 The current surface is the CLI. Keep changes inside that contract unless a document in `docs/` is being updated to match.
 
-Development path (do not skip ahead): **CLI → TUI → macOS desktop**. The TUI starts after the CLI is ready; the desktop starts after the TUI is ready. See [docs/product/mvp.md](docs/product/mvp.md).
+Development path (do not skip ahead): **CLI → WebUI → macOS desktop**. The WebUI starts after the CLI is ready; the desktop starts after the WebUI is ready. There is no TUI. See [docs/product/mvp.md](docs/product/mvp.md).
 
 ## Development Host language
 

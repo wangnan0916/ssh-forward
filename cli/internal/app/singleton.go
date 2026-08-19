@@ -19,7 +19,7 @@ import (
 
 // HostPicker chooses one Development Host alias from a candidate list.
 // ResolveHost uses it when more than one SSH alias is configured and none
-// is pinned. The CLI prompt and a later TUI are adapters at this seam.
+// is pinned. The CLI prompt and a later WebUI are adapters at this seam.
 type HostPicker func(hosts []string, stdin io.Reader, stdout io.Writer) (string, error)
 
 // Options configure Connect and Serve: the per-user layout, the Development

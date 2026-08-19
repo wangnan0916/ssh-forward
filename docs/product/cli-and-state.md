@@ -2,7 +2,7 @@
 
 ## Status
 
-The command surface below is implemented (slice 6, implementation-sequence.md): `cli/cmd/ssh-forward/` builds the CLI binary. `status` / `watch` auto-spawn a per-user manager and then run as its JSON-RPC client; `SSH_FORWARD_NO_AUTOSPAWN=1` keeps the in-process fallback for scripts and tests. `add` and `remove` write `policies.jsonc` and do not require a manager or Development Host. The Manager reads `policies.jsonc` (hot-reloaded) and `config.jsonc`'s `default_host`. `SSH_FORWARD_CONFIG_DIR` overrides the product config directory. `app.Connect` and `app.Serve` are the composition seam where the CLI, a later TUI, and a later desktop core all land; in-process assembly goes through `core.NewConfiguredManager`.
+The command surface below is implemented (slice 6, implementation-sequence.md): `cli/cmd/ssh-forward/` builds the CLI binary. `status` / `watch` auto-spawn a per-user manager and then run as its JSON-RPC client; `SSH_FORWARD_NO_AUTOSPAWN=1` keeps the in-process fallback for scripts and tests. `add` and `remove` write `policies.jsonc` and do not require a manager or Development Host. The Manager reads `policies.jsonc` (hot-reloaded) and `config.jsonc`'s `default_host`. `SSH_FORWARD_CONFIG_DIR` overrides the product config directory. `app.Connect` and `app.Serve` are the composition seam where the CLI, a later WebUI, and a later desktop core all land; in-process assembly goes through `core.NewConfiguredManager`.
 
 Still planned: comment-preserving HuJSON patches, idle manager exit, Monitor at Login, and revisioned configuration writes.
 
@@ -21,6 +21,7 @@ ssh-forward watch [--json]            # stream snapshots (JSONL with --json)
 ssh-forward policy list [--json]
 ssh-forward host list [--json]        # hosts from the SSH client config
 ssh-forward manager serve             # run the singleton in the foreground
+ssh-forward ui                        # planned: loopback WebUI (slice 7)
 ```
 
 `add` writes a simple Auto-forward policy (one port, or one working-directory tree) and is idempotent. `remove` forgets that same simple rule. Unmatched listeners are not forwarded; `status` lists new remote ports as a one-line heads-up and lists Local Port Conflicts when allocation could not bind a Local Endpoint. The running Manager applies a saved policy edit against the current observations without waiting for the next scan. The Development Host resolves in order: `--host`, then `config.jsonc`'s `default_host` (set with `ssh-forward default ALIAS`), then the single literal Host alias in the SSH client configuration; with several hosts and no default, a terminal prompts for one per command, and a non-terminal run lists the candidates in the error. There are no legacy numeric shorthands or compatibility aliases. Human-readable output is not an automation contract; every resource command supports structured `--json` output for scripts and desktop clients. `status` and `watch --json` emit the Snapshot codec in `cli/internal/snapshot`, the same shape JSON-RPC embeds.

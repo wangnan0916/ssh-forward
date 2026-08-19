@@ -7,10 +7,10 @@ The first public release is the headless CLI. It covers a VS Code Ports-style wo
 Work proceeds one surface at a time. Do not start the next until the previous is ready.
 
 1. **CLI** (current) — headless command surface in `cli/`.
-2. **TUI** — terminal UI on the same Manager and JSON-RPC wire; starts after the CLI is ready.
-3. **macOS desktop** — native menu-bar app; starts after the TUI is ready.
+2. **WebUI** — loopback browser UI on the same Manager and JSON-RPC wire; starts after the CLI is ready (ADR-0021).
+3. **macOS desktop** — native menu-bar app; starts after the WebUI is ready.
 
-TUI and desktop are not in this repository yet.
+WebUI and desktop are not in this repository yet.
 
 ## Included in the CLI
 
@@ -23,12 +23,13 @@ TUI and desktop are not in this repository yet.
 
 ## Planned after the CLI
 
-TUI (after CLI is ready):
+WebUI (after CLI is ready):
 
 - Interactive live view of the Development Host, new remote ports, and Active Forwards
-- Remember / forget a port or directory from that view
+- Remember / forget a remote port from that view (`ssh-forward ui`)
+- Directory remember/forget stays on the CLI for this slice
 
-macOS desktop (after TUI is ready):
+macOS desktop (after WebUI is ready):
 
 - Automatic monitoring at login and idle manager exit
 - Menu-bar quick panel and full Dashboard
@@ -59,7 +60,7 @@ Enforced today:
 
 Lands later:
 
-- TUI: after the CLI is ready.
-- Login monitoring, idle exit, menu-bar, Dashboard: macOS desktop, after the TUI is ready.
+- WebUI: after the CLI is ready (ADR-0021).
+- Login monitoring, idle exit, menu-bar, Dashboard: macOS desktop, after the WebUI is ready.
 - HTTP/HTTPS browser actions: desktop policy surfaces.
 - Policy explanation on the Snapshot and `requireSamePort`: later CLI/core work.

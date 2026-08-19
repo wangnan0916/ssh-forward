@@ -5,7 +5,7 @@ Discover ports on a Linux development host and use them on localhost through you
 [![CI](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml/badge.svg)](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-The first public release is the **CLI**. Next is a TUI (after the CLI is ready), then a macOS menu-bar app (after the TUI is ready). Neither later surface is in this repository yet.
+The first public release is the **CLI**. Next is a loopback WebUI (`ssh-forward ui`, after the CLI is ready), then a macOS menu-bar app (after the WebUI is ready). Neither later surface is in this repository yet. There is no TUI.
 
 This is not a general SSH tunnel, credential, key, or host-profile manager. Authentication stays with system OpenSSH and `~/.ssh/config`.
 
@@ -134,7 +134,7 @@ Public **alpha** (`0.1.0-alpha.1`). The CLI covers discovery, remembered Auto-fo
 
 Not in this release:
 
-- TUI
+- loopback WebUI (`ssh-forward ui`)
 - macOS menu-bar app and Dashboard
 - comment-preserving policy writes
 - login monitoring and idle manager exit

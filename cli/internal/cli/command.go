@@ -10,7 +10,7 @@ import (
 )
 
 // RootCommand builds the cobra command tree: the command definitions and
-// help text live here. Connect and Serve live in app so TUI and CLI share
+// help text live here. Connect and Serve live in app so WebUI and CLI share
 // them. The global flags — --host, --policies, --ssh-config, --version —
 // are persistent flags so they precede any subcommand and appear in help.
 func (a *App) RootCommand() *cobra.Command {
