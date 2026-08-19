@@ -101,7 +101,7 @@ func Connect(ctx context.Context, opts Options) (Session, error) {
 			return Session{}, fmt.Errorf("could not start the manager: %w", err)
 		}
 		if err := jsonrpc.Wait(ctx, opts.Layout.Socket, 5*time.Second); err != nil {
-			return Session{}, fmt.Errorf("manager did not start within %s (see %q)", 5*time.Second, opts.Layout.Log)
+			return Session{}, startError(opts.Layout.Log, fmt.Sprintf("manager did not start within %s", 5*time.Second))
 		}
 		if client, err := jsonrpc.Dial(ctx, opts.Layout.Socket); err == nil {
 			return attach(ctx, client, opts)
@@ -252,36 +252,69 @@ const (
 // singleton child and copies its Options encoding into opts. The child
 // enters Serve without parsing a Cobra command tree.
 func TakeManagerServeEnv(opts *Options) bool {
-	if os.Getenv(envManagerServe) != "1" {
+	return takeServeEnv(envManagerServe, envManagerHost, envManagerPolicies, envManagerSSHConfig, opts)
+}
+
+func takeServeEnv(serveKey, hostKey, policiesKey, sshConfigKey string, opts *Options) bool {
+	if os.Getenv(serveKey) != "1" {
 		return false
 	}
-	_ = os.Unsetenv(envManagerServe)
-	opts.HostFlag = os.Getenv(envManagerHost)
-	if policies := os.Getenv(envManagerPolicies); policies != "" {
+	_ = os.Unsetenv(serveKey)
+	opts.HostFlag = os.Getenv(hostKey)
+	if policies := os.Getenv(policiesKey); policies != "" {
 		opts.PoliciesPath = policies
 	}
-	if sshConfig := os.Getenv(envManagerSSHConfig); sshConfig != "" {
+	if sshConfig := os.Getenv(sshConfigKey); sshConfig != "" {
 		opts.SSHConfigPath = sshConfig
 	}
 	return true
 }
 
 func spawn(opts Options, host string) error {
-	executable, err := ResolveSpawnBinary("SSH_FORWARD_MANAGER_BINARY")
-	if err != nil {
-		return err
-	}
+	_, err := startServeChild("SSH_FORWARD_MANAGER_BINARY", serveChildEnv(envManagerServe, envManagerHost, host, envManagerPolicies, envManagerSSHConfig, opts), opts.Layout.Dir, opts.Layout.Log)
+	return err
+}
+
+func serveChildEnv(serveKey, hostKey, host, policiesKey, sshConfigKey string, opts Options) []string {
 	extra := []string{
-		envManagerServe + "=1",
-		envManagerHost + "=" + host,
-		envManagerPolicies + "=" + opts.PoliciesPath,
+		serveKey + "=1",
+		hostKey + "=" + host,
+		policiesKey + "=" + opts.PoliciesPath,
 		envConfigDir + "=" + opts.Layout.Dir,
 	}
 	if opts.SSHConfigPath != "" {
-		extra = append(extra, envManagerSSHConfig+"="+opts.SSHConfigPath)
+		extra = append(extra, sshConfigKey+"="+opts.SSHConfigPath)
 	}
-	_, err = StartDetached(executable, nil, extra, opts.Layout.Dir, opts.Layout.Log)
-	return err
+	return extra
+}
+
+func startServeChild(binaryEnv string, extra []string, dir, logPath string) (int, error) {
+	executable, err := ResolveSpawnBinary(binaryEnv)
+	if err != nil {
+		return 0, err
+	}
+	return StartDetached(executable, nil, extra, dir, logPath)
+}
+
+func startError(logPath, fallback string) error {
+	if line := lastLogLine(logPath); line != "" {
+		return fmt.Errorf("%s: %s (see %q)", fallback, line, logPath)
+	}
+	return fmt.Errorf("%s (see %q)", fallback, logPath)
+}
+
+func lastLogLine(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			return strings.TrimPrefix(line, "ssh-forward: ")
+		}
+	}
+	return ""
 }
 
 // ResolveSpawnBinary is the test override for a background child: env if

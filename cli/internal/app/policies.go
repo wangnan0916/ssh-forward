@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
@@ -180,26 +181,53 @@ type FilePolicyReader struct {
 	mu        sync.Mutex
 	lastValid []core.ForwardingPolicy
 	lastErr   error
+	modTime   time.Time
+	size      int64
+	stamped   bool
 }
 
 func NewFilePolicyReader(path string) *FilePolicyReader {
 	return &FilePolicyReader{path: path}
 }
 
-// Read parses the file afresh and records the result: the parsed set when
-// the file is valid, otherwise the last valid set plus the error. Every
-// read path (Source and the CLI) goes through this one place.
+// Read parses the file when it has changed: a matching mtime and size
+// reuse lastValid (and lastErr) instead of opening it again. Invalid
+// input still returns the last valid set plus the error.
 func (r *FilePolicyReader) Read() ([]core.ForwardingPolicy, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	info, err := os.Stat(r.path)
+	if errors.Is(err, os.ErrNotExist) {
+		r.lastErr = err
+		r.stamped = false
+		return r.lastValid, err
+	}
+	if err == nil && r.stamped && info.Size() == r.size && info.ModTime().Equal(r.modTime) {
+		return r.lastValid, r.lastErr
+	}
 	policies, err := LoadPolicies(r.path)
 	if err != nil {
 		r.lastErr = err
+		r.noteStamp(info)
 		return r.lastValid, err
 	}
 	r.lastValid = policies
 	r.lastErr = nil
+	if info == nil {
+		info, _ = os.Stat(r.path)
+	}
+	r.noteStamp(info)
 	return policies, nil
+}
+
+func (r *FilePolicyReader) noteStamp(info os.FileInfo) {
+	if info == nil {
+		r.stamped = false
+		return
+	}
+	r.modTime = info.ModTime()
+	r.size = info.Size()
+	r.stamped = true
 }
 
 // Source is the Manager's reconciliation seam: each call reads the file
@@ -238,6 +266,11 @@ func (r *FilePolicyReader) update(apply func([]core.ForwardingPolicy) ([]core.Fo
 		return false, err
 	}
 	r.lastValid = updated
+	if info, err := os.Stat(r.path); err == nil {
+		r.noteStamp(info)
+	} else {
+		r.stamped = false
+	}
 	return true, nil
 }
 

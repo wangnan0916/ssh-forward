@@ -354,6 +354,20 @@ func TestStatusShowsForwardsAndNewPorts(t *testing.T) {
 	}
 }
 
+func TestNewRemotePortsSkipsIgnored(t *testing.T) {
+	host := snapshotWithHost().Host
+	policies := []core.ForwardingPolicy{{
+		ID: "deny-9090", Action: core.PolicyIgnore,
+		Conditions: []core.PolicyCondition{{RemotePorts: &core.PortRange{From: 9090, To: 9090}}},
+	}}
+	if got := newRemotePorts(host, policies); len(got) != 0 {
+		t.Fatalf("newRemotePorts = %v, want empty (9090 ignored)", got)
+	}
+	if got := newRemotePorts(host, nil); len(got) != 1 || got[0] != "9090" {
+		t.Fatalf("newRemotePorts without policies = %v, want [9090]", got)
+	}
+}
+
 func TestHelpListsCommands(t *testing.T) {
 	output, err := runApp(t, &fakeManager{}, "--help")
 	if err != nil {

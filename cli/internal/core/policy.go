@@ -59,6 +59,12 @@ func sortPolicies(policies []ForwardingPolicy) []ForwardingPolicy {
 	return ordered
 }
 
+// EvaluatePolicies is the Policy Evidence seam for presentation: the first
+// matching policy's Action and ID, or a zero verdict when none match.
+func EvaluatePolicies(policies []ForwardingPolicy, observation ListenerObservation) PolicyVerdict {
+	return evaluateOrdered(sortPolicies(policies), observation)
+}
+
 func evaluateOrdered(policies []ForwardingPolicy, observation ListenerObservation) PolicyVerdict {
 	for _, policy := range policies {
 		if verdict, matched := evaluatePolicy(policy, observation); matched {

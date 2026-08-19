@@ -60,67 +60,37 @@
 const token = new URLSearchParams(location.search).get("token") || "";
 const api = (path, opts) => fetch(path + (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token), opts);
 let view = "attention";
-let snap = { host: null };
-let remembered = [];
-
-function exe(obs) {
-  const chain = (obs.process_chains || [])[0];
-  const proc = chain && (chain.processes || [])[0];
-  return proc ? { exe: proc.executable || "", cwd: proc.working_directory || "" } : { exe: "", cwd: "" };
-}
-
-function lists() {
-  const host = snap.host || { listener_observations: [], forwards: [], local_port_conflicts: [] };
-  const forwarded = new Set((host.forwards || []).map(f => f.remote_port));
-  const conflicted = new Set((host.local_port_conflicts || []).map(c => c.remote_port));
-  const listening = new Set((host.listener_observations || []).map(o => o.remote_port));
-  const obsByPort = {};
-  for (const o of host.listener_observations || []) obsByPort[o.remote_port] = o;
-  const attention = (host.local_port_conflicts || []).map(c => {
-    const o = obsByPort[c.remote_port] || {};
-    const p = exe(o);
-    return { state: "conflict", port: c.remote_port, local: "", exe: p.exe, cwd: p.cwd };
-  });
-  const available = [];
-  for (const o of host.listener_observations || []) {
-    if (forwarded.has(o.remote_port) || conflicted.has(o.remote_port)) continue;
-    const p = exe(o);
-    available.push({ state: "available", port: o.remote_port, local: "", exe: p.exe, cwd: p.cwd });
-  }
-  const active = (host.forwards || []).map(f => {
-    const p = exe(obsByPort[f.remote_port] || {});
-    return { state: "active", port: f.remote_port, local: f.allocated_local_port, exe: p.exe, cwd: p.cwd };
-  });
-  const waiting = remembered.filter(p => !listening.has(p)).map(p => ({
-    state: "waiting", port: p, local: "", exe: "", cwd: "",
-  }));
-  return { attention, active, waiting, available };
-}
+let snap = { host: null, lists: {}, remembered_ports: [] };
 
 function render() {
   const host = snap.host;
   document.getElementById("host").textContent = host ? host.alias : "ssh-forward";
   document.getElementById("meta").textContent = host
-    ? host.connection + " · Discovery " + (host.discovery && host.discovery.state) + (host.connection_diagnostic ? " · " + host.connection_diagnostic : "")
+    ? host.connection + " · Discovery " + (host.discovery || "") + (host.connection_diagnostic ? " · " + host.connection_diagnostic : "")
     : "no Development Host";
-  const grouped = lists();
+  const lists = snap.lists || {};
+  const attention = lists.attention || [];
+  const active = lists.active || [];
+  const waiting = lists.waiting || [];
+  const available = lists.available || [];
   const tabs = [
-    ["attention", "Attention", grouped.attention.length],
-    ["active", "Active", grouped.active.length],
-    ["waiting", "Remembered", grouped.waiting.length],
-    ["available", "Available", grouped.available.length],
+    ["attention", "Attention", attention.length],
+    ["active", "Active", active.length],
+    ["waiting", "Remembered", waiting.length],
+    ["available", "Available", available.length],
   ];
   document.getElementById("tabs").innerHTML = tabs.map(([id, title, n]) =>
     `<button type="button" class="tab${id === view ? " on" : ""}" data-view="${id}">${title} ${n}</button>`
   ).join("");
-  const rows = grouped[view] || [];
-  const rememberedSet = new Set(remembered);
+  const rows = { attention, active, waiting, available }[view] || [];
+  const rememberedSet = new Set(snap.remembered_ports || []);
   document.getElementById("rows").innerHTML = rows.length ? rows.map(row => {
     const action = rememberedSet.has(row.port)
       ? `<button class="danger" data-forget="${row.port}">Forget</button>`
       : `<button class="primary" data-remember="${row.port}">Remember</button>`;
+    const status = row.reason ? row.state + " · " + row.reason : row.state;
     return `<tr>
-      <td class="${row.state}">${row.state}</td>
+      <td class="${row.state}">${status}</td>
       <td>${rememberedSet.has(row.port) ? "● " : ""}${row.port}</td>
       <td>${row.local || "—"}</td>
       <td>${row.exe || "—"}</td>
@@ -130,18 +100,13 @@ function render() {
   }).join("") : `<tr><td class="empty" colspan="6">No rows in this list.</td></tr>`;
 }
 
-async function loadRemembered() {
-  const r = await api("/api/remembered").then(x => x.json());
-  remembered = r.remembered_ports || [];
+function applyView(doc) {
+  snap = doc;
+  render();
 }
 
 async function refresh() {
-  const [s] = await Promise.all([
-    api("/api/snapshot").then(x => x.json()),
-    loadRemembered(),
-  ]);
-  snap = s;
-  render();
+  applyView(await api("/api/snapshot").then(x => x.json()));
 }
 
 async function post(path, port) {
@@ -188,10 +153,8 @@ function showError(err) {
 
 refresh().catch(showError);
 const events = new EventSource("/api/watch?token=" + encodeURIComponent(token));
-events.onmessage = async (ev) => {
-  try { snap = JSON.parse(ev.data); } catch (e) { showError(e); return; }
-  try { await loadRemembered(); } catch (e) { showError(e); }
-  render();
+events.onmessage = (ev) => {
+  try { applyView(JSON.parse(ev.data)); } catch (e) { showError(e); }
 };
 </script>
 </body>

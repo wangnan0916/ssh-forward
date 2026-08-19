@@ -62,6 +62,10 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	if len(args) == 0 && app.TakeManagerServeEnv(&a.Options) {
 		return a.serveManager(ctx)
 	}
+	if len(args) == 0 && app.TakeUIServeEnv(&a.Options) {
+		a.bindDefaults()
+		return a.runUIServe(ctx)
+	}
 	command := a.RootCommand()
 	command.SetArgs(args)
 	if a.Options.Stdout != nil {

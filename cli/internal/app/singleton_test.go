@@ -125,23 +125,33 @@ func (snapshotErrorManager) Close(context.Context) error {
 	return nil
 }
 
-func TestTakeManagerServeEnvCopiesOptions(t *testing.T) {
-	t.Setenv("SSH_FORWARD_MANAGER_SERVE", "1")
-	t.Setenv("SSH_FORWARD_MANAGER_HOST", "devbox")
-	t.Setenv("SSH_FORWARD_MANAGER_POLICIES", "/tmp/policies.jsonc")
-	t.Setenv("SSH_FORWARD_MANAGER_SSH_CONFIG", "/tmp/ssh-config")
-	opts := Options{}
-	if !TakeManagerServeEnv(&opts) {
-		t.Fatal("TakeManagerServeEnv = false, want the autospawn encoding")
-	}
-	if opts.HostFlag != "devbox" || opts.PoliciesPath != "/tmp/policies.jsonc" || opts.SSHConfigPath != "/tmp/ssh-config" {
-		t.Fatalf("opts = %+v, want host/policies/ssh-config from env", opts)
-	}
-	if os.Getenv("SSH_FORWARD_MANAGER_SERVE") != "" {
-		t.Fatal("serve env should be consumed so a later Run can parse argv")
-	}
-	if TakeManagerServeEnv(&Options{}) {
-		t.Fatal("second TakeManagerServeEnv = true, want consumed")
+func TestTakeServeEnvCopiesOptions(t *testing.T) {
+	for _, tc := range []struct {
+		name, serve, host, policies, sshConfig string
+		take                                   func(*Options) bool
+	}{
+		{"manager", envManagerServe, envManagerHost, envManagerPolicies, envManagerSSHConfig, TakeManagerServeEnv},
+		{"ui", envUIServe, envUIHost, envUIPolicies, envUISSHConfig, TakeUIServeEnv},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(tc.serve, "1")
+			t.Setenv(tc.host, "devbox")
+			t.Setenv(tc.policies, "/tmp/policies.jsonc")
+			t.Setenv(tc.sshConfig, "/tmp/ssh-config")
+			opts := Options{}
+			if !tc.take(&opts) {
+				t.Fatal("take = false, want the autospawn encoding")
+			}
+			if opts.HostFlag != "devbox" || opts.PoliciesPath != "/tmp/policies.jsonc" || opts.SSHConfigPath != "/tmp/ssh-config" {
+				t.Fatalf("opts = %+v, want host/policies/ssh-config from env", opts)
+			}
+			if os.Getenv(tc.serve) != "" {
+				t.Fatal("serve env should be consumed so a later Run can parse argv")
+			}
+			if tc.take(&Options{}) {
+				t.Fatal("second take = true, want consumed")
+			}
+		})
 	}
 }
 

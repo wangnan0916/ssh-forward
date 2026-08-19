@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -50,12 +51,12 @@ func testSnap() core.Snapshot {
 	}
 }
 
-func startServer(t *testing.T, token string, ports PortStore) string {
+func startServer(t *testing.T, token string, ports *app.FilePolicyReader) string {
 	t.Helper()
 	return startServerManager(t, token, ports, &fakeManager{snap: testSnap()})
 }
 
-func startServerManager(t *testing.T, token string, ports PortStore, manager core.Manager) string {
+func startServerManager(t *testing.T, token string, ports *app.FilePolicyReader, manager core.Manager) string {
 	t.Helper()
 	listener, err := ListenLoopback()
 	if err != nil {
@@ -68,6 +69,7 @@ func startServerManager(t *testing.T, token string, ports PortStore, manager cor
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	server := &Server{Manager: manager, Ports: ports, Token: token}
+	t.Cleanup(server.Close)
 	errc := make(chan error, 1)
 	go func() { errc <- Serve(ctx, listener, server.Handler()) }()
 	t.Cleanup(func() {
@@ -122,7 +124,7 @@ func TestSnapshotRequiresToken(t *testing.T) {
 	}
 }
 
-func TestSnapshotJSONMatchesCodec(t *testing.T) {
+func TestSnapshotViewDocument(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "policies.jsonc")
 	base := startServer(t, "secret-token", app.NewFilePolicyReader(path))
 	res, err := http.Get(origin(base) + "/api/snapshot?token=secret-token")
@@ -138,7 +140,10 @@ func TestSnapshotJSONMatchesCodec(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(body, []byte(`"revision":5`)) || !bytes.Contains(body, []byte(`"alias":"development"`)) {
-		t.Fatalf("snapshot body = %s", body)
+		t.Fatalf("view body = %s", body)
+	}
+	if !bytes.Contains(body, []byte(`"lists"`)) || !bytes.Contains(body, []byte(`"active"`)) || !bytes.Contains(body, []byte(`"remembered_ports"`)) {
+		t.Fatalf("view missing lists: %s", body)
 	}
 }
 
@@ -170,17 +175,17 @@ func TestRememberAndForgetPort(t *testing.T) {
 		t.Fatalf("remembered ports = %v, want [5173]", got)
 	}
 
-	listed, err := http.Get(api + "/api/remembered?token=secret-token")
+	listed, err := http.Get(api + "/api/snapshot?token=secret-token")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer listed.Body.Close()
-	var remembered rememberedBody
-	if err := json.NewDecoder(listed.Body).Decode(&remembered); err != nil {
+	var view viewDocument
+	if err := json.NewDecoder(listed.Body).Decode(&view); err != nil {
 		t.Fatal(err)
 	}
-	if len(remembered.RememberedPorts) != 1 || remembered.RememberedPorts[0] != 5173 {
-		t.Fatalf("remembered API = %+v", remembered)
+	if len(view.RememberedPorts) != 1 || view.RememberedPorts[0] != 5173 {
+		t.Fatalf("snapshot remembered_ports = %+v", view.RememberedPorts)
 	}
 
 	missing := post("/api/forget", `{"port":9}`)
@@ -269,6 +274,47 @@ func TestWatchStreamsSnapshot(t *testing.T) {
 	body := string(buf[:n])
 	if !strings.Contains(body, "data:") || !strings.Contains(body, `"revision":5`) {
 		t.Fatalf("SSE body = %q", body)
+	}
+}
+
+func TestWatchSharesOneManagerWatch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policies.jsonc")
+	var calls atomic.Int32
+	stream := &oneSnapshot{snap: testSnap()}
+	manager := &fakeManager{
+		snap: testSnap(),
+		watch: func(context.Context) (core.SnapshotStream, error) {
+			calls.Add(1)
+			return stream, nil
+		},
+	}
+	base := startServerManager(t, "secret-token", app.NewFilePolicyReader(path), manager)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	readEvent := func() {
+		t.Helper()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, origin(base)+"/api/watch?token=secret-token", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		buf := make([]byte, 4096)
+		n, err := res.Body.Read(buf)
+		if n == 0 && err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(buf[:n]), `"revision":5`) {
+			t.Fatalf("SSE body = %q", buf[:n])
+		}
+	}
+	readEvent()
+	readEvent()
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("Manager.Watch calls = %d, want 1", got)
 	}
 }
 

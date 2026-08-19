@@ -3,20 +3,15 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/app"
 	"github.com/wangnan0916/ssh-forward/cli/internal/ui"
 )
-
-var errUINotRunning = errors.New("WebUI is not running")
 
 func (a *App) uiCommand() *cobra.Command {
 	command := &cobra.Command{
@@ -66,7 +61,7 @@ func (a *App) uiCommand() *cobra.Command {
 }
 
 func (a *App) runUIStatus(jsonOutput bool) error {
-	url, err := liveUIURL(a.Options.Layout)
+	url, err := app.LiveUIURL(a.Options.Layout)
 	if err != nil {
 		return err
 	}
@@ -83,38 +78,15 @@ func (a *App) runUIStatus(jsonOutput bool) error {
 }
 
 func (a *App) runUIStop() error {
-	pid, err := app.ReadPIDFile(a.Options.Layout.UIPID)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return errUINotRunning
-		}
+	if err := app.StopUI(a.Options.Layout); err != nil {
 		return err
 	}
-	if !app.PIDAlive(pid) {
-		removeUIFiles(a.Options.Layout)
-		return errUINotRunning
-	}
-	if err := app.TerminatePID(pid); err != nil {
-		return fmt.Errorf("stop WebUI: %w", err)
-	}
-	removeUIFiles(a.Options.Layout)
 	fmt.Fprintln(a.Options.Stdout, "stopped")
 	return nil
 }
 
 func (a *App) runUIStart(ctx context.Context) error {
-	if url, err := liveUIURL(a.Options.Layout); err == nil {
-		a.announceUI(url)
-		return nil
-	}
-	pid, err := app.ReadPIDFile(a.Options.Layout.UIPID)
-	if err != nil || !app.PIDAlive(pid) {
-		pid, err = spawnUI(a.Options)
-		if err != nil {
-			return err
-		}
-	}
-	url, err := waitForUI(ctx, a.Options.Layout, 10*time.Second, pid)
+	url, err := app.StartUI(ctx, a.Options)
 	if err != nil {
 		return err
 	}
@@ -147,108 +119,16 @@ func (a *App) runUIServe(ctx context.Context) error {
 		return err
 	}
 	url := ui.PageURL(listener.Addr(), token)
-	defer removeUIFiles(a.Options.Layout)
+	defer app.RemoveUIFiles(a.Options.Layout)
 	if err := os.WriteFile(a.Options.Layout.UIPID, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
 		return err
 	}
 	if err := os.WriteFile(a.Options.Layout.UIURL, []byte(url+"\n"), 0o600); err != nil {
 		return err
 	}
-	handler := (&ui.Server{Manager: a.Manager, Ports: a.PolicyReader, Token: token}).Handler()
-	return ui.Serve(ctx, listener, handler)
-}
-
-func liveUIURL(layout app.Layout) (string, error) {
-	pid, err := app.ReadPIDFile(layout.UIPID)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return "", errUINotRunning
-		}
-		return "", err
-	}
-	if !app.PIDAlive(pid) {
-		return "", errUINotRunning
-	}
-	raw, err := os.ReadFile(layout.UIURL)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return "", errUINotRunning
-		}
-		return "", err
-	}
-	url := strings.TrimSpace(string(raw))
-	if url == "" {
-		return "", errUINotRunning
-	}
-	return url, nil
-}
-
-func removeUIFiles(layout app.Layout) {
-	_ = os.Remove(layout.UIPID)
-	_ = os.Remove(layout.UIURL)
-}
-
-func waitForUI(ctx context.Context, layout app.Layout, timeout time.Duration, childPID int) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	ticker := time.NewTicker(20 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		if url, err := liveUIURL(layout); err == nil {
-			return url, nil
-		}
-		if childPID > 0 && !app.PIDAlive(childPID) {
-			return "", uiStartError(layout, "WebUI failed to start")
-		}
-		select {
-		case <-ctx.Done():
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return "", uiStartError(layout, fmt.Sprintf("WebUI did not start within %s", timeout))
-			}
-			return "", ctx.Err()
-		case <-ticker.C:
-		}
-	}
-}
-
-func uiStartError(layout app.Layout, fallback string) error {
-	if line := lastUILogLine(layout); line != "" {
-		return fmt.Errorf("WebUI failed to start: %s (see %q)", line, layout.UILog)
-	}
-	return fmt.Errorf("%s (see %q)", fallback, layout.UILog)
-}
-
-func lastUILogLine(layout app.Layout) string {
-	raw, err := os.ReadFile(layout.UILog)
-	if err != nil {
-		return ""
-	}
-	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		if line := strings.TrimSpace(lines[i]); line != "" {
-			return strings.TrimPrefix(line, "ssh-forward: ")
-		}
-	}
-	return ""
-}
-
-func spawnUI(opts app.Options) (int, error) {
-	executable, err := app.ResolveSpawnBinary("SSH_FORWARD_UI_BINARY")
-	if err != nil {
-		return 0, err
-	}
-	var args []string
-	if opts.HostFlag != "" {
-		args = append(args, "--host", opts.HostFlag)
-	}
-	if opts.PoliciesPath != "" {
-		args = append(args, "--policies", opts.PoliciesPath)
-	}
-	if opts.SSHConfigPath != "" {
-		args = append(args, "--ssh-config", opts.SSHConfigPath)
-	}
-	args = append(args, "ui", "serve")
-	return app.StartDetached(executable, args, []string{"SSH_FORWARD_CONFIG_DIR=" + opts.Layout.Dir}, opts.Layout.Dir, opts.Layout.UILog)
+	server := &ui.Server{Manager: a.Manager, Ports: a.PolicyReader, Token: token}
+	defer server.Close()
+	return ui.Serve(ctx, listener, server.Handler())
 }
 
 func openBrowser(url string) error {

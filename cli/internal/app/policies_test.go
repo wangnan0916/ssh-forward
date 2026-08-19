@@ -177,6 +177,26 @@ func TestFilePolicyReaderSourceKeepsLastValidOnInvalidEdit(t *testing.T) {
 	}
 }
 
+func TestFilePolicyReaderReadReusesUnchangedFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can still read a chmod 0 file")
+	}
+	path := writePolicyFile(t, `{"schema_version": 1, "policies": [{"id": "a", "action": "ignore"}]}`)
+	reader := NewFilePolicyReader(path)
+	first, err := reader.Read()
+	if err != nil || len(first) != 1 || first[0].ID != "a" {
+		t.Fatalf("first Read = %#v, %v", first, err)
+	}
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+	second, err := reader.Read()
+	if err != nil || len(second) != 1 || second[0].ID != "a" {
+		t.Fatalf("cached Read = %#v, %v; want lastValid without reopening", second, err)
+	}
+}
+
 func TestMarshalPoliciesUsesFileShape(t *testing.T) {
 	policies := []core.ForwardingPolicy{
 		{ID: "web", Priority: 10, Action: core.PolicyAutoForward, Conditions: []core.PolicyCondition{

@@ -326,6 +326,11 @@ func (r *reconciler) decide(observations []ListenerObservation, managed []manage
 		}
 		return toCreate, toRemove
 	}
+	for key := range r.createState {
+		if _, still := desired[key]; !still {
+			delete(r.createState, key)
+		}
+	}
 	for key := range desired {
 		_, managed := managedKeys[key]
 		if r.createReady(key, managed) {

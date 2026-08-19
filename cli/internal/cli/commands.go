@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/present"
 	"github.com/wangnan0916/ssh-forward/cli/internal/snapshot"
 )
 
@@ -35,7 +36,11 @@ func (a *App) writeStatusHuman(snap core.Snapshot) error {
 		}
 	}
 
-	if ports := newRemotePorts(host); len(ports) != 0 {
+	var policies []core.ForwardingPolicy
+	if a.PolicyReader != nil {
+		policies, _ = a.PolicyReader.Read()
+	}
+	if ports := newRemotePorts(host, policies); len(ports) != 0 {
 		fmt.Fprintf(&builder, "New remote ports: %s (ssh-forward add PORT)\n", strings.Join(ports, ", "))
 	}
 	if len(host.LocalPortConflicts) != 0 {
@@ -48,24 +53,21 @@ func (a *App) writeStatusHuman(snap core.Snapshot) error {
 	return err
 }
 
-// newRemotePorts lists observed remote ports that have no Active Forward,
-// in observation order, once each.
-func newRemotePorts(host *core.HostSnapshot) []string {
-	forwarded := make(map[uint16]struct{}, len(host.Forwards))
-	for _, forward := range host.Forwards {
-		forwarded[forward.RemotePort] = struct{}{}
-	}
+// newRemotePorts lists Available ports from the shared list module: observed,
+// not an Active Forward, not a Local Port Conflict, and not Ignore.
+func newRemotePorts(host *core.HostSnapshot, policies []core.ForwardingPolicy) []string {
+	lists := present.FromSnapshot(host, nil, policies)
+	ports := make([]string, 0, len(lists.Available))
 	seen := make(map[uint16]struct{})
-	ports := make([]string, 0)
-	for _, observation := range host.ListenerObservations {
-		if _, ok := forwarded[observation.RemotePort]; ok {
+	for _, row := range lists.Available {
+		if row.Reason == present.ReasonIgnored {
 			continue
 		}
-		if _, ok := seen[observation.RemotePort]; ok {
+		if _, ok := seen[row.Port]; ok {
 			continue
 		}
-		seen[observation.RemotePort] = struct{}{}
-		ports = append(ports, strconv.Itoa(int(observation.RemotePort)))
+		seen[row.Port] = struct{}{}
+		ports = append(ports, strconv.Itoa(int(row.Port)))
 	}
 	return ports
 }

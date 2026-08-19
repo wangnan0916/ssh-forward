@@ -113,3 +113,11 @@ _Avoid_: remembered rule, permanent tunnel
 **Local Port Conflict**:
 The state in which no permitted Local Endpoint can be allocated because strict same-port allocation was required or the bounded fallback range was exhausted.
 _Avoid_: Remote failure, forwarding failure
+
+**Attention**:
+The presentation list of Local Port Conflicts that need the operator to act. CLI human status and the loopback WebUI share this grouping.
+_Avoid_: error list, failed forwards, new listeners
+
+**Available**:
+Observed Remote Listeners that are neither an Active Forward nor a Local Port Conflict. An Ignore match still appears here (`reason=ignored`); it is not a fifth list.
+_Avoid_: unmatched-only, new ports, ignored list

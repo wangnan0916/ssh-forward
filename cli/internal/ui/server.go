@@ -7,33 +7,23 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"time"
 
+	"github.com/wangnan0916/ssh-forward/cli/internal/app"
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
-	"github.com/wangnan0916/ssh-forward/cli/internal/snapshot"
+	"github.com/wangnan0916/ssh-forward/cli/internal/present"
 )
-
-// PortStore is the remember/forget path the CLI already uses.
-type PortStore interface {
-	AddPort(port uint16) (bool, error)
-	RemovePort(port uint16) (bool, error)
-	Read() ([]core.ForwardingPolicy, error)
-}
 
 // Server is the loopback WebUI adapter: Snapshot/Watch plus policy writes.
 type Server struct {
 	Manager core.Manager
-	Ports   PortStore
+	Ports   *app.FilePolicyReader
 	Token   string
+	hub     *watchHub
 }
 
 type portBody struct {
 	Port uint16 `json:"port"`
-}
-
-type rememberedBody struct {
-	RememberedPorts []uint16 `json:"remembered_ports"`
 }
 
 type rememberResult struct {
@@ -50,12 +40,28 @@ type errorBody struct {
 	Error string `json:"error"`
 }
 
+type hostChrome struct {
+	Alias                string `json:"alias"`
+	Connection           string `json:"connection"`
+	Discovery            string `json:"discovery"`
+	ConnectionDiagnostic string `json:"connection_diagnostic,omitempty"`
+}
+
+type viewDocument struct {
+	Revision        core.Revision `json:"revision"`
+	Host            *hostChrome   `json:"host"`
+	Lists           present.Lists `json:"lists"`
+	RememberedPorts []uint16      `json:"remembered_ports"`
+}
+
 // Handler serves the page and JSON API. Every request needs the token.
 func (s *Server) Handler() http.Handler {
+	if s.hub == nil {
+		s.hub = newWatchHub(s.Manager)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.page)
 	mux.HandleFunc("GET /api/snapshot", s.snapshot)
-	mux.HandleFunc("GET /api/remembered", s.remembered)
 	mux.HandleFunc("GET /api/watch", s.watch)
 	mux.HandleFunc("POST /api/remember", s.remember)
 	mux.HandleFunc("POST /api/forget", s.forget)
@@ -66,6 +72,13 @@ func (s *Server) Handler() http.Handler {
 		}
 		mux.ServeHTTP(w, r)
 	})
+}
+
+// Close ends the shared Manager Watch.
+func (s *Server) Close() {
+	if s.hub != nil {
+		s.hub.stop()
+	}
 }
 
 func (s *Server) authorized(r *http.Request) bool {
@@ -87,29 +100,12 @@ func (s *Server) snapshot(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, errorBody{Error: err.Error()})
 		return
 	}
-	encoded, err := snapshot.Marshal(snap)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, errorBody{Error: err.Error()})
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(encoded)
-}
-
-func (s *Server) remembered(w http.ResponseWriter, r *http.Request) {
-	policies, err := s.Ports.Read()
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		writeJSON(w, http.StatusInternalServerError, errorBody{Error: err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, rememberedBody{RememberedPorts: core.SimpleAutoForwardPorts(policies)})
+	writeJSON(w, http.StatusOK, s.view(snap))
 }
 
 func (s *Server) remember(w http.ResponseWriter, r *http.Request) {
-	port, err := readPort(r)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, errorBody{Error: err.Error()})
+	port, ok := s.decodePort(w, r)
+	if !ok {
 		return
 	}
 	changed, err := s.Ports.AddPort(port)
@@ -121,9 +117,8 @@ func (s *Server) remember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) forget(w http.ResponseWriter, r *http.Request) {
-	port, err := readPort(r)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, errorBody{Error: err.Error()})
+	port, ok := s.decodePort(w, r)
+	if !ok {
 		return
 	}
 	changed, err := s.Ports.RemovePort(port)
@@ -144,30 +139,85 @@ func (s *Server) watch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, errorBody{Error: "streaming unsupported"})
 		return
 	}
-	stream, err := s.Manager.Watch(r.Context())
+	initial, updates, unsub, err := s.hub.subscribe()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorBody{Error: err.Error()})
 		return
 	}
-	defer stream.Close()
+	defer unsub()
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
-	for {
-		snap, err := stream.Next(r.Context())
+	writeView := func(snap core.Snapshot) bool {
+		encoded, err := json.Marshal(s.view(snap))
 		if err != nil {
-			return
-		}
-		encoded, err := snapshot.Marshal(snap)
-		if err != nil {
-			return
+			return false
 		}
 		if _, err := fmt.Fprintf(w, "data: %s\n\n", encoded); err != nil {
-			return
+			return false
 		}
 		flusher.Flush()
+		return true
 	}
+	if initial.Host != nil || initial.Revision != 0 {
+		if !writeView(initial) {
+			return
+		}
+	}
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case snap, ok := <-updates:
+			if !ok {
+				return
+			}
+			if !writeView(snap) {
+				return
+			}
+		}
+	}
+}
+
+func (s *Server) view(snap core.Snapshot) viewDocument {
+	policies := s.policies()
+	remembered := core.SimpleAutoForwardPorts(policies)
+	doc := viewDocument{
+		Revision:        snap.Revision,
+		Lists:           present.FromSnapshot(snap.Host, remembered, policies),
+		RememberedPorts: remembered,
+	}
+	if snap.Host != nil {
+		doc.Host = &hostChrome{
+			Alias:                string(snap.Host.Alias),
+			Connection:           string(snap.Host.Connection),
+			Discovery:            string(snap.Host.Discovery.State),
+			ConnectionDiagnostic: snap.Host.ConnectionDiagnostic,
+		}
+	}
+	return doc
+}
+
+func (s *Server) policies() []core.ForwardingPolicy {
+	if s.Ports == nil {
+		return nil
+	}
+	policies, _ := s.Ports.Source()
+	return policies
+}
+
+func (s *Server) decodePort(w http.ResponseWriter, r *http.Request) (uint16, bool) {
+	port, err := readPort(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody{Error: err.Error()})
+		return 0, false
+	}
+	if s.Ports == nil {
+		writeJSON(w, http.StatusInternalServerError, errorBody{Error: "no policies file is configured"})
+		return 0, false
+	}
+	return port, true
 }
 
 func readPort(r *http.Request) (uint16, error) {

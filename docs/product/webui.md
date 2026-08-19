@@ -32,7 +32,7 @@ One table, one type, matching the desktop lists (`docs/product/desktop-experienc
 1. **Attention** — Local Port Conflicts. Snapshot has no per-listener newness flag, so unmatched observed ports are listed under Available rather than invented as “new.”
 2. **Active** — working Forwards (remote port, Allocated Local Port, process, directory)
 3. **Remembered** — remembered ports with no current listener
-4. **Available** — observed listeners that are neither forwarded nor in Attention
+4. **Available** — observed listeners that are neither forwarded nor in Attention. Ignore still appears here (`reason=ignored`); Policy Evidence (`reason`, `policy_id`) lives on these rows, not on the Manager Snapshot.
 
 Chrome above the table (not a fifth list): host, connection, Discovery, and a **Remember port** / **Forget port** form (digits, 1–65535). Directory remember/forget stays on the CLI for this slice (`add --dir` / `remove --dir`); the table shows directory as evidence only.
 
@@ -40,7 +40,9 @@ Clicking a row (or its action) remembers or forgets that **port**. Forget asks f
 
 ## Live data
 
-The page replaces its view from Watch Snapshots (full documents, not patches). Local UI state is the selected list, the port form, and a pending forget. Policy writes go through the same `policies.jsonc` path as the CLI; the Manager hot-reloads.
+CLI human status and the page share one list module (`present.FromSnapshot`). The HTTP view is `{revision, host chrome, lists, remembered_ports}`; the page renders that document and does not regroup Snapshot fields. One Manager `Watch` in the UI process fans out to SSE clients.
+
+The page replaces its view from those documents (full documents, not patches). Local UI state is the selected list, the port form, and a pending forget. Policy writes go through the same `policies.jsonc` path as the CLI (`FilePolicyReader`); the Manager hot-reloads.
 
 ## Out of scope for slice 7
 

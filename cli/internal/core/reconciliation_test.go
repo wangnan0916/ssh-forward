@@ -395,6 +395,28 @@ func TestDecideCreatesAfterTwoMatches(t *testing.T) {
 	}
 }
 
+func TestDecideCreateHysteresisResetsWhenListenerLeaves(t *testing.T) {
+	r := newReconciler(func() ([]ForwardingPolicy, string) { return nil, "" })
+	policies := []ForwardingPolicy{{ID: "p1", Action: PolicyAutoForward, Conditions: []PolicyCondition{{RemotePorts: policyPort(8080)}}}}
+	observations := []ListenerObservation{loopbackListener(8080)}
+	create, _ := r.decide(observations, nil, policies, false)
+	if len(create) != 0 {
+		t.Fatalf("first match create=%v, want empty", create)
+	}
+	create, _ = r.decide(nil, nil, policies, false)
+	if len(create) != 0 {
+		t.Fatalf("absence create=%v, want empty", create)
+	}
+	create, _ = r.decide(observations, nil, policies, false)
+	if len(create) != 0 {
+		t.Fatalf("match after a gap create=%v, want a fresh first generation", create)
+	}
+	create, _ = r.decide(observations, nil, policies, false)
+	if len(create) != 1 || create[0].PreferredLocalPort != 8080 {
+		t.Fatalf("second consecutive match create=%+v, want 8080", create)
+	}
+}
+
 func TestDecidePolicyChangeSkipsHysteresis(t *testing.T) {
 	r := newReconciler(func() ([]ForwardingPolicy, string) { return nil, "" })
 	policies := []ForwardingPolicy{{ID: "p1", Action: PolicyAutoForward, Conditions: []PolicyCondition{{RemotePorts: policyPort(8080)}}}}
