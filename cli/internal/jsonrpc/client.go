@@ -160,8 +160,9 @@ func (c *managerClient) unwatch(watchID string) {
 }
 
 // remoteStream is one Watch over the wire. Unread notifications coalesce
-// to the latest Snapshot, matching the Manager stream. Coalesce stays here
-// (decoded Snapshots) rather than a shared helper; RPC correlation is jrpc2.
+// to the latest Snapshot, matching the Manager stream. Close-before-Next
+// still returns the subscribe Snapshot (core's snapshotStream does not);
+// keep that difference explicit until one coalescing module owns both.
 type remoteStream struct {
 	client  *managerClient
 	watchID string

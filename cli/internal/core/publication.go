@@ -177,6 +177,9 @@ func (s *snapshotStream) endNext() {
 }
 
 func (s *snapshotStream) nextLocked() (Snapshot, bool, error) {
+	// Closed wins over the initial Snapshot. remoteStream in jsonrpc still
+	// delivers the subscribe Snapshot first; do not merge the two without a
+	// test that picks one.
 	if s.closed {
 		return Snapshot{}, false, s.terminal
 	}

@@ -39,9 +39,7 @@ type Lists struct {
 	Available []Row `json:"available"`
 }
 
-// FromSnapshot groups one host view. remembered is SimpleAutoForwardPorts.
-// policies classify Available rows; nil policies leave Reason unmatched.
-func FromSnapshot(host *core.HostSnapshot, remembered []uint16, policies []core.ForwardingPolicy) Lists {
+func fromSnapshot(host *core.HostSnapshot, remembered []uint16, policies []core.ForwardingPolicy) Lists {
 	if host == nil {
 		return Lists{
 			Attention: []Row{},

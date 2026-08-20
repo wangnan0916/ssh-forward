@@ -11,6 +11,7 @@ import (
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/app"
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/present"
 )
 
 // fakeManager is a scriptable core.Manager for CLI tests: commands do not
@@ -107,6 +108,18 @@ func TestStatusHuman(t *testing.T) {
 		if strings.Contains(output, hide) {
 			t.Fatalf("status leaked internal detail %q:\n%s", hide, output)
 		}
+	}
+}
+
+func TestFormatHumanStatusSkipsIgnored(t *testing.T) {
+	host := snapshotWithHost().Host
+	ignore := []core.ForwardingPolicy{{
+		ID: "deny-9090", Action: core.PolicyIgnore,
+		Conditions: []core.PolicyCondition{{RemotePorts: &core.PortRange{From: 9090, To: 9090}}},
+	}}
+	text := formatHumanStatus(present.NewDocument(host, ignore, true))
+	if strings.Contains(text, "9090  ssh-forward add") {
+		t.Fatalf("ignored port leaked into Addable:\n%s", text)
 	}
 }
 

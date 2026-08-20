@@ -53,6 +53,7 @@ type viewDocument struct {
 	Host            *present.Chrome `json:"host"`
 	Lists           present.Lists   `json:"lists"`
 	RememberedPorts []uint16        `json:"remembered_ports"`
+	AddablePorts    []uint16        `json:"addable_ports"`
 }
 
 // Handler serves the page and JSON API. Every request needs the
@@ -189,6 +190,7 @@ func (s *Server) view(snap core.Snapshot) viewDocument {
 		Revision:        snap.Revision,
 		Lists:           operator.Lists,
 		RememberedPorts: operator.Remembered,
+		AddablePorts:    operator.Addable,
 	}
 	if snap.Host != nil {
 		chrome := operator.Chrome

@@ -191,7 +191,7 @@ func TestSnapshotViewDocument(t *testing.T) {
 	if !bytes.Contains(body, []byte(`"revision":5`)) || !bytes.Contains(body, []byte(`"alias":"development"`)) {
 		t.Fatalf("view body = %s", body)
 	}
-	if !bytes.Contains(body, []byte(`"lists"`)) || !bytes.Contains(body, []byte(`"active"`)) || !bytes.Contains(body, []byte(`"remembered_ports"`)) {
+	if !bytes.Contains(body, []byte(`"lists"`)) || !bytes.Contains(body, []byte(`"active"`)) || !bytes.Contains(body, []byte(`"remembered_ports"`)) || !bytes.Contains(body, []byte(`"addable_ports"`)) {
 		t.Fatalf("view missing lists: %s", body)
 	}
 }

@@ -21,7 +21,8 @@ import (
 
 // HostPicker chooses one Development Host alias from a candidate list.
 // ResolveHost uses it when more than one SSH alias is configured and none
-// is pinned. The CLI prompt and a later WebUI are adapters at this seam.
+// is pinned. The CLI prompt is the only adapter today; a page picker would
+// be a second adapter, not a reason to invent one early.
 type HostPicker func(hosts []string, stdin io.Reader, stdout io.Writer) (string, error)
 
 // Options configure Connect and Serve: the per-user layout, the Development
@@ -43,8 +44,10 @@ type Options struct {
 // Session is one use of the per-user Manager: either a JSON-RPC client of
 // the live singleton or an in-process Manager.
 type Session struct {
-	Manager      core.Manager
-	Host         core.HostAlias
+	Manager core.Manager
+	Host    core.HostAlias
+	// PolicyReader is this process's policies file: Source feeds the Manager,
+	// Effective feeds present.NewDocument, AddPort/RemovePort satisfy ui.Intent.
 	PolicyReader *FilePolicyReader
 }
 

@@ -40,7 +40,7 @@ Clicking a row (or its action) remembers or forgets that **port**. Forget asks f
 
 ## Live data
 
-CLI human status and the page share `present.NewDocument` (lists, Addable, Host chrome). The HTTP view is `{revision, host chrome, lists, remembered_ports}`; the page renders that document and does not regroup Snapshot fields. One Manager `Watch` in the UI process fans out to SSE clients.
+CLI human status and the page share `present.NewDocument` (lists, Addable, Host chrome). The HTTP view is `{revision, host chrome, lists, remembered_ports, addable_ports}`; the page renders that document and does not regroup Snapshot fields. Remember on a row is only for Addable ports; Forget is only for Remembered Auto-forward. One Manager `Watch` in the UI process fans out to SSE clients.
 
 The page replaces its view from those documents (full documents, not patches). Local UI state is the selected list, the port form, and a pending forget. Policy writes go through `ui.Intent` (`FilePolicyReader` in production); the Manager hot-reloads. A cold UI process with an unreadable policies file does not invent Remembered ports or unmatched Policy Evidence.
 

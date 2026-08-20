@@ -28,10 +28,10 @@ func TestAddablePortsSkipsIgnored(t *testing.T) {
 		ID: "deny-9090", Action: core.PolicyIgnore,
 		Conditions: []core.PolicyCondition{{RemotePorts: &core.PortRange{From: 9090, To: 9090}}},
 	}}
-	if got := AddablePorts(host, NewDocument(host, ignore, true).Lists); len(got) != 0 {
+	if got := NewDocument(host, ignore, true).Addable; len(got) != 0 {
 		t.Fatalf("addable = %v, want empty (9090 ignored)", got)
 	}
-	if got := AddablePorts(host, NewDocument(host, nil, true).Lists); len(got) != 1 || got[0] != 9090 {
+	if got := NewDocument(host, nil, true).Addable; len(got) != 1 || got[0] != 9090 {
 		t.Fatalf("addable without policies = %v, want [9090]", got)
 	}
 }
@@ -43,7 +43,7 @@ func TestAddablePortsSkipsWildcard(t *testing.T) {
 			{Family: core.FamilyIPv4, BindScope: core.BindLoopback, RemotePort: 7897},
 		},
 	}
-	if got := AddablePorts(host, NewDocument(host, nil, true).Lists); len(got) != 1 || got[0] != 7897 {
+	if got := NewDocument(host, nil, true).Addable; len(got) != 1 || got[0] != 7897 {
 		t.Fatalf("addable = %v, want [7897] (wildcard 22 omitted)", got)
 	}
 }
@@ -54,7 +54,7 @@ func TestAddablePortsSkipsAutoForward(t *testing.T) {
 		ID: "port-9090", Action: core.PolicyAutoForward,
 		Conditions: []core.PolicyCondition{{RemotePorts: &core.PortRange{From: 9090, To: 9090}}},
 	}}
-	if got := AddablePorts(host, NewDocument(host, policies, true).Lists); len(got) != 0 {
+	if got := NewDocument(host, policies, true).Addable; len(got) != 0 {
 		t.Fatalf("addable = %v, want empty (9090 already matched)", got)
 	}
 }
@@ -75,6 +75,9 @@ func TestNewDocumentUnreliableOmitsWaitingAndRemembered(t *testing.T) {
 	}
 	if len(doc.Lists.Available) != 1 || doc.Lists.Available[0].Port != 9090 || doc.Lists.Available[0].Reason != ReasonUnclassified {
 		t.Fatalf("available = %+v, want 9090 unclassified", doc.Lists.Available)
+	}
+	if len(doc.Addable) != 0 {
+		t.Fatalf("addable = %v, want empty when unreliable", doc.Addable)
 	}
 	if doc.Chrome.PolicyDiagnostic != "policies_file_invalid" {
 		t.Fatalf("chrome policy diagnostic = %q", doc.Chrome.PolicyDiagnostic)

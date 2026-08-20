@@ -6,7 +6,7 @@ import (
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
-func TestFromSnapshotSplitsFourLists(t *testing.T) {
+func TestNewDocumentSplitsFourLists(t *testing.T) {
 	exe := "node"
 	cwd := "/home/dev/app"
 	host := &core.HostSnapshot{
@@ -20,7 +20,12 @@ func TestFromSnapshotSplitsFourLists(t *testing.T) {
 		}},
 		LocalPortConflicts: []core.LocalPortConflict{{RemotePort: 3000}},
 	}
-	lists := FromSnapshot(host, []uint16{5173, 8080}, nil)
+	policies := []core.ForwardingPolicy{{
+		ID: "port-5173", Action: core.PolicyAutoForward,
+		Conditions: []core.PolicyCondition{{RemotePorts: &core.PortRange{From: 5173, To: 5173}}},
+	}}
+	doc := NewDocument(host, policies, true)
+	lists := doc.Lists
 	if len(lists.Attention) != 1 || lists.Attention[0].Port != 3000 || lists.Attention[0].State != StateConflict {
 		t.Fatalf("attention = %+v", lists.Attention)
 	}
@@ -33,17 +38,20 @@ func TestFromSnapshotSplitsFourLists(t *testing.T) {
 	if len(lists.Available) != 1 || lists.Available[0].Port != 9090 || lists.Available[0].Reason != ReasonUnmatched {
 		t.Fatalf("available = %+v, want 9090 unmatched (3000 is Attention)", lists.Available)
 	}
+	if len(doc.Addable) != 1 || doc.Addable[0] != 9090 {
+		t.Fatalf("addable = %v, want [9090]", doc.Addable)
+	}
 }
 
-func TestFromSnapshotPolicyEvidence(t *testing.T) {
+func TestNewDocumentPolicyEvidence(t *testing.T) {
 	ignore := []core.ForwardingPolicy{{
 		ID: "deny-9090", Action: core.PolicyIgnore,
 		Conditions: []core.PolicyCondition{{RemotePorts: &core.PortRange{From: 9090, To: 9090}}},
 	}}
 	host := &core.HostSnapshot{
-		ListenerObservations: []core.ListenerObservation{{RemotePort: 9090}},
+		ListenerObservations: []core.ListenerObservation{{RemotePort: 9090, Family: core.FamilyIPv4, BindScope: core.BindLoopback}},
 	}
-	lists := FromSnapshot(host, nil, ignore)
+	lists := NewDocument(host, ignore, true).Lists
 	if len(lists.Available) != 1 || lists.Available[0].Reason != ReasonIgnored || lists.Available[0].PolicyID != "deny-9090" {
 		t.Fatalf("ignored available = %+v", lists.Available)
 	}
@@ -52,7 +60,7 @@ func TestFromSnapshotPolicyEvidence(t *testing.T) {
 		ID: "port-9090", Action: core.PolicyAutoForward,
 		Conditions: []core.PolicyCondition{{RemotePorts: &core.PortRange{From: 9090, To: 9090}}},
 	}}
-	lists = FromSnapshot(host, nil, auto)
+	lists = NewDocument(host, auto, true).Lists
 	if lists.Available[0].Reason != ReasonAutoForward {
 		t.Fatalf("auto-forward reason = %q", lists.Available[0].Reason)
 	}
@@ -61,16 +69,22 @@ func TestFromSnapshotPolicyEvidence(t *testing.T) {
 		ID: "dir", Action: core.PolicyAutoForward,
 		Conditions: []core.PolicyCondition{{WorkingDirectoryTree: strPtr("/home/dev")}},
 	}}
-	lists = FromSnapshot(host, nil, needsCwd)
+	lists = NewDocument(host, needsCwd, true).Lists
 	if lists.Available[0].Reason != ReasonMissingEvidence {
 		t.Fatalf("missing evidence reason = %q", lists.Available[0].Reason)
 	}
 }
 
-func TestFromSnapshotNilHost(t *testing.T) {
-	lists := FromSnapshot(nil, []uint16{1}, nil)
-	if len(lists.Attention)+len(lists.Active)+len(lists.Waiting)+len(lists.Available) != 0 {
-		t.Fatalf("nil host lists = %+v", lists)
+func TestNewDocumentNilHost(t *testing.T) {
+	doc := NewDocument(nil, []core.ForwardingPolicy{{
+		ID: "port-1", Action: core.PolicyAutoForward,
+		Conditions: []core.PolicyCondition{{RemotePorts: &core.PortRange{From: 1, To: 1}}},
+	}}, true)
+	if len(doc.Lists.Attention)+len(doc.Lists.Active)+len(doc.Lists.Waiting)+len(doc.Lists.Available) != 0 {
+		t.Fatalf("nil host lists = %+v", doc.Lists)
+	}
+	if len(doc.Addable) != 0 {
+		t.Fatalf("nil host addable = %v", doc.Addable)
 	}
 }
 

@@ -485,7 +485,7 @@ function pickView(doc) {
   return "active";
 }
 
-function rowHTML(row, remembered) {
+function rowHTML(row, remembered, addable) {
   const bits = [];
   if (row.exe) bits.push(esc(row.exe));
   if (row.cwd) bits.push(esc(row.cwd));
@@ -493,9 +493,12 @@ function rowHTML(row, remembered) {
   const local = row.local ? "127.0.0.1:" + row.local : "";
   const status = row.reason || row.state;
   const kind = toneOf(row.state) || toneOf(row.reason);
-  const action = remembered
-    ? `<button type="button" class="danger" data-forget="${row.port}">Forget</button>`
-    : `<button type="button" class="primary" data-remember="${row.port}">Remember</button>`;
+  let action = "";
+  if (remembered) {
+    action = `<button type="button" class="danger" data-forget="${row.port}">Forget</button>`;
+  } else if (addable) {
+    action = `<button type="button" class="primary" data-remember="${row.port}">Remember</button>`;
+  }
   return `<div class="row">
     <div>
       <div class="row-identity">
@@ -525,6 +528,7 @@ function render() {
   ).join("");
   const rows = lists[view] || [];
   const remembered = new Set(snap.remembered_ports || []);
+  const addable = new Set(snap.addable_ports || []);
   const panel = document.getElementById("panel");
   panel.setAttribute("aria-labelledby", "tab-" + view);
   if (!rows.length) {
@@ -532,7 +536,7 @@ function render() {
     panel.innerHTML = `<div class="empty"><h2>${title}</h2><p>${body}</p></div>`;
     return;
   }
-  panel.innerHTML = rows.map((row) => rowHTML(row, remembered.has(row.port))).join("");
+  panel.innerHTML = rows.map((row) => rowHTML(row, remembered.has(row.port), addable.has(row.port))).join("");
 }
 
 function applyView(doc) {

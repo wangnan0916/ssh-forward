@@ -14,22 +14,25 @@ type Chrome struct {
 }
 
 // Document is the operator view: Attention / Active / Waiting / Available,
-// Remembered Auto-forward ports, and Host chrome. Policy Evidence is on
-// Available rows. AddablePorts is CLI-only (not computed here).
+// Remembered Auto-forward ports, Addable ports, and Host chrome. Policy
+// Evidence is on Available rows. Chrome.PolicyDiagnostic is the Manager
+// Snapshot's file health; Lists/Remembered/Addable use this process's
+// Effective Policies (reliable).
 type Document struct {
 	Chrome     Chrome
 	Lists      Lists
 	Remembered []uint16
+	Addable    []uint16
 }
 
 // NewDocument groups one HostSnapshot for CLI human status and the WebUI.
 // reliable is false when this process has no last-valid Forwarding Policies
-// (a cold read of a corrupt file): Waiting and Remembered stay empty, and
-// Available rows are unclassified instead of unmatched.
+// (a cold read of a corrupt file): Waiting, Remembered, and Addable stay
+// empty, and Available rows are unclassified instead of unmatched.
 func NewDocument(host *core.HostSnapshot, policies []core.ForwardingPolicy, reliable bool) Document {
 	doc := Document{Chrome: chrome(host)}
 	if !reliable {
-		lists := FromSnapshot(host, nil, nil)
+		lists := fromSnapshot(host, nil, nil)
 		for i := range lists.Available {
 			lists.Available[i].Reason = ReasonUnclassified
 			lists.Available[i].PolicyID = ""
@@ -38,7 +41,8 @@ func NewDocument(host *core.HostSnapshot, policies []core.ForwardingPolicy, reli
 		return doc
 	}
 	doc.Remembered = core.SimpleAutoForwardPorts(policies)
-	doc.Lists = FromSnapshot(host, doc.Remembered, policies)
+	doc.Lists = fromSnapshot(host, doc.Remembered, policies)
+	doc.Addable = addablePorts(host, doc.Lists)
 	return doc
 }
 
@@ -56,10 +60,7 @@ func chrome(host *core.HostSnapshot) Chrome {
 	}
 }
 
-// AddablePorts lists loopback Available ports that human status offers to
-// remember: not Ignore, not already matched Auto-forward. Wildcard listeners
-// stay on the Development Host; the WebUI still shows every Available row.
-func AddablePorts(host *core.HostSnapshot, lists Lists) []uint16 {
+func addablePorts(host *core.HostSnapshot, lists Lists) []uint16 {
 	ports := make([]uint16, 0, len(lists.Available))
 	seen := make(map[uint16]struct{})
 	for _, row := range lists.Available {

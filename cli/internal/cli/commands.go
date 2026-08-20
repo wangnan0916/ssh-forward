@@ -20,11 +20,12 @@ func (a *App) writeStatusHuman(snap core.Snapshot) error {
 		policies, reliable, _ = a.PolicyReader.Effective()
 	}
 	doc := present.NewDocument(host, policies, reliable)
-	var addable []uint16
-	if reliable {
-		addable = present.AddablePorts(host, doc.Lists)
-	}
+	text := formatHumanStatus(doc)
+	_, err := io.WriteString(a.Options.Stdout, text)
+	return err
+}
 
+func formatHumanStatus(doc present.Document) string {
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "Host: %s — %s\n", doc.Chrome.Alias, doc.Chrome.Connection)
 	if note := connectionNote(doc.Chrome); note != "" {
@@ -53,9 +54,9 @@ func (a *App) writeStatusHuman(snap core.Snapshot) error {
 			fmt.Fprintf(&builder, "  %d  (nothing listening yet)\n", row.Port)
 		}
 	}
-	if len(addable) != 0 {
+	if len(doc.Addable) != 0 {
 		builder.WriteString("Available:\n")
-		for _, port := range addable {
+		for _, port := range doc.Addable {
 			fmt.Fprintf(&builder, "  %d  ssh-forward add %d\n", port, port)
 		}
 	}
@@ -66,11 +67,10 @@ func (a *App) writeStatusHuman(snap core.Snapshot) error {
 		}
 	}
 	if doc.Chrome.Connection == string(core.ConnectionConnected) &&
-		len(doc.Lists.Active) == 0 && len(doc.Lists.Waiting) == 0 && len(addable) == 0 && len(doc.Lists.Attention) == 0 {
+		len(doc.Lists.Active) == 0 && len(doc.Lists.Waiting) == 0 && len(doc.Addable) == 0 && len(doc.Lists.Attention) == 0 {
 		builder.WriteString("No ports forwarded yet. Remember one with: ssh-forward add PORT\n")
 	}
-	_, err := io.WriteString(a.Options.Stdout, builder.String())
-	return err
+	return builder.String()
 }
 
 func connectionNote(chrome present.Chrome) string {
