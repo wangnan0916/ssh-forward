@@ -11,7 +11,6 @@ import (
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/app"
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
-	"github.com/wangnan0916/ssh-forward/cli/internal/present"
 )
 
 // fakeManager is a scriptable core.Manager for CLI tests: commands do not
@@ -302,6 +301,25 @@ func TestPolicyListWithReaderShowsLastValidOnCorruptFile(t *testing.T) {
 	}
 }
 
+func TestPolicyListColdCorruptFileHasNoLastValid(t *testing.T) {
+	path := writePolicies(t, `{"schema_version": 1, "policies": [{"id": "broken", "action": "bogus"}]}`)
+	var stdout, stderr bytes.Buffer
+	a := &App{
+		Manager:      &fakeManager{},
+		PolicyReader: app.NewFilePolicyReader(path),
+		Options:      app.Options{PoliciesPath: path, Stdout: &stdout, Stderr: &stderr},
+	}
+	if err := a.Run(context.Background(), []string{"policy"}); err != nil {
+		t.Fatalf("policy list: %v", err)
+	}
+	if stdout.String() != "Nothing remembered yet. ssh-forward add PORT\n" {
+		t.Fatalf("policy list output = %q, want empty (no last-valid)", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "this process has no last-valid policies") {
+		t.Fatalf("policy list stderr = %q, want a cold-reader warning", stderr.String())
+	}
+}
+
 func TestPolicyListMissingFile(t *testing.T) {
 	var stdout bytes.Buffer
 	app := &App{
@@ -363,44 +381,27 @@ func TestStatusShowsForwardsAndNewPorts(t *testing.T) {
 	}
 }
 
-func addablePorts(host *core.HostSnapshot, policies []core.ForwardingPolicy) []string {
-	return newRemotePorts(host, present.FromSnapshot(host, core.SimpleAutoForwardPorts(policies), policies))
-}
-
-func TestNewRemotePortsSkipsIgnored(t *testing.T) {
-	host := snapshotWithHost().Host
-	policies := []core.ForwardingPolicy{{
-		ID: "deny-9090", Action: core.PolicyIgnore,
-		Conditions: []core.PolicyCondition{{RemotePorts: &core.PortRange{From: 9090, To: 9090}}},
-	}}
-	if got := addablePorts(host, policies); len(got) != 0 {
-		t.Fatalf("newRemotePorts = %v, want empty (9090 ignored)", got)
+func TestStatusColdCorruptPoliciesOmitsAddable(t *testing.T) {
+	path := writePolicies(t, `{"schema_version": 1, "policies": [{"id": "broken", "action": "bogus"}]}`)
+	snapshot := snapshotWithHost()
+	snapshot.Host.PolicyDiagnostic = "policies_file_invalid"
+	output, err := runCLI(t, &App{
+		Manager:      &fakeManager{snapshot: snapshot},
+		Host:         core.HostAlias("development"),
+		PolicyReader: app.NewFilePolicyReader(path),
+		Options:      app.Options{PoliciesPath: path},
+	}, "status")
+	if err != nil {
+		t.Fatalf("status: %v", err)
 	}
-	if got := addablePorts(host, nil); len(got) != 1 || got[0] != "9090" {
-		t.Fatalf("newRemotePorts without policies = %v, want [9090]", got)
+	if !strings.Contains(output, "policies.jsonc is unreadable; last valid rules are still in effect.") {
+		t.Fatalf("status missing the policy diagnostic:\n%s", output)
 	}
-}
-
-func TestNewRemotePortsSkipsWildcard(t *testing.T) {
-	host := &core.HostSnapshot{
-		ListenerObservations: []core.ListenerObservation{
-			{Family: core.FamilyIPv4, BindScope: core.BindWildcard, RemotePort: 22},
-			{Family: core.FamilyIPv4, BindScope: core.BindLoopback, RemotePort: 7897},
-		},
+	if strings.Contains(output, "ssh-forward add") {
+		t.Fatalf("cold corrupt status offered add:\n%s", output)
 	}
-	if got := addablePorts(host, nil); len(got) != 1 || got[0] != "7897" {
-		t.Fatalf("newRemotePorts = %v, want [7897] (wildcard 22 omitted)", got)
-	}
-}
-
-func TestNewRemotePortsSkipsAutoForward(t *testing.T) {
-	host := snapshotWithHost().Host
-	policies := []core.ForwardingPolicy{{
-		ID: "port-9090", Action: core.PolicyAutoForward,
-		Conditions: []core.PolicyCondition{{RemotePorts: &core.PortRange{From: 9090, To: 9090}}},
-	}}
-	if got := addablePorts(host, policies); len(got) != 0 {
-		t.Fatalf("newRemotePorts = %v, want empty (9090 already matched)", got)
+	if !strings.Contains(output, "8080 → 127.0.0.1:8080") {
+		t.Fatalf("status dropped the live forward:\n%s", output)
 	}
 }
 

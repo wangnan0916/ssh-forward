@@ -22,10 +22,10 @@ type App struct {
 	Manager core.Manager
 	Host    core.HostAlias
 	Options app.Options
-	// PolicyReader is the shared policies-file path: Remembered Auto-forward
-	// writes, policy list, and the Manager's reconciliation source share one
-	// last-valid set. bindDefaults creates one when nil so tests can still
-	// inject a primed reader.
+	// PolicyReader is this process's policies-file path. In-process it is
+	// shared with the Manager's Source; a JSON-RPC client gets a cold
+	// reader whose last-valid starts empty. bindDefaults creates one when
+	// nil so tests can still inject a primed reader.
 	PolicyReader *app.FilePolicyReader
 	Version      string
 
@@ -59,8 +59,11 @@ func (a *App) Run(ctx context.Context, args []string) error {
 		return a.serveManager(ctx)
 	}
 	if len(args) == 0 && app.TakeUIServeEnv(&a.Options) {
-		a.bindDefaults()
-		return a.runUIServe(ctx)
+		err := app.ServeUI(ctx, a.connectOptions())
+		if app.IsResolution(err) {
+			return UsageError(err)
+		}
+		return err
 	}
 	command := a.RootCommand()
 	command.SetArgs(args)

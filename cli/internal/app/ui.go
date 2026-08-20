@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/wangnan0916/ssh-forward/cli/internal/ui"
 )
 
 const (
@@ -22,8 +24,8 @@ var (
 )
 
 // TakeUIServeEnv reports whether this process is the autospawned WebUI
-// child and copies its Options encoding into opts. The child enters the
-// loopback HTTP serve path without parsing a Cobra command tree.
+// child and copies its Options encoding into opts. The child enters
+// ServeUI without parsing a Cobra command tree.
 func TakeUIServeEnv(opts *Options) bool {
 	return takeServeEnv(envUIServe, envUIHost, envUIPolicies, envUISSHConfig, opts)
 }
@@ -93,6 +95,52 @@ func StartUI(ctx context.Context, opts Options) (string, error) {
 		}
 	}
 	return WaitForUI(ctx, opts.Layout, 10*time.Second, pid)
+}
+
+// ServeUI attaches to the per-user Manager and runs the loopback WebUI
+// until ctx ends. Autospawned children enter here from TakeUIServeEnv.
+func ServeUI(ctx context.Context, opts Options) error {
+	session, err := Connect(ctx, opts)
+	if err != nil {
+		return err
+	}
+	defer session.Manager.Close(context.Background())
+	return ServeUISession(ctx, opts, session)
+}
+
+// ServeUISession runs the loopback WebUI for an already-connected Session
+// (Cobra `ui serve` and tests that inject a Manager).
+func ServeUISession(ctx context.Context, opts Options, session Session) error {
+	opts = opts.WithDefaults()
+	if session.Manager == nil {
+		return fmt.Errorf("no manager is configured")
+	}
+	if session.PolicyReader == nil {
+		return fmt.Errorf("no policies file is configured (--policies)")
+	}
+	token, err := ui.NewToken()
+	if err != nil {
+		return err
+	}
+	listener, err := ui.ListenLoopback()
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
+	if err := os.MkdirAll(opts.Layout.Dir, 0o700); err != nil {
+		return err
+	}
+	url := ui.PageURL(listener.Addr(), token)
+	defer RemoveUIFiles(opts.Layout)
+	if err := os.WriteFile(opts.Layout.UIPID, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(opts.Layout.UIURL, []byte(url+"\n"), 0o600); err != nil {
+		return err
+	}
+	server := &ui.Server{Manager: session.Manager, Intent: session.PolicyReader, Token: token}
+	defer server.Close()
+	return ui.Serve(ctx, listener, server.Handler())
 }
 
 // WaitForUI polls until LiveUIURL succeeds, the child dies, or timeout.

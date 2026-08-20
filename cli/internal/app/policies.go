@@ -171,10 +171,10 @@ func reverseCondition(condition core.PolicyCondition) fileCondition {
 	return out
 }
 
-// FilePolicyReader is the single read-and-mutate path for the policies
-// file: the Manager's reconciliation source, Remembered Auto-forward
-// writes, and the CLI's policy list share one last-valid set and one last
-// error, so every surface sees the same truth.
+// FilePolicyReader is the read-and-mutate path for one process's
+// policies.jsonc. last-valid is in-process only: the Manager's Source, and
+// presentation via Effective, share it inside that process. A client that
+// never parsed a valid file has no last-valid set.
 type FilePolicyReader struct {
 	path string
 
@@ -218,6 +218,17 @@ func (r *FilePolicyReader) Read() ([]core.ForwardingPolicy, error) {
 	}
 	r.noteStamp(info)
 	return policies, nil
+}
+
+// Effective is the presentation view of this process's policies: the file
+// when readable, else last-valid. reliable is false when the file is
+// unreadable and this process has never parsed a valid set (a cold client).
+func (r *FilePolicyReader) Effective() (policies []core.ForwardingPolicy, reliable bool, err error) {
+	policies, err = r.Read()
+	if err == nil || errors.Is(err, os.ErrNotExist) {
+		return policies, true, err
+	}
+	return policies, len(policies) > 0, err
 }
 
 func (r *FilePolicyReader) noteStamp(info os.FileInfo) {

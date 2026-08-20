@@ -119,5 +119,17 @@ The presentation list of Local Port Conflicts that need the operator to act. CLI
 _Avoid_: error list, failed forwards, new listeners
 
 **Available**:
-Observed Remote Listeners that are neither an Active Forward nor a Local Port Conflict. An Ignore match still appears here (`reason=ignored`); it is not a fifth list.
+Observed Remote Listeners that are neither an Active Forward nor a Local Port Conflict. An Ignore match still appears here (`reason=ignored`); it is not a fifth list. When this process has no last-valid Forwarding Policies, Available rows are unclassified instead of unmatched.
 _Avoid_: unmatched-only, new ports, ignored list
+
+**Addable**:
+The subset of Available Remote Listeners that human status offers to Remember: loopback, not Ignore, not already Auto-forward, only when this process has an effective policy set.
+_Avoid_: Available (the full list)
+
+**Unclassified**:
+An Available row whose Policy Evidence cannot be evaluated because this process has no last-valid Forwarding Policies while the policies file is unreadable.
+_Avoid_: unmatched, ignored
+
+**Effective Policies**:
+The Forwarding Policy set this process can use for presentation: the file when readable, else this process's last-valid set. A client that never parsed a valid file has none.
+_Avoid_: shared FilePolicyReader, Manager policies

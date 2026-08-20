@@ -9,13 +9,11 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/wangnan0916/ssh-forward/cli/internal/app"
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
@@ -37,6 +35,32 @@ func (m *fakeManager) Watch(ctx context.Context) (core.SnapshotStream, error) {
 
 func (*fakeManager) Close(context.Context) error { return nil }
 
+type fakeIntent struct {
+	policies []core.ForwardingPolicy
+	reliable bool
+	err      error
+}
+
+func (f *fakeIntent) Effective() ([]core.ForwardingPolicy, bool, error) {
+	return f.policies, f.reliable, f.err
+}
+
+func (f *fakeIntent) AddPort(port uint16) (bool, error) {
+	updated, changed := core.RememberPort(f.policies, port)
+	f.policies = updated
+	return changed, nil
+}
+
+func (f *fakeIntent) RemovePort(port uint16) (bool, error) {
+	updated, changed := core.ForgetPort(f.policies, port)
+	f.policies = updated
+	return changed, nil
+}
+
+func emptyIntent() *fakeIntent {
+	return &fakeIntent{reliable: true}
+}
+
 func testSnap() core.Snapshot {
 	return core.Snapshot{
 		Revision: 5,
@@ -51,12 +75,12 @@ func testSnap() core.Snapshot {
 	}
 }
 
-func startServer(t *testing.T, token string, ports *app.FilePolicyReader) string {
+func startServer(t *testing.T, token string, intent Intent) string {
 	t.Helper()
-	return startServerManager(t, token, ports, &fakeManager{snap: testSnap()})
+	return startServerManager(t, token, intent, &fakeManager{snap: testSnap()})
 }
 
-func startServerManager(t *testing.T, token string, ports *app.FilePolicyReader, manager core.Manager) string {
+func startServerManager(t *testing.T, token string, intent Intent, manager core.Manager) string {
 	t.Helper()
 	listener, err := ListenLoopback()
 	if err != nil {
@@ -68,7 +92,7 @@ func startServerManager(t *testing.T, token string, ports *app.FilePolicyReader,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	server := &Server{Manager: manager, Ports: ports, Token: token}
+	server := &Server{Manager: manager, Intent: intent, Token: token}
 	t.Cleanup(server.Close)
 	errc := make(chan error, 1)
 	go func() { errc <- Serve(ctx, listener, server.Handler()) }()
@@ -100,9 +124,7 @@ func TestListenLoopbackIsIPv4Loopback(t *testing.T) {
 }
 
 func TestSnapshotRequiresToken(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "policies.jsonc")
-	ports := app.NewFilePolicyReader(path)
-	base := startServer(t, "secret-token", ports)
+	base := startServer(t, "secret-token", emptyIntent())
 	api := origin(base)
 
 	missing, err := http.Get(api + "/api/snapshot")
@@ -124,9 +146,36 @@ func TestSnapshotRequiresToken(t *testing.T) {
 	}
 }
 
+func TestSnapshotViewIncludesPolicyChrome(t *testing.T) {
+	snap := testSnap()
+	snap.Host.PolicyDiagnostic = "policies_file_invalid"
+	snap.Host.Discovery = core.DiscoverySnapshot{State: core.DiscoveryDegraded, Diagnostic: "process_metadata_unavailable"}
+	snap.Host.ListenerObservations = []core.ListenerObservation{
+		{Family: core.FamilyIPv4, BindScope: core.BindLoopback, RemotePort: 9090},
+	}
+	base := startServerManager(t, "secret-token", &fakeIntent{reliable: false, err: errors.New("corrupt")}, &fakeManager{snap: snap})
+	res, err := http.Get(origin(base) + "/api/snapshot?token=secret-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"policy_diagnostic":"policies_file_invalid"`,
+		`"discovery_diagnostic":"process_metadata_unavailable"`,
+		`"reason":"unclassified"`,
+	} {
+		if !bytes.Contains(body, []byte(want)) {
+			t.Fatalf("view missing %s: %s", want, body)
+		}
+	}
+}
+
 func TestSnapshotViewDocument(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "policies.jsonc")
-	base := startServer(t, "secret-token", app.NewFilePolicyReader(path))
+	base := startServer(t, "secret-token", emptyIntent())
 	res, err := http.Get(origin(base) + "/api/snapshot?token=secret-token")
 	if err != nil {
 		t.Fatal(err)
@@ -148,9 +197,8 @@ func TestSnapshotViewDocument(t *testing.T) {
 }
 
 func TestRememberAndForgetPort(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "policies.jsonc")
-	ports := app.NewFilePolicyReader(path)
-	base := startServer(t, "secret-token", ports)
+	intent := emptyIntent()
+	base := startServer(t, "secret-token", intent)
 	api := origin(base)
 
 	post := func(pathSuffix, raw string) *http.Response {
@@ -167,9 +215,9 @@ func TestRememberAndForgetPort(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("remember status = %d", res.StatusCode)
 	}
-	policies, err := ports.Read()
-	if err != nil {
-		t.Fatal(err)
+	policies, reliable, err := intent.Effective()
+	if err != nil || !reliable {
+		t.Fatalf("Effective: %v reliable %v", err, reliable)
 	}
 	if got := core.SimpleAutoForwardPorts(policies); len(got) != 1 || got[0] != 5173 {
 		t.Fatalf("remembered ports = %v, want [5173]", got)
@@ -199,7 +247,7 @@ func TestRememberAndForgetPort(t *testing.T) {
 	if gone.StatusCode != http.StatusOK {
 		t.Fatalf("forget status = %d", gone.StatusCode)
 	}
-	policies, err = ports.Read()
+	policies, _, err = intent.Effective()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,8 +257,7 @@ func TestRememberAndForgetPort(t *testing.T) {
 }
 
 func TestPageIsHTML(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "policies.jsonc")
-	base := startServer(t, "secret-token", app.NewFilePolicyReader(path))
+	base := startServer(t, "secret-token", emptyIntent())
 	res, err := http.Get(base)
 	if err != nil {
 		t.Fatal(err)
@@ -242,13 +289,12 @@ func (s *oneSnapshot) Next(ctx context.Context) (core.Snapshot, error) {
 func (*oneSnapshot) Close() error { return nil }
 
 func TestWatchStreamsSnapshot(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "policies.jsonc")
 	stream := &oneSnapshot{snap: testSnap()}
 	manager := &fakeManager{
 		snap:  testSnap(),
 		watch: func(context.Context) (core.SnapshotStream, error) { return stream, nil },
 	}
-	base := startServerManager(t, "secret-token", app.NewFilePolicyReader(path), manager)
+	base := startServerManager(t, "secret-token", emptyIntent(), manager)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, origin(base)+"/api/watch?token=secret-token", nil)
@@ -278,7 +324,6 @@ func TestWatchStreamsSnapshot(t *testing.T) {
 }
 
 func TestWatchSharesOneManagerWatch(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "policies.jsonc")
 	var calls atomic.Int32
 	stream := &oneSnapshot{snap: testSnap()}
 	manager := &fakeManager{
@@ -288,7 +333,7 @@ func TestWatchSharesOneManagerWatch(t *testing.T) {
 			return stream, nil
 		},
 	}
-	base := startServerManager(t, "secret-token", app.NewFilePolicyReader(path), manager)
+	base := startServerManager(t, "secret-token", emptyIntent(), manager)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	readEvent := func() {

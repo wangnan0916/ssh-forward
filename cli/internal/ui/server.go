@@ -9,15 +9,23 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/wangnan0916/ssh-forward/cli/internal/app"
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 	"github.com/wangnan0916/ssh-forward/cli/internal/present"
 )
 
+// Intent is the WebUI's policy seam: read the effective set and remember
+// or forget a port. Production uses app.FilePolicyReader; tests inject the
+// same type or a fake.
+type Intent interface {
+	Effective() ([]core.ForwardingPolicy, bool, error)
+	AddPort(uint16) (bool, error)
+	RemovePort(uint16) (bool, error)
+}
+
 // Server is the loopback WebUI adapter: Snapshot/Watch plus policy writes.
 type Server struct {
 	Manager core.Manager
-	Ports   *app.FilePolicyReader
+	Intent  Intent
 	Token   string
 	hub     *watchHub
 }
@@ -40,18 +48,11 @@ type errorBody struct {
 	Error string `json:"error"`
 }
 
-type hostChrome struct {
-	Alias                string `json:"alias"`
-	Connection           string `json:"connection"`
-	Discovery            string `json:"discovery"`
-	ConnectionDiagnostic string `json:"connection_diagnostic,omitempty"`
-}
-
 type viewDocument struct {
-	Revision        core.Revision `json:"revision"`
-	Host            *hostChrome   `json:"host"`
-	Lists           present.Lists `json:"lists"`
-	RememberedPorts []uint16      `json:"remembered_ports"`
+	Revision        core.Revision   `json:"revision"`
+	Host            *present.Chrome `json:"host"`
+	Lists           present.Lists   `json:"lists"`
+	RememberedPorts []uint16        `json:"remembered_ports"`
 }
 
 // Handler serves the page and JSON API. Every request needs the token.
@@ -108,7 +109,7 @@ func (s *Server) remember(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	changed, err := s.Ports.AddPort(port)
+	changed, err := s.Intent.AddPort(port)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorBody{Error: err.Error()})
 		return
@@ -121,7 +122,7 @@ func (s *Server) forget(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	changed, err := s.Ports.RemovePort(port)
+	changed, err := s.Intent.RemovePort(port)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorBody{Error: err.Error()})
 		return
@@ -181,30 +182,18 @@ func (s *Server) watch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) view(snap core.Snapshot) viewDocument {
-	policies := s.policies()
-	remembered := core.SimpleAutoForwardPorts(policies)
+	policies, reliable, _ := s.Intent.Effective()
+	operator := present.NewDocument(snap.Host, policies, reliable)
 	doc := viewDocument{
 		Revision:        snap.Revision,
-		Lists:           present.FromSnapshot(snap.Host, remembered, policies),
-		RememberedPorts: remembered,
+		Lists:           operator.Lists,
+		RememberedPorts: operator.Remembered,
 	}
 	if snap.Host != nil {
-		doc.Host = &hostChrome{
-			Alias:                string(snap.Host.Alias),
-			Connection:           string(snap.Host.Connection),
-			Discovery:            string(snap.Host.Discovery.State),
-			ConnectionDiagnostic: snap.Host.ConnectionDiagnostic,
-		}
+		chrome := operator.Chrome
+		doc.Host = &chrome
 	}
 	return doc
-}
-
-func (s *Server) policies() []core.ForwardingPolicy {
-	if s.Ports == nil {
-		return nil
-	}
-	policies, _ := s.Ports.Source()
-	return policies
 }
 
 func (s *Server) decodePort(w http.ResponseWriter, r *http.Request) (uint16, bool) {
@@ -213,7 +202,7 @@ func (s *Server) decodePort(w http.ResponseWriter, r *http.Request) (uint16, boo
 		writeJSON(w, http.StatusBadRequest, errorBody{Error: err.Error()})
 		return 0, false
 	}
-	if s.Ports == nil {
+	if s.Intent == nil {
 		writeJSON(w, http.StatusInternalServerError, errorBody{Error: "no policies file is configured"})
 		return 0, false
 	}

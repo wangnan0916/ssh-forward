@@ -14,9 +14,13 @@ func (a *App) runPolicyList(jsonOutput bool) error {
 	if a.Options.PoliciesPath == "" {
 		return fmt.Errorf("no policies file is configured (--policies)")
 	}
-	policies, err := a.PolicyReader.Read()
+	policies, reliable, err := a.PolicyReader.Effective()
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintf(a.Options.Stderr, "warning: %v; showing the last valid policies\n", err)
+		if reliable {
+			fmt.Fprintf(a.Options.Stderr, "warning: %v; showing the last valid policies\n", err)
+		} else {
+			fmt.Fprintf(a.Options.Stderr, "warning: %v; this process has no last-valid policies\n", err)
+		}
 	}
 	if jsonOutput {
 		encoded, err := app.MarshalPolicies(policies)

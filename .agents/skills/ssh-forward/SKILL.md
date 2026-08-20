@@ -105,4 +105,4 @@ One manager owns one Development Host. A conflicting `--host` on a client comman
 - macOS: `~/Library/Application Support/ssh-forward/`
 - Linux: `$XDG_CONFIG_HOME/ssh-forward/` (or `~/.config/ssh-forward/`)
 
-The manager hot-reloads policies. Invalid input keeps the last valid set.
+The manager hot-reloads policies. Invalid input keeps the last valid set in the Manager process. A CLI/WebUI process that never parsed a valid file does not invent remembered ports from the corrupt file.

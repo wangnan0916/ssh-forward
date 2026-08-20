@@ -14,6 +14,7 @@ const (
 	ReasonIgnored         = "ignored"
 	ReasonAutoForward     = "auto_forward"
 	ReasonMissingEvidence = "missing_evidence"
+	ReasonUnclassified    = "unclassified"
 )
 
 // Row is one WebUI / human-status line: a Remote Listener, Forward, conflict,
@@ -28,7 +29,7 @@ type Row struct {
 	PolicyID string `json:"policy_id,omitempty"`
 }
 
-// Lists is the Attention / Active / Remembered / Available grouping from a
+// Lists is the Attention / Active / Waiting / Available grouping from a
 // HostSnapshot plus Remembered Auto-forward ports. Policy Evidence lives on
 // Available rows; it is not added to the Manager Snapshot.
 type Lists struct {

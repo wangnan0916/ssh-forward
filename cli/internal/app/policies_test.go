@@ -289,8 +289,6 @@ func TestFilePolicyReaderKeepsLastValidOnInvalidInput(t *testing.T) {
 		t.Fatalf("source after corrupt read = %#v diagnostic %q, want last valid set", still, diagnostic)
 	}
 
-	// The Manager and the CLI share one reader: a fresh parse by the CLI
-	// (Read) refreshes the state the Manager's next generation sees.
 	fixed := `{"schema_version": 1, "policies": [{"id": "db", "action": "ignore"}]}`
 	if err := os.WriteFile(path, []byte(fixed), 0o600); err != nil {
 		t.Fatal(err)
@@ -302,6 +300,38 @@ func TestFilePolicyReaderKeepsLastValidOnInvalidInput(t *testing.T) {
 	fromSource, diagnostic := reader.Source()
 	if len(fromSource) != 1 || fromSource[0].ID != "db" || diagnostic != "" {
 		t.Fatalf("source after fix = %#v diagnostic %q", fromSource, diagnostic)
+	}
+}
+
+func TestFilePolicyReaderEffectiveColdCorrupt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policies.jsonc")
+	if err := os.WriteFile(path, []byte(`{"schema_version": 1, "policies": [{"id": "broken", "action": "bogus"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	policies, reliable, err := NewFilePolicyReader(path).Effective()
+	if err == nil {
+		t.Fatal("Effective on a cold corrupt file succeeded")
+	}
+	if reliable || len(policies) != 0 {
+		t.Fatalf("Effective = %#v reliable %v, want empty unreliable", policies, reliable)
+	}
+}
+
+func TestFilePolicyReaderEffectiveKeepsLastValid(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policies.jsonc")
+	if err := os.WriteFile(path, []byte(`{"schema_version": 1, "policies": [{"id": "web", "action": "auto_forward"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reader := NewFilePolicyReader(path)
+	if _, _, err := reader.Effective(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"schema_version": 1, "policies": [{"id": "broken", "action": "bogus"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	policies, reliable, err := reader.Effective()
+	if err == nil || !reliable || len(policies) != 1 || policies[0].ID != "web" {
+		t.Fatalf("Effective after corrupt = %#v reliable %v err %v, want last-valid web", policies, reliable, err)
 	}
 }
 

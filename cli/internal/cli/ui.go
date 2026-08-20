@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/app"
-	"github.com/wangnan0916/ssh-forward/cli/internal/ui"
 )
 
 func (a *App) uiCommand() *cobra.Command {
@@ -113,32 +112,11 @@ func (a *App) runUIServe(ctx context.Context) error {
 	if err := a.ensureSession(ctx); err != nil {
 		return err
 	}
-	if a.PolicyReader == nil {
-		return fmt.Errorf("no policies file is configured (--policies)")
-	}
-	token, err := ui.NewToken()
-	if err != nil {
-		return err
-	}
-	listener, err := ui.ListenLoopback()
-	if err != nil {
-		return err
-	}
-	defer listener.Close()
-	if err := os.MkdirAll(a.Options.Layout.Dir, 0o700); err != nil {
-		return err
-	}
-	url := ui.PageURL(listener.Addr(), token)
-	defer app.RemoveUIFiles(a.Options.Layout)
-	if err := os.WriteFile(a.Options.Layout.UIPID, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
-		return err
-	}
-	if err := os.WriteFile(a.Options.Layout.UIURL, []byte(url+"\n"), 0o600); err != nil {
-		return err
-	}
-	server := &ui.Server{Manager: a.Manager, Ports: a.PolicyReader, Token: token}
-	defer server.Close()
-	return ui.Serve(ctx, listener, server.Handler())
+	return app.ServeUISession(ctx, a.connectOptions(), app.Session{
+		Manager:      a.Manager,
+		Host:         a.Host,
+		PolicyReader: a.PolicyReader,
+	})
 }
 
 func openBrowser(url string) error {
