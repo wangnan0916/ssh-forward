@@ -267,8 +267,10 @@ func TestPageIsHTML(t *testing.T) {
 		t.Fatalf("status = %d", res.StatusCode)
 	}
 	body, _ := io.ReadAll(res.Body)
-	if !bytes.Contains(body, []byte("Remember port")) {
-		t.Fatalf("page missing remember form: %s", body)
+	for _, want := range []string{"Remember port", "Skip to ports", "ssh-forward"} {
+		if !bytes.Contains(body, []byte(want)) {
+			t.Fatalf("page missing %q", want)
+		}
 	}
 }
 
@@ -373,5 +375,58 @@ func TestPageURLIncludesLoopbackAndToken(t *testing.T) {
 	wantSuffix := fmt.Sprintf(":%d/?token=abc", listener.Addr().(*net.TCPAddr).Port)
 	if !strings.HasPrefix(got, "http://127.0.0.1:") || !strings.HasSuffix(got, wantSuffix) {
 		t.Fatalf("PageURL = %q", got)
+	}
+}
+
+func TestSnapshotAcceptsTokenCookie(t *testing.T) {
+	base := startServer(t, "secret-token", emptyIntent())
+	page, err := http.Get(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page.Body.Close()
+	if page.StatusCode != http.StatusOK {
+		t.Fatalf("page status = %d", page.StatusCode)
+	}
+	cookie := ""
+	for _, c := range page.Cookies() {
+		if c.Name == TokenCookie {
+			cookie = c.Value
+			break
+		}
+	}
+	if cookie != "secret-token" {
+		t.Fatalf("Set-Cookie token = %q", cookie)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, origin(base)+"/api/snapshot", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(&http.Cookie{Name: TokenCookie, Value: cookie})
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("cookie snapshot status = %d", res.StatusCode)
+	}
+}
+
+func TestSnapshotRejectsWrongCookie(t *testing.T) {
+	base := startServer(t, "secret-token", emptyIntent())
+	req, err := http.NewRequest(http.MethodGet, origin(base)+"/api/snapshot", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(&http.Cookie{Name: TokenCookie, Value: "wrong"})
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("wrong cookie status = %d, want 401", res.StatusCode)
 	}
 }

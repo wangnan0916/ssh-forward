@@ -55,7 +55,8 @@ type viewDocument struct {
 	RememberedPorts []uint16        `json:"remembered_ports"`
 }
 
-// Handler serves the page and JSON API. Every request needs the token.
+// Handler serves the page and JSON API. Every request needs the
+// capability token, as a query parameter or the host-only cookie.
 func (s *Server) Handler() http.Handler {
 	if s.hub == nil {
 		s.hub = newWatchHub(s.Manager)
@@ -71,6 +72,9 @@ func (s *Server) Handler() http.Handler {
 			writeJSON(w, http.StatusUnauthorized, errorBody{Error: "missing or invalid token"})
 			return
 		}
+		if r.URL.Query().Get("token") != "" {
+			grantTokenCookie(w, s.Token)
+		}
 		mux.ServeHTTP(w, r)
 	})
 }
@@ -83,10 +87,7 @@ func (s *Server) Close() {
 }
 
 func (s *Server) authorized(r *http.Request) bool {
-	if s.Token == "" {
-		return false
-	}
-	return r.URL.Query().Get("token") == s.Token
+	return tokenEqual(tokenFromRequest(r), s.Token)
 }
 
 func (s *Server) page(w http.ResponseWriter, r *http.Request) {

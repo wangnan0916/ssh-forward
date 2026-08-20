@@ -79,7 +79,7 @@ ssh-forward ui
 ssh-forward ui status --json
 ```
 
-`ui` prints `http://127.0.0.1:PORT/?token=…` (and opens a browser unless `SSH_FORWARD_UI_NO_OPEN=1`). It is idempotent while that process is running. `ui stop` ends only the page; Active Forwards and the Manager keep running. Do not run `ui` unless the user asked for the WebUI. `ssh-forward ui` starts the background page; it is not a blocking TUI.
+`ui` prints `http://127.0.0.1:PORT/?token=…` (and opens a browser unless `SSH_FORWARD_UI_NO_OPEN=1`). The page keeps that secret as a cookie and may drop the query from the address bar; later visits still need that printed URL. It is idempotent while that process is running. `ui stop` ends only the page; Active Forwards and the Manager keep running. Do not run `ui` unless the user asked for the WebUI. `ssh-forward ui` starts the background page; it is not a blocking TUI.
 
 ## 4. Report live state
 
