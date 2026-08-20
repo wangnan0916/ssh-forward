@@ -247,15 +247,11 @@
       grid-template-columns: minmax(0, 1fr) auto;
       gap: 8px 16px;
       align-items: center;
+      min-height: 69px;
       padding: 14px 16px;
-      padding-inline-start: 13px;
       border-bottom: 1px solid var(--color-border);
-      border-inline-start: 3px solid transparent;
     }
     .row:last-child { border-bottom: 0; }
-    .row.tone-ok { border-inline-start-color: var(--color-success); }
-    .row.tone-warn { border-inline-start-color: var(--color-warning); }
-    .row.tone-bad { border-inline-start-color: var(--color-danger-text); }
     @media (hover: hover) {
       .row:hover { background: var(--color-sunken); }
     }
@@ -303,27 +299,33 @@
       font-size: 12px;
     }
     .local {
-      padding: 2px 8px;
+      padding: 0 8px;
       border-radius: var(--radius-sm);
       background: var(--color-sunken);
       color: var(--color-text);
-      font: 500 12px/1.4 var(--mono);
+      font: 500 12px/1.2 var(--mono);
       font-variant-numeric: tabular-nums;
     }
     .meta {
       margin-top: 4px;
       color: var(--color-text-tertiary);
       font-size: 12px;
+      line-height: 1.45;
       overflow-wrap: anywhere;
     }
     .row-actions { display: flex; gap: 8px; justify-content: flex-end; }
     .row-actions button { min-height: 32px; padding: 4px 10px; }
     .empty {
-      padding: 40px 20px;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-height: 69px;
+      padding: 14px 20px;
       text-align: center;
     }
     .empty h2 {
-      margin: 0 0 6px;
+      margin: 0 0 2px;
       font-size: 14px;
       font-weight: 600;
       letter-spacing: -0.02em;
@@ -362,7 +364,7 @@
       .shell { padding: 20px 16px 40px; }
       .host { font-size: 22px; }
       .pills { justify-content: flex-start; }
-      .row { padding: 12px; padding-inline-start: 13px; }
+      .row { padding: 12px; }
       .row-actions { align-self: start; }
     }
   </style>
@@ -494,7 +496,7 @@ function rowHTML(row, remembered) {
   const action = remembered
     ? `<button type="button" class="danger" data-forget="${row.port}">Forget</button>`
     : `<button type="button" class="primary" data-remember="${row.port}">Remember</button>`;
-  return `<div class="row${kind ? " tone-" + kind : ""}">
+  return `<div class="row">
     <div>
       <div class="row-identity">
         ${status ? `<span class="badge${kind ? " " + kind : ""}"><span class="dot" aria-hidden="true"></span>${esc(status)}</span>` : ""}
