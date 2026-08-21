@@ -20,7 +20,6 @@ var ErrUsage = errors.New("usage")
 // directly and skip Connect.
 type App struct {
 	Manager core.Manager
-	Host    core.HostAlias
 	Options app.Options
 	// PolicyReader is this process's policies-file path. In-process it is
 	// shared with the Manager's Source; a JSON-RPC client gets a cold
@@ -57,13 +56,6 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	// a Cobra command tree. A leftover serve env must not swallow real args.
 	if len(args) == 0 && app.TakeManagerServeEnv(&a.Options) {
 		return a.serveManager(ctx)
-	}
-	if len(args) == 0 && app.TakeUIServeEnv(&a.Options) {
-		err := app.ServeUI(ctx, a.connectOptions())
-		if app.IsResolution(err) {
-			return UsageError(err)
-		}
-		return err
 	}
 	command := a.RootCommand()
 	command.SetArgs(args)
@@ -175,7 +167,6 @@ func (a *App) ensureSession(ctx context.Context) error {
 		return err
 	}
 	a.Manager = session.Manager
-	a.Host = session.Host
 	a.PolicyReader = session.PolicyReader
 	a.sessionOwned = true
 	return nil
@@ -192,7 +183,6 @@ Daily
   status          what is forwarded right now
   add PORT        remember a remote port
   remove PORT     forget a remembered port
-  ui              open the loopback page
 
 Host
   host            aliases from ~/.ssh/config

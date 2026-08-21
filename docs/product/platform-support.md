@@ -8,7 +8,7 @@ The public CLI targets:
 - Architecture: exercised on Apple Silicon macOS (unit CI) and Linux (integration CI)
 - Development Host: Linux over system OpenSSH
 
-Windows as a Local Machine is not offered. The future desktop app starts after the WebUI and may ship on current macOS only.
+Windows as a Local Machine is not offered. The future desktop app is not in this repository yet and may ship on current macOS only.
 
 The original private self-use spike targeted one Apple Silicon Mac running macOS Tahoe 26.6.1. That machine remains the performance-budget reference (docs/product/performance-budget.md); it is not a compatibility claim for the public CLI.
 

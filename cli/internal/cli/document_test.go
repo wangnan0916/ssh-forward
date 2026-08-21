@@ -1,4 +1,4 @@
-package present
+package cli
 
 import (
 	"testing"

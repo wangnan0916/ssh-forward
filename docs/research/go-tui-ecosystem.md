@@ -1,6 +1,6 @@
 # Go TUI library options for `ssh-forward`
 
-**Superseded.** Slice 7 is a loopback WebUI, not a TUI ([ADR-0021](../adr/0021-serve-a-loopback-webui-instead-of-a-tui.md), [webui.md](../product/webui.md)). This file is the 2026-08-18 Bubble Tea survey kept for history. Do not add Charm libraries.
+**Superseded.** There is no TUI ([ADR-0021](../adr/0021-serve-a-loopback-webui-instead-of-a-tui.md)). The loopback WebUI was later removed; the public surface is the headless CLI. This file is the 2026-08-18 Bubble Tea survey kept for history. Do not add Charm libraries.
 
 _Original scope: a presentation-only TUI over the Manager Interface. Evidence checked against upstream repositories, licenses, `go.mod` files, pkg.go.dev, the Go module proxy, and Charm first-party docs on 2026-08-18._
 

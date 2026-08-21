@@ -34,7 +34,7 @@ func TestScannerAttachesPartialityReason(t *testing.T) {
 	// Scanner-declared partiality: the boot frame itself reports process
 	// capability partial, and the process evidence is complete.
 	var declared strings.Builder
-	fmt.Fprintf(&declared, "SF1\tB\t1\t%s\t%s\tfull\tfull\tpartial\t%d\t%d\t%d\t%d\n", hexText("boot"), hexText("net"), MaxObservedListeners, MaxObservedSockets, MaxProcessRecords, MaxObservationMetadataBytes)
+	fmt.Fprintf(&declared, "SF1\tB\t1\t%s\t%s\tfull\tfull\tpartial\t%d\t%d\t%d\t%d\n", hexText("boot"), hexText("net"), maxObservedListeners, maxObservedSockets, maxProcessRecords, maxObservationMetadataBytes)
 	fmt.Fprintf(&declared, "SF1\tL\t1\tipv4\tloopback\t8080\t42\n")
 	fmt.Fprintf(&declared, "SF1\tP\t1\t42\t7\t0\t7\t%s\t%s\t%s\n", hexText("/bin/server"), hexText("/workspace"), hexText("server\x00"))
 	declared.WriteString("SF1\tE\t1\n")
@@ -55,7 +55,7 @@ func TestScannerAttachesPartialityReason(t *testing.T) {
 	// chain is missing depth 0, so the parser degrades the capability from
 	// evidence it saw itself.
 	var recomputed strings.Builder
-	fmt.Fprintf(&recomputed, "SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t%d\t%d\t%d\t%d\n", hexText("boot"), hexText("net"), MaxObservedListeners, MaxObservedSockets, MaxProcessRecords, MaxObservationMetadataBytes)
+	fmt.Fprintf(&recomputed, "SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t%d\t%d\t%d\t%d\n", hexText("boot"), hexText("net"), maxObservedListeners, maxObservedSockets, maxProcessRecords, maxObservationMetadataBytes)
 	fmt.Fprintf(&recomputed, "SF1\tL\t1\tipv4\tloopback\t8080\t42\n")
 	fmt.Fprintf(&recomputed, "SF1\tP\t1\t42\t7\t1\t7\t%s\t%s\t%s\n", hexText("/bin/server"), hexText("/workspace"), hexText("server\x00"))
 	recomputed.WriteString("SF1\tE\t1\n")
@@ -73,8 +73,8 @@ func TestScannerAttachesPartialityReason(t *testing.T) {
 func TestScannerRejectsProcessEvidenceExpansionAcrossListenerEndpoints(t *testing.T) {
 	hexText := func(value string) string { return hex.EncodeToString([]byte(value)) }
 	var input strings.Builder
-	fmt.Fprintf(&input, "SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t%d\t%d\t%d\t%d\n", hexText("boot"), hexText("net"), MaxObservedListeners, MaxObservedSockets, MaxProcessRecords, MaxObservationMetadataBytes)
-	for index := 0; index < MaxObservedListeners; index++ {
+	fmt.Fprintf(&input, "SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t%d\t%d\t%d\t%d\n", hexText("boot"), hexText("net"), maxObservedListeners, maxObservedSockets, maxProcessRecords, maxObservationMetadataBytes)
+	for index := 0; index < maxObservedListeners; index++ {
 		fmt.Fprintf(&input, "SF1\tL\t1\tipv4\tloopback\t%d\t42\n", 10000+index)
 	}
 	fmt.Fprintf(&input, "SF1\tP\t1\t42\t7\t0\t7\t%s\t%s\t%s\n", hexText("/bin/server"), hexText("/workspace"), hexText("server\x00"))
@@ -86,7 +86,7 @@ func TestScannerRejectsProcessEvidenceExpansionAcrossListenerEndpoints(t *testin
 	})
 	for _, fact := range facts {
 		if _, ok := fact.(core.ObservationSet); ok {
-			t.Fatalf("scanner accepted one inode for %d distinct endpoints", MaxObservedListeners)
+			t.Fatalf("scanner accepted one inode for %d distinct endpoints", maxObservedListeners)
 		}
 	}
 	if len(facts) != 1 {
@@ -105,7 +105,7 @@ func TestScannerDowngradesIncompleteProcessChain(t *testing.T) {
 			"SF1\tL\t1\tipv4\tloopback\t8080\t42\n"+
 			"SF1\tP\t1\t42\t7\t1\t6\t%s\t%s\t%s\n"+
 			"SF1\tE\t1\n",
-		hexText("boot"), hexText("net"), MaxObservedListeners, MaxObservedSockets, MaxProcessRecords, MaxObservationMetadataBytes, hexText("/bin/parent"), hexText("/workspace"), hexText("parent\x00"),
+		hexText("boot"), hexText("net"), maxObservedListeners, maxObservedSockets, maxProcessRecords, maxObservationMetadataBytes, hexText("/bin/parent"), hexText("/workspace"), hexText("parent\x00"),
 	)
 	var set core.ObservationSet
 	scanObservationFrames(strings.NewReader(input), func(fact core.SessionFact) {
@@ -188,11 +188,11 @@ func TestScannerRejectsDeclaredBudgetBeyondFrameLimits(t *testing.T) {
 		return strings.Join([]string{strconv.Itoa(listeners), strconv.Itoa(sockets), strconv.Itoa(records), strconv.Itoa(metadata)}, "\t")
 	}
 	for name, frame := range map[string]string{
-		"listeners": budget(MaxObservedListeners+1, MaxObservedSockets, MaxProcessRecords, MaxObservationMetadataBytes),
-		"sockets":   budget(MaxObservedListeners, MaxObservedSockets+1, MaxProcessRecords, MaxObservationMetadataBytes),
-		"processes": budget(MaxObservedListeners, MaxObservedSockets, MaxProcessRecords+1, MaxObservationMetadataBytes),
-		"metadata":  budget(MaxObservedListeners, MaxObservedSockets, MaxProcessRecords, MaxObservationMetadataBytes+1),
-		"zero":      budget(0, MaxObservedSockets, MaxProcessRecords, MaxObservationMetadataBytes),
+		"listeners": budget(maxObservedListeners+1, maxObservedSockets, maxProcessRecords, maxObservationMetadataBytes),
+		"sockets":   budget(maxObservedListeners, maxObservedSockets+1, maxProcessRecords, maxObservationMetadataBytes),
+		"processes": budget(maxObservedListeners, maxObservedSockets, maxProcessRecords+1, maxObservationMetadataBytes),
+		"metadata":  budget(maxObservedListeners, maxObservedSockets, maxProcessRecords, maxObservationMetadataBytes+1),
+		"zero":      budget(0, maxObservedSockets, maxProcessRecords, maxObservationMetadataBytes),
 	} {
 		t.Run(name, func(t *testing.T) {
 			input := fmt.Sprintf("SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t%s\nSF1\tE\t1\n", hexText("boot"), hexText("net"), frame)
@@ -237,7 +237,7 @@ func TestScannerParsesDeclaredBudget(t *testing.T) {
 	input := fmt.Sprintf(
 		"SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t%d\t%d\t%d\t%d\n"+
 			"SF1\tE\t1\n",
-		hexText("boot"), hexText("net"), MaxObservedListeners, MaxObservedSockets, MaxProcessRecords, MaxObservationMetadataBytes,
+		hexText("boot"), hexText("net"), maxObservedListeners, maxObservedSockets, maxProcessRecords, maxObservationMetadataBytes,
 	)
 	var set core.ObservationSet
 	scanObservationFrames(strings.NewReader(input), func(fact core.SessionFact) {
@@ -245,7 +245,7 @@ func TestScannerParsesDeclaredBudget(t *testing.T) {
 			set = observation
 		}
 	})
-	want := core.ObservationBudget{Listeners: MaxObservedListeners, Sockets: MaxObservedSockets, ProcessRecords: MaxProcessRecords, MetadataBytes: MaxObservationMetadataBytes}
+	want := core.ObservationBudget{Listeners: maxObservedListeners, Sockets: maxObservedSockets, ProcessRecords: maxProcessRecords, MetadataBytes: maxObservationMetadataBytes}
 	if diff := cmp.Diff(set.Budget, want); diff != "" {
 		t.Fatalf("declared Budget mismatch (-got +want):\n%s", diff)
 	}
@@ -303,9 +303,6 @@ printf '%%s|%%s\n' "$status" "${#arguments_hex}"
 	}
 }
 
-// Mirrors the copy in adapter_test.go; Go's test-package isolation
-// (package openssh vs openssh_test) forces two definitions of this shell
-// quoting helper, so keep them identical.
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
@@ -318,10 +315,10 @@ func TestParserBudgetsFitCoreRetention(t *testing.T) {
 		got  int
 		want int
 	}{
-		{"listeners", MaxObservedListeners, core.MaxRetainedListenerObservations},
-		{"sockets", MaxObservedSockets, core.MaxRetainedSocketIdentities},
-		{"processes", MaxProcessRecords, core.MaxRetainedProcessRecords},
-		{"metadata", MaxObservationMetadataBytes, core.MaxRetainedProcessMetadataBytes},
+		{"listeners", maxObservedListeners, core.MaxRetainedListenerObservations},
+		{"sockets", maxObservedSockets, core.MaxRetainedSocketIdentities},
+		{"processes", maxProcessRecords, core.MaxRetainedProcessRecords},
+		{"metadata", maxObservationMetadataBytes, core.MaxRetainedProcessMetadataBytes},
 	}
 	for _, test := range cases {
 		if test.got > test.want {

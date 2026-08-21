@@ -2,7 +2,7 @@
 
 ## Implementation status
 
-All behavior in this document is planned. The menu-bar app, its compact panel, the Dashboard, the Policy editor, and notifications land after the WebUI (slice 8 in design/implementation-sequence.md). None of it exists yet. The prose below is the planned product specification, not a description of today's behavior.
+All behavior in this document is planned. The menu-bar app, its compact panel, the Dashboard, the Policy editor, and notifications are not in this repository yet. The prose below is the planned product specification, not a description of today's behavior.
 
 ## Interface surfaces
 

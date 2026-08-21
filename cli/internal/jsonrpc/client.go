@@ -160,9 +160,8 @@ func (c *managerClient) unwatch(watchID string) {
 }
 
 // remoteStream is one Watch over the wire. Unread notifications coalesce
-// to the latest Snapshot, matching the Manager stream. Close-before-Next
-// still returns the subscribe Snapshot (core's snapshotStream does not);
-// keep that difference explicit until one coalescing module owns both.
+// to the latest Snapshot. Close-before-Next still returns the subscribe
+// Snapshot; core's in-process stream does not (TakeWatchSnapshot closedFirst).
 type remoteStream struct {
 	client  *managerClient
 	watchID string
@@ -212,61 +211,11 @@ func (s *remoteStream) fail(err error) {
 }
 
 func (s *remoteStream) Next(ctx context.Context) (core.Snapshot, error) {
-	if err := ctx.Err(); err != nil {
-		return core.Snapshot{}, err
-	}
-	if !s.beginNext() {
-		return core.Snapshot{}, core.ErrConcurrentSnapshotNext
-	}
-	defer s.endNext()
-	for {
-		s.mu.Lock()
-		snap, found, err := s.nextLocked()
-		s.mu.Unlock()
-		if err != nil {
-			return core.Snapshot{}, err
-		}
-		if found {
-			return snap, nil
-		}
-		select {
-		case <-ctx.Done():
-			return core.Snapshot{}, ctx.Err()
-		case <-s.ready:
-		}
-	}
+	return core.AwaitWatch(ctx, &s.mu, s.ready, &s.nextActive, s.nextLocked)
 }
 
 func (s *remoteStream) nextLocked() (core.Snapshot, bool, error) {
-	if s.initialPending {
-		s.initialPending = false
-		return s.initial, true, nil
-	}
-	if s.latest != nil {
-		snap := *s.latest
-		s.latest = nil
-		return snap, true, nil
-	}
-	if s.failed != nil {
-		return core.Snapshot{}, false, s.failed
-	}
-	return core.Snapshot{}, false, nil
-}
-
-func (s *remoteStream) beginNext() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.nextActive {
-		return false
-	}
-	s.nextActive = true
-	return true
-}
-
-func (s *remoteStream) endNext() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.nextActive = false
+	return core.TakeWatchSnapshot(false, s.failed != nil, s.failed, &s.initialPending, s.initial, &s.latest)
 }
 
 func (s *remoteStream) Close() error {

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -143,7 +142,6 @@ func isolateUserEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("SSH_FORWARD_NO_AUTOSPAWN", "1")
 	t.Setenv("SSH_FORWARD_MANAGER_SERVE", "")
-	t.Setenv("SSH_FORWARD_UI_SERVE", "")
 	t.Setenv("HOME", t.TempDir())
 }
 
@@ -236,7 +234,7 @@ func TestRunHelp(t *testing.T) {
 	if code := run(context.Background(), []string{"--help"}, &bytes.Buffer{}, &stdout, &stderr); code != 0 {
 		t.Fatalf("--help exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "Daily:") || !strings.Contains(stdout.String(), "add") || !strings.Contains(stdout.String(), "ui") {
+	if !strings.Contains(stdout.String(), "Daily:") || !strings.Contains(stdout.String(), "add") || !strings.Contains(stdout.String(), "status") {
 		t.Fatalf("--help output = %q", stdout.String())
 	}
 }
@@ -437,97 +435,5 @@ func TestRunSetDefault(t *testing.T) {
 	}
 	if config.DefaultHost != "ubuntu" {
 		t.Fatalf("default host = %q, want ubuntu", config.DefaultHost)
-	}
-}
-
-func TestRunUIWithoutHost(t *testing.T) {
-	isolateUserEnv(t)
-	var stdout, stderr bytes.Buffer
-	if code := run(context.Background(), []string{"ui"}, &bytes.Buffer{}, &stdout, &stderr); code != 2 {
-		t.Fatalf("ui exit code = %d, want 2, stderr = %s", code, stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "No Development Host is set") {
-		t.Fatalf("stderr = %q", stderr.String())
-	}
-}
-
-// TestRunUIStartStatusStop pins the WebUI process seam: start launches a
-// background loopback server, status reprints its URL, and stop ends only
-// that process.
-func TestRunUIStartStatusStop(t *testing.T) {
-	isolateUserEnv(t)
-	t.Setenv("SSH_FORWARD_UI_NO_OPEN", "1")
-	t.Setenv("SSH_FORWARD_UI_BINARY", managerBinary)
-	dir := shortConfigDir(t)
-	t.Setenv("SSH_FORWARD_CONFIG_DIR", dir)
-	policies := filepath.Join(dir, "policies.jsonc")
-	args := []string{"--host", "development", "--policies", policies}
-	invoke := func(stdout, stderr io.Writer, extra ...string) int {
-		return run(context.Background(), append(append([]string{}, args...), extra...), &bytes.Buffer{}, stdout, stderr)
-	}
-
-	var stdout, stderr bytes.Buffer
-	code := invoke(&stdout, &stderr, "ui", "start")
-	if code != 0 {
-		log, _ := os.ReadFile(filepath.Join(dir, "ui.log"))
-		t.Fatalf("ui start exit = %d, stderr = %s, log = %s", code, stderr.String(), log)
-	}
-	url := strings.TrimSpace(stdout.String())
-	t.Cleanup(func() {
-		invoke(io.Discard, io.Discard, "ui", "stop")
-	})
-	page, query, ok := strings.Cut(url, "?")
-	if !ok || !strings.HasPrefix(page, "http://127.0.0.1:") || !strings.Contains(query, "token=") {
-		t.Fatalf("start url = %q", url)
-	}
-
-	snapshot, err := http.Get(strings.TrimSuffix(page, "/") + "/api/snapshot?" + query)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, err := io.ReadAll(snapshot.Body)
-	snapshot.Body.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if snapshot.StatusCode != http.StatusOK || !bytes.Contains(body, []byte(`"alias":"development"`)) {
-		t.Fatalf("snapshot status = %d body = %s", snapshot.StatusCode, body)
-	}
-
-	missing, err := http.Get(strings.TrimSuffix(page, "/") + "/api/snapshot")
-	if err != nil {
-		t.Fatal(err)
-	}
-	missing.Body.Close()
-	if missing.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("missing token status = %d, want 401", missing.StatusCode)
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	if code := invoke(&stdout, &stderr, "ui", "start"); code != 0 {
-		t.Fatalf("second ui start exit = %d, stderr = %s", code, stderr.String())
-	}
-	if strings.TrimSpace(stdout.String()) != url {
-		t.Fatalf("second start url = %q, want %q", stdout.String(), url)
-	}
-
-	stdout.Reset()
-	if code := invoke(&stdout, io.Discard, "ui", "status", "--json"); code != 0 {
-		t.Fatalf("ui status --json exit = %d", code)
-	}
-	if !strings.Contains(stdout.String(), url) {
-		t.Fatalf("status --json = %q, want the live URL", stdout.String())
-	}
-
-	stdout.Reset()
-	if code := invoke(&stdout, io.Discard, "ui", "stop"); code != 0 {
-		t.Fatalf("ui stop exit = %d", code)
-	}
-	if stdout.String() != "Stopped the WebUI.\n" {
-		t.Fatalf("stop output = %q", stdout.String())
-	}
-	if code := invoke(io.Discard, io.Discard, "ui", "status"); code == 0 {
-		t.Fatal("ui status succeeded after stop")
 	}
 }

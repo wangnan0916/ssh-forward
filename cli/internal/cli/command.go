@@ -24,9 +24,9 @@ func grouped(id string, command *cobra.Command) *cobra.Command {
 }
 
 // RootCommand builds the cobra command tree: the command definitions and
-// help text live here. Connect and Serve live in app so WebUI and CLI share
-// them. The global flags — --host, --policies, --ssh-config, --version —
-// are persistent flags so they precede any subcommand and appear in help.
+// help text live here. Connect and Serve live in app. The global flags —
+// --host, --policies, --ssh-config, --version — are persistent flags so
+// they precede any subcommand and appear in help.
 func (a *App) RootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "ssh-forward",
@@ -69,7 +69,6 @@ Name the host with --host ALIAS (-h is help). Pin one with: ssh-forward default 
 		a.hostCommand(),
 		a.defaultCommand(),
 		a.managerCommand(),
-		a.uiCommand(),
 	)
 	root.SetHelpCommandGroupID(groupMore)
 	root.InitDefaultHelpCmd()

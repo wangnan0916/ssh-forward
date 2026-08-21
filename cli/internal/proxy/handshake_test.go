@@ -1,4 +1,4 @@
-package proxy_test
+package proxy
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
-	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
 )
 
 type stalledDialer struct {
@@ -26,7 +25,7 @@ func (d stalledDialer) DialContext(ctx context.Context, _ netip.AddrPort) (core.
 
 func TestEndpointBoundsSOCKSHandshake(t *testing.T) {
 	dialer := stalledDialer{started: make(chan struct{}), result: make(chan error, 1)}
-	endpoint, err := proxy.OpenEndpoint(proxy.EndpointOptions{
+	endpoint, err := openEndpoint(EndpointOptions{
 		PreferredPort:    availablePort(t),
 		Remote:           netip.MustParseAddrPort("127.0.0.1:8080"),
 		Dialer:           dialer,

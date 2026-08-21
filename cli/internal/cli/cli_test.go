@@ -11,7 +11,6 @@ import (
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/app"
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
-	"github.com/wangnan0916/ssh-forward/cli/internal/present"
 )
 
 // fakeManager is a scriptable core.Manager for CLI tests: commands do not
@@ -38,7 +37,6 @@ func runApp(t *testing.T, manager core.Manager, args ...string) (string, error) 
 	t.Helper()
 	return runCLI(t, &App{
 		Manager: manager,
-		Host:    core.HostAlias("development"),
 		Options: app.Options{PoliciesPath: filepath.Join(t.TempDir(), "policies.jsonc")},
 	}, args...)
 }
@@ -117,7 +115,7 @@ func TestFormatHumanStatusSkipsIgnored(t *testing.T) {
 		ID: "deny-9090", Action: core.PolicyIgnore,
 		Conditions: []core.PolicyCondition{{RemotePorts: &core.PortRange{From: 9090, To: 9090}}},
 	}}
-	text := formatHumanStatus(present.NewDocument(host, ignore, true))
+	text := formatHumanStatus(NewDocument(host, ignore, true))
 	if strings.Contains(text, "9090  ssh-forward add") {
 		t.Fatalf("ignored port leaked into Addable:\n%s", text)
 	}
@@ -400,7 +398,6 @@ func TestStatusColdCorruptPoliciesOmitsAddable(t *testing.T) {
 	snapshot.Host.PolicyDiagnostic = "policies_file_invalid"
 	output, err := runCLI(t, &App{
 		Manager:      &fakeManager{snapshot: snapshot},
-		Host:         core.HostAlias("development"),
 		PolicyReader: app.NewFilePolicyReader(path),
 		Options:      app.Options{PoliciesPath: path},
 	}, "status")
@@ -483,7 +480,6 @@ func TestStatusWaitsUntilConnected(t *testing.T) {
 			snapshot: watchSnapshots()[0],
 			watch:    func(context.Context) (core.SnapshotStream, error) { return stream, nil },
 		},
-		Host: core.HostAlias("development"),
 		Options: app.Options{
 			Interactive:  true,
 			Stderr:       &stderr,
@@ -507,7 +503,6 @@ func TestStatusWaitsUntilConnected(t *testing.T) {
 func TestStatusJSONDoesNotWait(t *testing.T) {
 	output, err := runCLI(t, &App{
 		Manager: &fakeManager{snapshot: watchSnapshots()[0]},
-		Host:    core.HostAlias("development"),
 		Options: app.Options{
 			Interactive:  true,
 			PoliciesPath: filepath.Join(t.TempDir(), "policies.jsonc"),
@@ -550,7 +545,6 @@ func TestHelpListsCommands(t *testing.T) {
 		"host",
 		"default",
 		"manager",
-		"ui",
 		"--host ALIAS",
 		"-h is help",
 	} {
@@ -581,11 +575,11 @@ func TestAddHelp(t *testing.T) {
 	}
 }
 
-func TestIntentCommandsSkipManager(t *testing.T) {
+func TestSkipManagerCommands(t *testing.T) {
 	root := (&App{}).RootCommand()
 	skip := map[string]bool{
 		"add": true, "remove": true, "policy": true, "host": true,
-		"default": true, "manager": true, "ui": true, "help": true,
+		"default": true, "manager": true, "help": true,
 	}
 	for _, cmd := range root.Commands() {
 		got := cmd.Annotations[skipManagerKey] == "1"

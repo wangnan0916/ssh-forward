@@ -6,12 +6,6 @@ import (
 )
 
 const (
-	// MaxRetained* are the published-snapshot retention caps for Discovery
-	// evidence. The HostSession adapter declares its own per-scan budget
-	// in-band; core accepts declarations within these caps (see
-	// validObservationBudget), so an adapter may use fewer records than
-	// these defaults but never more. Equality with the adapter's parser
-	// caps is not part of the seam.
 	MaxRetainedListenerObservations = 256
 	MaxRetainedSocketIdentities     = 512
 	MaxRetainedProcessRecords       = 512
@@ -56,9 +50,6 @@ func validCapabilityAvailability(capability CapabilityAvailability) bool {
 	}
 }
 
-// validCapabilityReason accepts the known partiality explanations plus the
-// empty default, so admission rejects a misbehaving adapter that reports a
-// reason core cannot translate.
 func validCapabilityReason(reason CapabilityReason) bool {
 	switch reason {
 	case CapabilityReasonNone, CapabilityReasonScannerReported, CapabilityReasonEvidenceMissing, CapabilityReasonEvidenceTruncated:
@@ -68,9 +59,6 @@ func validCapabilityReason(reason CapabilityReason) bool {
 	}
 }
 
-// discoveryDiagnostic is the single translation to the user-visible wire
-// Diagnostic. Failure reasons win, then an observation-sequence gap, then
-// capability partiality — so every Snapshot field has one producer.
 func discoveryDiagnostic(gapped bool, capability DiscoveryCapability, capabilityReason CapabilityReason, failure DiscoveryReason) string {
 	switch failure {
 	case ReasonObservationInvalid:
@@ -115,9 +103,6 @@ func validDiscoveryReason(reason DiscoveryReason) bool {
 	}
 }
 
-// admitObservationSet is the authority on whether an adapter-produced set
-// may reach the host mirror. Sequence, capability, budget, and reason are
-// checked here; the HostSession parser is a cheap stream-local filter.
 func admitObservationSet(set ObservationSet, lastSequence uint64) (gapped bool, ok bool) {
 	if set.Sequence == 0 || set.Sequence <= lastSequence || !validDiscoveryCapability(set.Capability) || !validObservationBudget(set.Budget) || !validCapabilityReason(set.CapabilityReason) {
 		return false, false
@@ -125,16 +110,11 @@ func admitObservationSet(set ObservationSet, lastSequence uint64) (gapped bool, 
 	return set.Sequence != lastSequence+1, true
 }
 
-// admitDiscoveryChange accepts only Degraded or Failed reports with a known
-// capability and reason; anything else is a misbehaving adapter.
 func admitDiscoveryChange(change DiscoveryChange) bool {
 	return (change.State == DiscoveryDegraded || change.State == DiscoveryFailed) &&
 		validDiscoveryCapability(change.Capability) && validDiscoveryReason(change.Reason)
 }
 
-// validObservationBudget requires the adapter's declared evidence budget to be
-// present and within core's retention caps, so every full scan the adapter
-// promises fits within what core retains.
 func validObservationBudget(budget ObservationBudget) bool {
 	return budget.Listeners >= 1 && budget.Listeners <= MaxRetainedListenerObservations &&
 		budget.Sockets >= 1 && budget.Sockets <= MaxRetainedSocketIdentities &&
@@ -161,16 +141,6 @@ type remoteListenerKey struct {
 	port   uint16
 }
 
-// mergeBoundedListenerObservations folds a new scan's observations into the
-// retained set under the listener cap. The cap is enforced twice on purpose:
-// map admission below prefers retained entries (inserted first) over new
-// ones, which keeps a partial scan's evidence stable instead of replacing it
-// with whatever the canonical sort happens to place first; the final bound
-// then applies the deterministic canonical ordering and the socket, process,
-// and metadata budgets. The bound's listener branch is inert on this path —
-// the map can never hold more than the cap — but live on the actor's fresh
-// full-scan path, where the observation count is not checked against the
-// declared budget.
 func mergeBoundedListenerObservations(retained, current []ListenerObservation) ([]ListenerObservation, evidenceTruncation) {
 	retained, truncated := boundListenerObservations(canonicalListenerObservations(retained))
 	merged := make(map[remoteListenerKey]ListenerObservation, MaxRetainedListenerObservations)

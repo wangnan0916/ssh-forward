@@ -5,7 +5,7 @@ Discover ports on a Linux development host and use them on localhost through you
 [![CI](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml/badge.svg)](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-The first public release is the **CLI**, including a loopback WebUI (`ssh-forward ui start`). Next is a macOS menu-bar app (after the WebUI is ready). The desktop app is not in this repository yet. There is no TUI.
+The first public release is the **CLI**. The desktop app is not in this repository yet. There is no TUI.
 
 This is not a general SSH tunnel, credential, key, or host-profile manager. Authentication stays with system OpenSSH and `~/.ssh/config`.
 
@@ -82,12 +82,9 @@ ssh-forward host [--json]             # hosts from the SSH client config
 ssh-forward manager serve             # run the singleton in the foreground
 ssh-forward manager stop              # stop the singleton (recovery)
 ssh-forward manager restart           # stop, then auto-spawn again
-ssh-forward ui                        # open the loopback page
-ssh-forward ui status [--json]
-ssh-forward ui stop
 ```
 
-`status` shows the host, connection, forwards, waiting remembered ports, unmatched loopback ports you can `add`, and local bind conflicts. Process details and wildcard listeners are in `--json`. On a terminal it waits until SSH has connected. Name the host with `--host ALIAS` (`-h` is help). `ui` opens a loopback page over the same Manager.
+`status` shows the host, connection, forwards, waiting remembered ports, unmatched loopback ports you can `add`, and local bind conflicts. Process details and wildcard listeners are in `--json`. On a terminal it waits until SSH has connected. Name the host with `--host ALIAS` (`-h` is help).
 
 `--host` overrides the default host. `--ssh-config PATH` points at an explicit SSH client config. `SSH_FORWARD_CONFIG_DIR` overrides the product config directory.
 
@@ -136,7 +133,7 @@ Locations:
 
 ## Status
 
-Public **alpha** (`0.1.0-alpha.1`). The CLI covers discovery, remembered Auto-forward for ports and directories, reconnect, JSON-RPC to a per-user manager, and a loopback WebUI.
+Public **alpha** (`0.1.0-alpha.1`). The CLI covers discovery, remembered Auto-forward for ports and directories, reconnect, and JSON-RPC to a per-user manager.
 
 Not in this release:
 

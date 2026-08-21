@@ -18,11 +18,6 @@ const outboundWriteTimeout = 5 * time.Second
 
 var errFrameTooLarge = errors.New("JSON-RPC frame exceeds maximum size")
 
-// frameChannel is the JSON-RPC session transport: newline framing, serialized
-// Send, UTF-8 and batch rejection on Recv, and — after bindPending — inbound
-// slot accounting plus a response-written hook. Dial and Serve share this
-// one interface; pending slots stay off until the handshake finishes so
-// hello cannot consume a session slot.
 type frameChannel struct {
 	reader *bufio.Reader
 	stream io.ReadWriteCloser
@@ -168,7 +163,7 @@ func (c *frameChannel) readFrame() ([]byte, error) {
 }
 
 func (c *frameChannel) reject(code jrpc2.Code, message string, result error) error {
-	return rejectAndClose(c, c.Close, nil, code, message, nil, result)
+	return rejectAndClose(c, nil, code, message, nil, result)
 }
 
 func (c *frameChannel) Close() error {
@@ -191,11 +186,6 @@ func (c *frameChannel) release() {
 	}
 }
 
-// envelopeShape is the JSON-RPC envelope decoded once: which members are
-// present and their raw values. The directional classifiers — request,
-// response, notification — layer their rules on this single shape statement,
-// so the schema's conventions (the jsonrpc member, the id's null meaning)
-// have one home instead of three partial map-decode copies.
 type envelopeShape struct {
 	ID      json.RawMessage
 	Method  json.RawMessage
@@ -206,9 +196,6 @@ type envelopeShape struct {
 	HasID   bool
 }
 
-// decodeEnvelopeShape decodes one frame into its member shape. Garbage or a
-// bare null is not a shape; each classifier then applies its direction's
-// rules.
 func decodeEnvelopeShape(message []byte) (envelopeShape, bool) {
 	var object map[string]json.RawMessage
 	if json.Unmarshal(message, &object) != nil || object == nil {
@@ -228,18 +215,11 @@ func decodeEnvelopeShape(message []byte) (envelopeShape, bool) {
 	return shape, true
 }
 
-// decodedResponse is the response frame decoded once by the channel's Send
-// path and delivered to onResponse instead of raw bytes, so response
-// structure knowledge lives in one place. Result carries the raw
-// method-specific result, decoded by the session that owns the semantics.
 type decodedResponse struct {
 	ID     json.RawMessage
 	Result json.RawMessage
 }
 
-// decodeResponseEnvelope decodes a frame once and classifies it: a response
-// has an id and no method; anything else (request, notification, garbage) is
-// not a response.
 func decodeResponseEnvelope(message []byte) (decodedResponse, bool) {
 	shape, ok := decodeEnvelopeShape(message)
 	if !ok || shape.Method != nil || !shape.HasID {

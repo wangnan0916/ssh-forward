@@ -27,10 +27,10 @@ var (
 	maxProcessDepth             = scannerBudget("process_depth_limit")
 	maxProcessTextBytes         = scannerBudget("process_text_bytes")
 	maxIdentityTextBytes        = scannerBudget("identity_text_bytes")
-	MaxObservedListeners        = scannerBudget("listener_limit")
-	MaxObservedSockets          = scannerBudget("socket_record_limit")
-	MaxProcessRecords           = scannerBudget("process_record_limit")
-	MaxObservationMetadataBytes = scannerBudget("metadata_bytes_limit")
+	maxObservedListeners        = scannerBudget("listener_limit")
+	maxObservedSockets          = scannerBudget("socket_record_limit")
+	maxProcessRecords           = scannerBudget("process_record_limit")
+	maxObservationMetadataBytes = scannerBudget("metadata_bytes_limit")
 )
 
 // scannerBudget reads one budget declaration from the embedded scanner
@@ -460,16 +460,16 @@ func parseObservationBudget(listeners, sockets, processRecords, metadataBytes st
 	}
 	budget := core.ObservationBudget{}
 	var err error
-	if budget.Listeners, err = parse(listeners, uint64(MaxObservedListeners)); err != nil {
+	if budget.Listeners, err = parse(listeners, uint64(maxObservedListeners)); err != nil {
 		return core.ObservationBudget{}, err
 	}
-	if budget.Sockets, err = parse(sockets, uint64(MaxObservedSockets)); err != nil {
+	if budget.Sockets, err = parse(sockets, uint64(maxObservedSockets)); err != nil {
 		return core.ObservationBudget{}, err
 	}
-	if budget.ProcessRecords, err = parse(processRecords, uint64(MaxProcessRecords)); err != nil {
+	if budget.ProcessRecords, err = parse(processRecords, uint64(maxProcessRecords)); err != nil {
 		return core.ObservationBudget{}, err
 	}
-	if budget.MetadataBytes, err = parse(metadataBytes, uint64(MaxObservationMetadataBytes)); err != nil {
+	if budget.MetadataBytes, err = parse(metadataBytes, uint64(maxObservationMetadataBytes)); err != nil {
 		return core.ObservationBudget{}, err
 	}
 	return budget, nil

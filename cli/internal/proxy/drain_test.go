@@ -1,4 +1,4 @@
-package proxy_test
+package proxy
 
 import (
 	"context"
@@ -6,8 +6,6 @@ import (
 	"net"
 	"testing"
 	"time"
-
-	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
 )
 
 func TestEndpointBoundsPostHalfCloseDrain(t *testing.T) {
@@ -35,7 +33,7 @@ func TestEndpointBoundsPostHalfCloseDrain(t *testing.T) {
 		}
 	}()
 
-	endpoint, err := proxy.OpenEndpoint(proxy.EndpointOptions{
+	endpoint, err := openEndpoint(EndpointOptions{
 		PreferredPort: availablePort(t),
 		Remote:        remote.Addr().(*net.TCPAddr).AddrPort(),
 		Dialer:        directDialer{},

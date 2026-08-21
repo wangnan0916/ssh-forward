@@ -1,7 +1,8 @@
-package openssh_test
+package openssh
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,9 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"errors"
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
-	"github.com/wangnan0916/ssh-forward/cli/internal/openssh"
 )
 
 func TestSessionWaitBoundsInheritedDiagnosticPipe(t *testing.T) {
@@ -51,7 +50,7 @@ listener.close()
 	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
 		t.Fatalf("write scripted OpenSSH: %v", err)
 	}
-	adapter, err := openssh.New(openssh.Options{
+	adapter, err := New(Options{
 		Executable:   executable,
 		ReadyTimeout: 5 * time.Second,
 		WaitDelay:    100 * time.Millisecond,
@@ -59,7 +58,7 @@ listener.close()
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	session, err := adapter.Start(context.Background(), "development")
+	session, err := adapter.start(context.Background(), "development")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}

@@ -6,9 +6,8 @@ The first public release is the headless CLI. It covers a VS Code Ports-style wo
 
 Work proceeds one surface at a time. Do not start the next until the previous is ready.
 
-1. **CLI** (current) — headless command surface plus loopback WebUI in `cli/`.
-2. **WebUI** — loopback browser UI on the same Manager and JSON-RPC wire; shipped in the CLI (`ssh-forward ui`).
-3. **macOS desktop** — native menu-bar app; starts after the WebUI is ready.
+1. **CLI** (current) — headless command surface in `cli/`.
+2. **macOS desktop** — native menu-bar app; not in this repository yet.
 
 The desktop app is not in this repository yet.
 
@@ -20,11 +19,10 @@ The desktop app is not in this repository yet.
 - Preferred local port with bounded fallback
 - Reconnection and local connection diagnostics
 - Domain-oriented CLI with `--json` output
-- Loopback WebUI (`ssh-forward ui start` / `status` / `stop`)
 
 ## Planned after the CLI
 
-macOS desktop (after WebUI is ready):
+macOS desktop:
 
 - Automatic monitoring at login and idle manager exit
 - Menu-bar quick panel and full Dashboard
@@ -51,11 +49,10 @@ Enforced today:
 - Reconnection with classified failures.
 - Forwarding Policy evaluation with directory, direct-process, and ancestor-process matchers; policies.jsonc (versioned, ADR-0005); unmatched listeners are not forwarded; Managed Forward reconciliation with two-observation hysteresis (slice 5).
 - The domain-oriented CLI with `--json` output and a per-user auto-spawned manager (slice 6, cli/cmd/ssh-forward/).
-- Loopback WebUI: `ssh-forward ui start` / `status` / `stop` (slice 7, ADR-0021).
 - `add` / `remove` write simple Auto-forward policies to policies.jsonc (port or working-directory tree).
 
 Lands later:
 
-- Login monitoring, idle exit, menu-bar, Dashboard: macOS desktop, after the WebUI is ready.
+- Login monitoring, idle exit, menu-bar, Dashboard: macOS desktop.
 - HTTP/HTTPS browser actions: desktop policy surfaces.
 - Policy explanation on the Snapshot and `requireSamePort`: later CLI/core work.

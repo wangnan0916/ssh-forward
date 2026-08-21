@@ -8,16 +8,12 @@ import (
 
 const maxManagerWatches = 128
 
-// ErrResyncRequired is the Manager→Adapter resync channel promised by the
-// IPC protocol ("Manager-required resync"): a SnapshotStream may end with it
-// when core can no longer deliver a consistent sequence to the watcher.
-// Core has no producer today — the jsonrpc Adapter only emits resync itself
-// for oversized Snapshots — but the error stays wired so a later durable
-// journal can consume it without changing the Adapter.
 var (
 	ErrSnapshotStreamClosed   = errors.New("snapshot stream is closed")
 	ErrConcurrentSnapshotNext = errors.New("another SnapshotStream.Next call is active")
-	ErrResyncRequired         = errors.New("snapshot stream requires resynchronization")
+	// ErrResyncRequired is the Watch terminal for manager.resync_required.
+	// jsonrpc emits it for oversized Snapshots; core does not produce it.
+	ErrResyncRequired = errors.New("snapshot stream requires resynchronization")
 )
 
 type snapshotStream struct {
@@ -34,10 +30,6 @@ type snapshotStream struct {
 	terminal       error
 }
 
-// hostView is the actor's slice of a HostSnapshot: Connection,
-// Connection Diagnostic, Discovery, and Listener Observations.
-// composeSnapshotLocked overlays Forwards, Local Port Conflicts, and
-// Policy Diagnostic, because the actor overwrites this mirror wholesale.
 type hostView struct {
 	Alias                HostAlias
 	Connection           ConnectionState
@@ -55,8 +47,6 @@ func emptyHostView(host HostAlias) hostView {
 	}
 }
 
-// composeSnapshotLocked is the single construction of an immutable Snapshot:
-// the actor's host view plus the Forward table plus Local Port Conflicts.
 func (m *manager) composeSnapshotLocked() Snapshot {
 	if m.host == "" {
 		return Snapshot{Revision: m.revision}
@@ -135,62 +125,64 @@ func (m *manager) Watch(ctx context.Context) (SnapshotStream, error) {
 }
 
 func (s *snapshotStream) Next(ctx context.Context) (Snapshot, error) {
+	snapshot, err := AwaitWatch(ctx, &s.mu, s.ready, &s.nextActive, func() (Snapshot, bool, error) {
+		return TakeWatchSnapshot(true, s.closed, s.terminal, &s.initialPending, s.initial, &s.latest)
+	})
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return cloneSnapshot(snapshot), nil
+}
+
+func AwaitWatch(ctx context.Context, mu *sync.Mutex, ready <-chan struct{}, nextActive *bool, take func() (Snapshot, bool, error)) (Snapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return Snapshot{}, err
 	}
-	if !s.beginNext() {
+	mu.Lock()
+	if *nextActive {
+		mu.Unlock()
 		return Snapshot{}, ErrConcurrentSnapshotNext
 	}
-	defer s.endNext()
+	*nextActive = true
+	mu.Unlock()
+	defer func() {
+		mu.Lock()
+		*nextActive = false
+		mu.Unlock()
+	}()
 	for {
-		s.mu.Lock()
-		snapshot, found, err := s.nextLocked()
-		s.mu.Unlock()
+		mu.Lock()
+		snapshot, found, err := take()
+		mu.Unlock()
 		if err != nil {
 			return Snapshot{}, err
 		}
 		if found {
-			return cloneSnapshot(snapshot), nil
+			return snapshot, nil
 		}
 		select {
 		case <-ctx.Done():
 			return Snapshot{}, ctx.Err()
-		case <-s.ready:
+		case <-ready:
 		}
 	}
 }
 
-func (s *snapshotStream) beginNext() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.nextActive {
-		return false
+func TakeWatchSnapshot(closedFirst, closed bool, terminal error, initialPending *bool, initial Snapshot, latest **Snapshot) (Snapshot, bool, error) {
+	if closedFirst && closed {
+		return Snapshot{}, false, terminal
 	}
-	s.nextActive = true
-	return true
-}
-
-func (s *snapshotStream) endNext() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.nextActive = false
-}
-
-func (s *snapshotStream) nextLocked() (Snapshot, bool, error) {
-	// Closed wins over the initial Snapshot. remoteStream in jsonrpc still
-	// delivers the subscribe Snapshot first; do not merge the two without a
-	// test that picks one.
-	if s.closed {
-		return Snapshot{}, false, s.terminal
+	if *initialPending {
+		*initialPending = false
+		return initial, true, nil
 	}
-	if s.initialPending {
-		s.initialPending = false
-		return s.initial, true, nil
-	}
-	if s.latest != nil {
-		snapshot := *s.latest
-		s.latest = nil
+	if *latest != nil {
+		snapshot := **latest
+		*latest = nil
 		return snapshot, true, nil
+	}
+	if closed {
+		return Snapshot{}, false, terminal
 	}
 	return Snapshot{}, false, nil
 }
@@ -209,25 +201,17 @@ func (s *snapshotStream) publish(snapshot Snapshot) {
 }
 
 func (s *snapshotStream) Close() error {
-	s.manager.closeSnapshotStream(s.id, s, ErrSnapshotStreamClosed)
+	s.manager.mu.Lock()
+	defer s.manager.mu.Unlock()
+	s.manager.closeSnapshotStreamLocked(s.id, s, ErrSnapshotStreamClosed)
 	return nil
 }
 
-// closeSnapshotStreamLocked tears down one stream while the caller holds
-// the Manager lock: remove it from the watcher registry and finish it with
-// the terminal error. finish's guard keeps the per-stream single-terminal
-// guarantee regardless of caller.
 func (m *manager) closeSnapshotStreamLocked(id uint64, stream *snapshotStream, terminal error) {
 	if current, found := m.watchers[id]; found && current == stream {
 		delete(m.watchers, id)
 	}
 	stream.finish(terminal)
-}
-
-func (m *manager) closeSnapshotStream(id uint64, stream *snapshotStream, terminal error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.closeSnapshotStreamLocked(id, stream, terminal)
 }
 
 func (s *snapshotStream) finish(terminal error) {

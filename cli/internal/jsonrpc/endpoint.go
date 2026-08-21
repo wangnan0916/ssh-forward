@@ -15,8 +15,9 @@ import (
 // ErrAlreadyRunning reports that a live manager already owns the endpoint.
 var ErrAlreadyRunning = errors.New("manager is already running")
 
-func probeUnix(path string, timeout time.Duration) bool {
-	conn, err := net.DialTimeout("unix", path, timeout)
+// Live reports whether a manager currently answers at path.
+func Live(path string) bool {
+	conn, err := net.DialTimeout("unix", path, 100*time.Millisecond)
 	if err != nil {
 		return false
 	}
@@ -24,25 +25,24 @@ func probeUnix(path string, timeout time.Duration) bool {
 	return true
 }
 
-// Live reports whether a manager currently answers at path.
-func Live(path string) bool {
-	return probeUnix(path, 250*time.Millisecond)
-}
-
 // Wait blocks until a live manager answers at path or the deadline passes.
 func Wait(ctx context.Context, path string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
 	for {
-		if probeUnix(path, 100*time.Millisecond) {
+		if Live(path) {
 			return nil
 		}
-		if ctx.Err() != nil {
+		select {
+		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return fmt.Errorf("manager socket did not become ready within %s", timeout)
+			}
 			return ctx.Err()
+		case <-ticker.C:
 		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("manager socket did not become ready within %s", timeout)
-		}
-		time.Sleep(20 * time.Millisecond)
 	}
 }
 

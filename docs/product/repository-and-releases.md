@@ -26,11 +26,11 @@ The project lives at `github.com/wangnan0916/ssh-forward`. Hosted macOS and Linu
 └── CONTRIBUTING.md
 ```
 
-A loopback WebUI is in the CLI (`ssh-forward ui start`); a native macOS app (`desktop/`) follows once the WebUI is ready. The `desktop/` directory does not exist yet. No TUI is planned (ADR-0021). No legacy source directory is included. The transport spike ran on a separate throwaway branch; only its verdict and resulting decision changes returned to `main`.
+The public surface is the headless CLI. A native macOS app (`desktop/`) is not in this repository yet. No TUI is planned (ADR-0021). No legacy source directory is included. The transport spike ran on a separate throwaway branch; only its verdict and resulting decision changes returned to `main`.
 
 ## Versions
 
-The first public CLI is `v0.1.0-alpha.1`. The standalone CLI/core, a future WebUI, and a future desktop bundle share one product version during the pre-1.0 period. IPC, configuration, and observation protocol versions remain independent from the product release version.
+The first public CLI is `v0.1.0-alpha.1`. The CLI/core and a future desktop bundle share one product version during the pre-1.0 period. IPC, configuration, and observation protocol versions remain independent from the product release version.
 
 The earlier `v0.1.0` tag predates the public module path and should not be used as an install source. Cut `v0.1.0-alpha.1` (or later) from a commit that already uses `github.com/wangnan0916/ssh-forward/cli`.
 

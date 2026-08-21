@@ -9,8 +9,7 @@ import (
 )
 
 // fallbackPortRoom is the ADR-0008 bounded fallback width: allocation tries
-// the Preferred Local Port, then each successor up to +fallbackPortRoom,
-// unless ForwardSpec.RequireSamePort is set.
+// the Preferred Local Port, then each successor up to +fallbackPortRoom.
 const fallbackPortRoom = 100
 
 // NewAllocator builds the production ForwardAllocator: it opens a dual-stack
@@ -33,11 +32,11 @@ func (a allocator) Allocate(ctx context.Context, spec core.ForwardSpec) (core.Ow
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	for _, port := range allocationPorts(spec.PreferredLocalPort, spec.RequireSamePort) {
+	for _, port := range allocationPorts(spec.PreferredLocalPort) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		endpoint, err := OpenEndpoint(EndpointOptions{
+		endpoint, err := openEndpoint(EndpointOptions{
 			PreferredPort: port,
 			Remote:        spec.Remote,
 			Dialer:        a.dialer,
@@ -57,12 +56,9 @@ func (a allocator) Allocate(ctx context.Context, spec core.ForwardSpec) (core.Ow
 	return nil, &core.DomainError{Kind: core.ErrorLocalPortConflict, Retryable: true}
 }
 
-func allocationPorts(preferred uint16, requireSamePort bool) []uint16 {
+func allocationPorts(preferred uint16) []uint16 {
 	if preferred == 0 {
 		return nil
-	}
-	if requireSamePort {
-		return []uint16{preferred}
 	}
 	last := min(int(preferred)+fallbackPortRoom, 65535)
 	ports := make([]uint16, 0, last-int(preferred)+1)

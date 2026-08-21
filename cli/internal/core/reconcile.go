@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"net/netip"
 	"reflect"
 	"slices"
 	"strconv"
@@ -17,11 +18,6 @@ const (
 	wakePolicy
 )
 
-// reconciler owns Managed Forward lifecycle state: the policy cache, create
-// and removal hysteresis, Local Port Conflicts, and the worker's wake-up
-// signals. Like forwardTable, it holds no lock of its own — the Manager lock
-// guards it, except the policy source which the worker invokes before taking
-// any lock. The worker goroutine is the only writer of hysteresis and conflicts.
 type reconciler struct {
 	policyCache      []ForwardingPolicy
 	policyDiagnostic string
@@ -135,32 +131,25 @@ func (r *reconciler) conflictSnapshots() []LocalPortConflict {
 	return out
 }
 
-func (m *manager) reconcileLoop() {
+func (m *manager) reconcileLoop(policyPoll time.Duration) {
 	defer m.workers.Done()
+	var tick <-chan time.Time
+	if policyPoll > 0 {
+		ticker := time.NewTicker(policyPoll)
+		defer ticker.Stop()
+		tick = ticker.C
+	}
 	for {
 		select {
 		case <-m.ctx.Done():
 			return
 		case <-m.reconciler.observe:
-			drainWake(m.reconciler.observe)
 			m.reconcileOnce(wakeObservation)
 		case <-m.reconciler.policy:
 			drainWake(m.reconciler.policy)
 			m.reconcileOnce(wakePolicy)
-		}
-	}
-}
-
-func (m *manager) policyPollLoop(interval time.Duration) {
-	defer m.workers.Done()
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-m.ctx.Done():
-			return
-		case <-ticker.C:
-			m.reconciler.notifyPolicy()
+		case <-tick:
+			m.reconcileOnce(wakePolicy)
 		}
 	}
 }
@@ -247,8 +236,6 @@ func (m *manager) allocateIntent(toCreate []ForwardSpec) (created []createdForwa
 	return created, conflicts, retry
 }
 
-// applyIntent commits policy state and mutates the Forward table. Allocate
-// already ran outside the Manager lock; Close runs after Unlock.
 func (m *manager) applyIntent(created []createdForward, conflicts, retry map[remoteListenerKey]struct{}, toRemove []ForwardID, policies []ForwardingPolicy, diagnostic string, policyChanged, diagnosticChanged bool) {
 	m.mu.Lock()
 	if m.closed {
@@ -298,9 +285,6 @@ func (m *manager) applyIntent(created []createdForward, conflicts, retry map[rem
 	}
 }
 
-// decide is the Managed Forward intent: observations + policies + hysteresis
-// become create/remove lists. Allocate, Close, and the Forward table stay
-// in reconcileOnce with the lock policy.
 func (r *reconciler) decide(observations []ListenerObservation, managed []managedForwardEntry, policies []ForwardingPolicy, policyChanged bool) (toCreate []ForwardSpec, toRemove []ForwardID) {
 	ordered := sortPolicies(policies)
 	desired := make(map[remoteListenerKey]struct{})
@@ -353,6 +337,13 @@ func managedForwardSpec(key remoteListenerKey) ForwardSpec {
 		PreferredLocalPort: key.port,
 		key:                key,
 	}
+}
+
+func loopbackTarget(family AddressFamily, port uint16) netip.AddrPort {
+	if family == FamilyIPv6 {
+		return netip.AddrPortFrom(netip.IPv6Loopback(), port)
+	}
+	return netip.AddrPortFrom(netip.AddrFrom4([4]byte{127, 0, 0, 1}), port)
 }
 
 func managedForwardToken(key remoteListenerKey) string {

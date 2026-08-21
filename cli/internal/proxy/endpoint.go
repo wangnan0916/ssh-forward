@@ -46,10 +46,9 @@ type Endpoint struct {
 	closeErr  error
 }
 
-// OpenEndpoint binds one dual-stack Local Endpoint at PreferredPort.
-// Local Port Conflict policy (fallback width, RequireSamePort) lives on
-// the allocator, not here.
-func OpenEndpoint(options EndpointOptions) (*Endpoint, error) {
+// openEndpoint binds one dual-stack Local Endpoint at PreferredPort.
+// Local Port Conflict fallback width lives on the allocator, not here.
+func openEndpoint(options EndpointOptions) (*Endpoint, error) {
 	listeners, err := listenOnLoopback(options.PreferredPort)
 	if err != nil {
 		return nil, err

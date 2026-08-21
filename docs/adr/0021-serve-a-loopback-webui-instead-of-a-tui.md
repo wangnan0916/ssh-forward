@@ -1,6 +1,8 @@
 # Serve a loopback WebUI instead of a TUI
 
-Slice 7 is a local-machine WebUI, not a terminal UI. `ssh-forward ui start` launches a background loopback HTTP process that is a JSON-RPC client of the per-user Manager (`app.Connect`), the same seam as `status` / `watch`. `ui status` prints the URL; `ui stop` ends the process. The listener binds only `127.0.0.1`, requires a secret in the printed URL (later the same secret as a host-only cookie), and `start` opens the system browser when it can. Remember / forget use the existing policy writers (`add` / `remove`); the page does not become a second Manager. Stopping the UI does not stop the Manager. There is no `ssh-forward tui` and no Bubble Tea dependency. The macOS desktop remains a later native SwiftUI surface (ADR-0002); whether it later embeds this page is a separate decision.
+**Status:** the loopback WebUI has been removed from this tree. The CLI is headless. This ADR still records why slice 7 was not a TUI and why there is no `ssh-forward tui`.
+
+Slice 7 was a local-machine WebUI, not a terminal UI. `ssh-forward ui start` launched a background loopback HTTP process that was a JSON-RPC client of the per-user Manager (`app.Connect`), the same seam as `status` / `watch`. There is no `ssh-forward tui` and no Bubble Tea dependency.
 
 ## Considered Options
 

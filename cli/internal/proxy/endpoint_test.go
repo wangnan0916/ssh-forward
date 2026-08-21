@@ -1,4 +1,4 @@
-package proxy_test
+package proxy
 
 import (
 	"context"
@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
-	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
 )
 
 type unusedDialer struct{}
@@ -21,7 +20,7 @@ func (unusedDialer) DialContext(context.Context, netip.AddrPort) (core.HalfClose
 
 func TestOpenEndpointBindsBothLocalFamiliesAtPreferredPort(t *testing.T) {
 	preferred := availablePort(t)
-	endpoint, err := proxy.OpenEndpoint(proxy.EndpointOptions{
+	endpoint, err := openEndpoint(EndpointOptions{
 		PreferredPort: preferred,
 		Remote:        netip.MustParseAddrPort("127.0.0.1:8080"),
 		Dialer:        unusedDialer{},
@@ -59,7 +58,7 @@ func TestOpenEndpointFailsWhenPreferredPortIsOccupied(t *testing.T) {
 	}
 	defer occupied.Close()
 	preferred := uint16(occupied.Addr().(*net.TCPAddr).Port)
-	endpoint, err := proxy.OpenEndpoint(proxy.EndpointOptions{
+	endpoint, err := openEndpoint(EndpointOptions{
 		PreferredPort: preferred,
 		Remote:        netip.MustParseAddrPort("127.0.0.1:8080"),
 		Dialer:        unusedDialer{},
@@ -76,7 +75,7 @@ func TestOpenEndpointFailsWhenPreferredPortIsOccupied(t *testing.T) {
 func TestAllocatorFallsBackWhenPreferredPortIsOccupied(t *testing.T) {
 	occupied, preferred := occupyPortWithFreeSuccessor(t)
 	defer occupied.Close()
-	owner, err := proxy.NewAllocator(unusedDialer{}).Allocate(context.Background(), core.ForwardSpec{
+	owner, err := NewAllocator(unusedDialer{}).Allocate(context.Background(), core.ForwardSpec{
 		ID:                 "managed:test",
 		Remote:             netip.MustParseAddrPort("127.0.0.1:8080"),
 		PreferredLocalPort: preferred,
@@ -93,25 +92,6 @@ func TestAllocatorFallsBackWhenPreferredPortIsOccupied(t *testing.T) {
 	})
 	if got, want := owner.Projection().AllocatedLocalPort, preferred+1; got != want {
 		t.Fatalf("AllocatedLocalPort = %d, want fallback port %d", got, want)
-	}
-}
-
-func TestAllocatorRequireSamePortDoesNotFallBack(t *testing.T) {
-	occupied, preferred := occupyPortWithFreeSuccessor(t)
-	defer occupied.Close()
-	owner, err := proxy.NewAllocator(unusedDialer{}).Allocate(context.Background(), core.ForwardSpec{
-		ID:                 "managed:test",
-		Remote:             netip.MustParseAddrPort("127.0.0.1:8080"),
-		PreferredLocalPort: preferred,
-		RequireSamePort:    true,
-	})
-	if owner != nil {
-		t.Cleanup(func() { _ = owner.Close(context.Background()) })
-		t.Fatal("Allocate unexpectedly fell back")
-	}
-	var domain *core.DomainError
-	if !errors.As(err, &domain) || domain.Kind != core.ErrorLocalPortConflict {
-		t.Fatalf("Allocate error = %v, want ErrorLocalPortConflict", err)
 	}
 }
 
@@ -135,7 +115,7 @@ func TestAllocatorReturnsConflictAfterLastValidPort(t *testing.T) {
 		defer listener.Close()
 	}
 
-	owner, err := proxy.NewAllocator(unusedDialer{}).Allocate(context.Background(), core.ForwardSpec{
+	owner, err := NewAllocator(unusedDialer{}).Allocate(context.Background(), core.ForwardSpec{
 		ID:                 "managed:test",
 		Remote:             netip.MustParseAddrPort("127.0.0.1:8080"),
 		PreferredLocalPort: preferred,
@@ -150,10 +130,6 @@ func TestAllocatorReturnsConflictAfterLastValidPort(t *testing.T) {
 	}
 }
 
-// Mirrors freePort in the core package's tests: the same reserve-
-// 127.0.0.1:0-and-release idiom, kept as a declared cross-package copy per
-// the shellQuote policy (test-package isolation, identity stated in place).
-// Production sibling: reserveSOCKSAddress (openssh/adapter.go).
 func availablePort(t *testing.T) uint16 {
 	t.Helper()
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")

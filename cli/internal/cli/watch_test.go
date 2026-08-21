@@ -66,7 +66,7 @@ func TestWatchEmitsHumanBlocksPerGeneration(t *testing.T) {
 		cancel()
 	}()
 	var stdout strings.Builder
-	app := &App{Manager: manager, Host: core.HostAlias("development"), Options: app.Options{Stdout: &stdout}}
+	app := &App{Manager: manager, Options: app.Options{Stdout: &stdout}}
 	if err := app.Run(ctx, []string{"watch"}); err != nil {
 		t.Fatalf("watch: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestStatusWatchStreamsLikeWatch(t *testing.T) {
 		cancel()
 	}()
 	var stdout strings.Builder
-	app := &App{Manager: manager, Host: core.HostAlias("development"), Options: app.Options{Stdout: &stdout}}
+	app := &App{Manager: manager, Options: app.Options{Stdout: &stdout}}
 	if err := app.Run(ctx, []string{"status", "--watch"}); err != nil {
 		t.Fatalf("status --watch: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestWatchEmitsOneJSONLinePerGeneration(t *testing.T) {
 		cancel()
 	}()
 	var stdout strings.Builder
-	app := &App{Manager: manager, Host: core.HostAlias("development"), Options: app.Options{Stdout: &stdout}}
+	app := &App{Manager: manager, Options: app.Options{Stdout: &stdout}}
 	if err := app.Run(ctx, []string{"watch", "--json"}); err != nil {
 		t.Fatalf("watch --json: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestWatchPropagatesARealStreamError(t *testing.T) {
 		return &fakeStream{pending: nil, notify: make(chan struct{}), failWith: errors.New("stream died")}, nil
 	}}
 	var stdout strings.Builder
-	app := &App{Manager: manager, Host: core.HostAlias("development"), Options: app.Options{Stdout: &stdout}}
+	app := &App{Manager: manager, Options: app.Options{Stdout: &stdout}}
 	if err := app.Run(context.Background(), []string{"watch"}); err == nil || !strings.Contains(err.Error(), "stream died") {
 		t.Fatalf("watch err = %v, want the stream error", err)
 	}
@@ -137,7 +137,7 @@ func TestWatchPropagatesARealStreamError(t *testing.T) {
 
 func TestWatchRejectsPositionalArguments(t *testing.T) {
 	manager := &fakeManager{}
-	app := &App{Manager: manager, Host: core.HostAlias("development")}
+	app := &App{Manager: manager}
 	if err := app.Run(context.Background(), []string{"watch", "extra"}); err == nil {
 		t.Fatal("watch with a positional argument succeeded")
 	}

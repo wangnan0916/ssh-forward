@@ -11,14 +11,10 @@ import (
 
 // ForwardSpec is one Local Endpoint allocation request: the Managed Forward
 // identity, the remote loopback target, and the Preferred Local Port.
-// RequireSamePort is the ADR-0008 exact-port seam: when true, allocation
-// must bind the Preferred Local Port or report Local Port Conflict. No
-// Forwarding Policy field sets it yet.
 type ForwardSpec struct {
 	ID                 ForwardID
 	Remote             netip.AddrPort
 	PreferredLocalPort uint16
-	RequireSamePort    bool
 	key                remoteListenerKey
 }
 
@@ -39,10 +35,6 @@ func closeWithTimeout(close func(context.Context) error, timeout time.Duration) 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	_ = close(ctx)
-}
-
-func closeOwnedForward(forward OwnedForward) {
-	closeWithTimeout(forward.Close, time.Second)
 }
 
 type forwardEntry struct {

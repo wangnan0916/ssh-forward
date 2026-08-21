@@ -1,6 +1,3 @@
-// Package jsonrpc is the per-user Manager endpoint: Unix socket lifecycle
-// plus the JSON-RPC v1 session. Named pipes stay out until a second
-// transport adapter exists (ADR-0007, ADR-0018).
 package jsonrpc
 
 import (

@@ -1,4 +1,4 @@
-package proxy_test
+package proxy
 
 import (
 	"context"
@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
-	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
 )
 
 type directDialer struct{}
@@ -52,7 +51,7 @@ func TestEndpointPreservesResponseAfterClientHalfClose(t *testing.T) {
 	}()
 
 	preferred := availablePort(t)
-	endpoint, err := proxy.OpenEndpoint(proxy.EndpointOptions{
+	endpoint, err := openEndpoint(EndpointOptions{
 		PreferredPort: preferred,
 		Remote:        remote.Addr().(*net.TCPAddr).AddrPort(),
 		Dialer:        directDialer{},

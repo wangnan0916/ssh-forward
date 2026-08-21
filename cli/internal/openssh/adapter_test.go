@@ -1,4 +1,4 @@
-package openssh_test
+package openssh
 
 import (
 	"context"
@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
-	"github.com/wangnan0916/ssh-forward/cli/internal/openssh"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -26,11 +25,11 @@ func TestValidateAliasInvokesConfiguredOpenSSH(t *testing.T) {
 	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
 		t.Fatalf("write scripted OpenSSH: %v", err)
 	}
-	adapter, err := openssh.New(openssh.Options{Executable: executable})
+	adapter, err := New(Options{Executable: executable})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := adapter.ValidateAlias(context.Background(), "development"); err != nil {
+	if err := adapter.validateAlias(context.Background(), "development"); err != nil {
 		t.Fatalf("ValidateAlias: %v", err)
 	}
 	contents, err := os.ReadFile(argumentsPath)
@@ -53,11 +52,11 @@ func TestValidateAliasUsesExplicitSSHConfig(t *testing.T) {
 	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
 		t.Fatalf("write scripted OpenSSH: %v", err)
 	}
-	adapter, err := openssh.New(openssh.Options{Executable: executable, ConfigFile: configPath})
+	adapter, err := New(Options{Executable: executable, ConfigFile: configPath})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := adapter.ValidateAlias(context.Background(), "development"); err != nil {
+	if err := adapter.validateAlias(context.Background(), "development"); err != nil {
 		t.Fatalf("ValidateAlias: %v", err)
 	}
 	contents, err := os.ReadFile(argumentsPath)
@@ -81,11 +80,11 @@ func TestOpenSSHChildReceivesOnlyApprovedEnvironment(t *testing.T) {
 	}
 	t.Setenv("SSH_FORWARD_SHOULD_NOT_LEAK", "secret")
 	t.Setenv("SSH_AUTH_SOCK", filepath.Join(directory, "agent.sock"))
-	adapter, err := openssh.New(openssh.Options{Executable: executable})
+	adapter, err := New(Options{Executable: executable})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := adapter.ValidateAlias(context.Background(), "development"); err != nil {
+	if err := adapter.validateAlias(context.Background(), "development"); err != nil {
 		t.Fatalf("ValidateAlias: %v", err)
 	}
 	contents, err := os.ReadFile(environmentPath)
@@ -149,14 +148,14 @@ listener.close()
 	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
 		t.Fatalf("write scripted OpenSSH: %v", err)
 	}
-	adapter, err := openssh.New(openssh.Options{
+	adapter, err := New(Options{
 		Executable:   executable,
 		ReadyTimeout: 5 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	session, err := adapter.Start(context.Background(), "development")
+	session, err := adapter.start(context.Background(), "development")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -209,7 +208,7 @@ exit 255
 	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
 		t.Fatalf("write scripted OpenSSH: %v", err)
 	}
-	adapter, err := openssh.New(openssh.Options{Executable: executable, ReadyTimeout: 5 * time.Second, WaitDelay: 100 * time.Millisecond})
+	adapter, err := New(Options{Executable: executable, ReadyTimeout: 5 * time.Second, WaitDelay: 100 * time.Millisecond})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -227,11 +226,11 @@ func TestStartClassifiesAuthenticationFailure(t *testing.T) {
 	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
 		t.Fatalf("write scripted OpenSSH: %v", err)
 	}
-	adapter, err := openssh.New(openssh.Options{Executable: executable, ReadyTimeout: 5 * time.Second, WaitDelay: 100 * time.Millisecond})
+	adapter, err := New(Options{Executable: executable, ReadyTimeout: 5 * time.Second, WaitDelay: 100 * time.Millisecond})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	_, err = adapter.Start(context.Background(), "development")
+	_, err = adapter.start(context.Background(), "development")
 	var sessionError *core.SessionError
 	if !errors.As(err, &sessionError) {
 		t.Fatalf("Start error = %v, want SessionError", err)
@@ -252,11 +251,11 @@ sys.exit(255)
 	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
 		t.Fatalf("write scripted OpenSSH: %v", err)
 	}
-	adapter, err := openssh.New(openssh.Options{Executable: executable, ReadyTimeout: 5 * time.Second, WaitDelay: 100 * time.Millisecond})
+	adapter, err := New(Options{Executable: executable, ReadyTimeout: 5 * time.Second, WaitDelay: 100 * time.Millisecond})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	_, err = adapter.Start(context.Background(), "development")
+	_, err = adapter.start(context.Background(), "development")
 	var sessionError *core.SessionError
 	if !errors.As(err, &sessionError) || sessionError.Disposition != core.SessionSuspend ||
 		sessionError.Reason != core.SessionReasonAuthentication {
@@ -272,23 +271,16 @@ func TestValidateAliasRejectsUnsafeAliasBeforeOpenSSH(t *testing.T) {
 	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
 		t.Fatalf("write scripted OpenSSH: %v", err)
 	}
-	adapter, err := openssh.New(openssh.Options{Executable: executable})
+	adapter, err := New(Options{Executable: executable})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	for _, alias := range []string{"", "-proxy", "two words", strings.Repeat("a", 256)} {
-		if err := adapter.ValidateAlias(context.Background(), alias); !errors.Is(err, openssh.ErrInvalidAlias) {
+		if err := adapter.validateAlias(context.Background(), alias); !errors.Is(err, ErrInvalidAlias) {
 			t.Fatalf("ValidateAlias(%q) error = %v, want ErrInvalidAlias", alias, err)
 		}
 	}
 	if _, err := os.Stat(invokedPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("OpenSSH invocation marker error = %v, want not-exist", err)
 	}
-}
-
-// Mirrors the copy in scanner_bounds_test.go; Go's test-package isolation
-// (package openssh_test vs openssh) forces two definitions of this shell
-// quoting helper, so keep them identical.
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }

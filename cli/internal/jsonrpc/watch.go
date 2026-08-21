@@ -20,17 +20,12 @@ type connectionSession struct {
 	capabilities negotiatedCapabilities
 	server       *jrpc2.Server
 
-	mu             sync.Mutex
-	workers        sync.WaitGroup
-	closed         bool
-	pendingWatches int
-	nextWatchID    uint64
-	watches        map[string]*connectionWatch
-	// pendingWatchResponses maps in-flight manager.watch request ids to the
-	// server-assigned Watch IDs their responses will introduce. onResponseSent
-	// consumes one entry per delivered response, so the map is bounded by the
-	// number of watch requests in flight (itself bounded by the watch slots)
-	// and dies with the session.
+	mu                    sync.Mutex
+	workers               sync.WaitGroup
+	closed                bool
+	pendingWatches        int
+	nextWatchID           uint64
+	watches               map[string]*connectionWatch
 	pendingWatchResponses map[string]string
 }
 
@@ -99,12 +94,6 @@ func (s *connectionSession) handleWatch(ctx context.Context, request *jrpc2.Requ
 	}, nil
 }
 
-// onResponseSent runs after a response frame is written, so no notification
-// can overtake the response that introduces a Watch. handleWatch recorded
-// the request-id → watch-id mapping before the response was written, and the
-// channel delivers the already-decoded request id here, so no result parsing
-// is needed; the lookup always succeeds for watch responses. The guard keeps
-// the activation channel closed at most once.
 func (s *connectionSession) onResponseSent(envelope decodedResponse) {
 	s.mu.Lock()
 	watchID, ok := s.pendingWatchResponses[string(envelope.ID)]
@@ -155,11 +144,6 @@ func (s *connectionSession) releaseWatchSlot() {
 	s.pendingWatches--
 }
 
-// registerWatch converts a reserved slot into a registered Watch and assigns
-// its ID, all under the session lock; it fails only if the session closed
-// while the stream was being set up. The worker count is added under the
-// same lock: close() sets closed there and only then runs Wait, so a new
-// Add can never follow Wait (WaitGroup misuse).
 func (s *connectionSession) registerWatch(stream core.SnapshotStream) (*connectionWatch, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -204,18 +188,11 @@ func (s *connectionSession) runWatch(watch *connectionWatch) {
 	}
 }
 
-// sendResyncRequired ends the Watch with a resync notification. The payload
-// is bounded (watch id plus a literal reason), so it always fits the frame
-// limit and needs no size gate; if the write itself fails, the connection is
-// broken and the client reconnects for a fresh complete Snapshot, as the
-// protocol doc promises.
 func (s *connectionSession) sendResyncRequired(watch *connectionWatch, reason string) {
 	params := resyncNotification{WatchID: watch.id, Reason: reason}
 	s.sendWatchNotification(watch, methodResyncRequired, params)
 }
 
-// Keep a Watch's delivery and stop acknowledgement in one order: unwatch may
-// wait for an in-progress bounded write, but no notification can follow its response.
 func (s *connectionSession) sendWatchNotification(watch *connectionWatch, method string, params any) bool {
 	watch.mu.Lock()
 	defer watch.mu.Unlock()

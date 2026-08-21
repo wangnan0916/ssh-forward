@@ -15,9 +15,6 @@ const (
 	protocolMajor = 1
 	protocolMinor = 0
 
-	// Wire method and notification names. Request-method keys (the handler
-	// map in Serve) and notification-method names (the Watch fan-out) are
-	// the same wire strings; named here so the two roles cannot drift.
 	methodSnapshot       = "manager.snapshot"
 	methodWatch          = "manager.watch"
 	methodUnwatch        = "manager.unwatch"
@@ -70,18 +67,10 @@ var (
 	})
 )
 
-// internalError is the single construction of the wire internal-error shape.
-// It deliberately carries no errorData Kind: it reports a server-side
-// condition rather than a domain rejection, so clients cannot match or
-// retry it against the domain vocabulary.
 func internalError() *jrpc2.Error {
 	return &jrpc2.Error{Code: jrpc2.InternalError, Message: "internal error"}
 }
 
-// watchLimitError is the single construction of the Watch-limit wire error.
-// Both limits produce it: the per-connection Watch slot cap enforced in the
-// session and the Manager's global Watch cap translated from core, so the
-// code, message, and retryable flag cannot drift between the two paths.
 func watchLimitError() *jrpc2.Error {
 	return (&jrpc2.Error{
 		Code:    -32015,
@@ -255,9 +244,6 @@ func decodeRequestEnvelope(message []byte) (requestEnvelope, bool) {
 	if shape.Result != nil || shape.Error != nil {
 		return requestEnvelope{}, false
 	}
-	// The jsonrpc member is enforced for inbound requests; the channel's
-	// Send path decodes the same shape for outbound responses, which are
-	// server-authored and always carry it.
 	if shape.JSONRPC != "2.0" {
 		return requestEnvelope{}, false
 	}
@@ -308,28 +294,20 @@ func validHelloParams(params helloParams) bool {
 }
 
 func rejectHandshake(frames channel.Channel, id json.RawMessage, code jrpc2.Code, message string, data any) error {
-	return rejectAndClose(frames, frames.Close, id, code, message, data, errHandshakeRejected)
+	return rejectAndClose(frames, id, code, message, data, errHandshakeRejected)
 }
 
-// rejectAndClose sends a wire error, closes the channel through the given
-// closer, and returns the caller's error. Handshake rejection, UTF-8/batch
-// rejection, and inbound-notification rejection share this one
-// close-after-error protocol.
-func rejectAndClose(frames channel.Channel, closeChannel func() error, id json.RawMessage, code jrpc2.Code, message string, data any, result error) error {
+func rejectAndClose(frames channel.Channel, id json.RawMessage, code jrpc2.Code, message string, data any, result error) error {
 	err := sendError(frames, id, code, message, data)
-	_ = closeChannel()
+	_ = frames.Close()
 	if err != nil {
 		return err
 	}
 	return result
 }
 
-// rejectHandshakeError rejects the handshake with a prebuilt wire error, so
-// the handshake path and the method path share one construction (the
-// invalid-parameters sentinel) instead of re-typing its code, message, and
-// kind literal.
 func rejectHandshakeError(frames channel.Channel, id json.RawMessage, err *jrpc2.Error) error {
-	return rejectAndClose(frames, frames.Close, id, err.Code, err.Message, err.Data, errHandshakeRejected)
+	return rejectAndClose(frames, id, err.Code, err.Message, err.Data, errHandshakeRejected)
 }
 
 func sendResult(frames channel.Channel, id json.RawMessage, result any) error {

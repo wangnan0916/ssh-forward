@@ -20,7 +20,7 @@ If a Remote Listener has multiple attributable Listener Processes, automatic act
 
 ## Local port allocation
 
-A Forward first attempts to bind its Preferred Local Port. On address-in-use failure it atomically attempts each port from `remotePort + 1` through `remotePort + 100`, without a separate check-then-bind step. The Allocated Local Port remains stable while the Managed Forward exists and is shown explicitly whenever it differs from the remote port. Exhausting the permitted range produces Local Port Conflict; the product never terminates the process occupying a candidate port. Implemented: `proxy/allocator.go` (ADR-0008); `OpenEndpoint` binds one port. `ForwardSpec.RequireSamePort` is the exact-port seam; no Forwarding Policy field sets it yet.
+A Forward first attempts to bind its Preferred Local Port. On address-in-use failure it atomically attempts each port from `remotePort + 1` through `remotePort + 100`, without a separate check-then-bind step. The Allocated Local Port remains stable while the Managed Forward exists and is shown explicitly whenever it differs from the remote port. Exhausting the permitted range produces Local Port Conflict; the product never terminates the process occupying a candidate port. Implemented: `proxy/allocator.go` (ADR-0008); the allocator binds one dual-stack port.
 
 ## Listener continuity
 

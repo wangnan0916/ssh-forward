@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"net/netip"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -67,6 +68,13 @@ type simpleOwnedForward struct {
 
 func (f *simpleOwnedForward) Projection() ForwardSnapshot { return cloneForward(f.projection) }
 func (f *simpleOwnedForward) Close(context.Context) error { return nil }
+
+func familyForAddress(address netip.Addr) AddressFamily {
+	if address.Is4() {
+		return FamilyIPv4
+	}
+	return FamilyIPv6
+}
 
 // reconcileHarness wires a Manager with scripted discovery, a mutable
 // policy source, and an auto allocator. The actor is

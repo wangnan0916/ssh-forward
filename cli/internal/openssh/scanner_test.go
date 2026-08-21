@@ -1,4 +1,4 @@
-package openssh_test
+package openssh
 
 import (
 	"context"
@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
-	"github.com/wangnan0916/ssh-forward/cli/internal/openssh"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -26,7 +25,7 @@ func TestSessionReturnsValidatedListenerObservation(t *testing.T) {
 	bootFrame := func(sequence int) string {
 		return fmt.Sprintf("SF1\tB\t%d\t%s\t%s\tfull\tfull\tpartial\t%d\t%d\t%d\t%d\n",
 			sequence, hexText("boot-1"), hexText("net:[42]"),
-			openssh.MaxObservedListeners, openssh.MaxObservedSockets, openssh.MaxProcessRecords, openssh.MaxObservationMetadataBytes)
+			maxObservedListeners, maxObservedSockets, maxProcessRecords, maxObservationMetadataBytes)
 	}
 	var queued strings.Builder
 	for sequence := 2; sequence <= 12; sequence++ {
@@ -95,11 +94,11 @@ listener.close()
 	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
 		t.Fatalf("write scripted OpenSSH: %v", err)
 	}
-	adapter, err := openssh.New(openssh.Options{Executable: executable, ReadyTimeout: 5 * time.Second})
+	adapter, err := New(Options{Executable: executable, ReadyTimeout: 5 * time.Second})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	session, err := adapter.Start(context.Background(), "development")
+	session, err := adapter.start(context.Background(), "development")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}

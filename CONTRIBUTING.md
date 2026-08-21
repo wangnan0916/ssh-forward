@@ -1,8 +1,8 @@
 # Contributing
 
-The current surface is the CLI, including the loopback WebUI. Keep changes inside that contract unless a document in `docs/` is being updated to match.
+The current surface is the headless CLI. Keep changes inside that contract unless a document in `docs/` is being updated to match.
 
-Development path (do not skip ahead): **CLI (with WebUI) → macOS desktop**. The desktop starts after the WebUI is ready. There is no TUI. See [docs/product/mvp.md](docs/product/mvp.md).
+Development path: **CLI**. There is no TUI. See [docs/product/mvp.md](docs/product/mvp.md).
 
 ## Development Host language
 

@@ -21,8 +21,7 @@ import (
 
 // HostPicker chooses one Development Host alias from a candidate list.
 // ResolveHost uses it when more than one SSH alias is configured and none
-// is pinned. The CLI prompt is the only adapter today; a page picker would
-// be a second adapter, not a reason to invent one early.
+// is pinned.
 type HostPicker func(hosts []string, stdin io.Reader, stdout io.Writer) (string, error)
 
 // Options configure Connect and Serve: the per-user layout, the Development
@@ -45,9 +44,8 @@ type Options struct {
 // the live singleton or an in-process Manager.
 type Session struct {
 	Manager core.Manager
-	Host    core.HostAlias
 	// PolicyReader is this process's policies file: Source feeds the Manager,
-	// Effective feeds present.NewDocument, AddPort/RemovePort satisfy ui.Intent.
+	// Effective feeds NewDocument, AddPort/RemovePort are the CLI writers.
 	PolicyReader *FilePolicyReader
 }
 
@@ -100,11 +98,18 @@ func Connect(ctx context.Context, opts Options) (Session, error) {
 	}
 
 	if os.Getenv("SSH_FORWARD_NO_AUTOSPAWN") != "1" {
-		if err := spawn(opts, host); err != nil {
+		pid, err := spawn(opts, host)
+		if err != nil {
 			return Session{}, fmt.Errorf("could not start the manager: %w", err)
 		}
-		if err := jsonrpc.Wait(ctx, opts.Layout.Socket, 5*time.Second); err != nil {
-			return Session{}, startError(opts.Layout.Log, fmt.Sprintf("manager did not start within %s", 5*time.Second))
+		timeout := 5 * time.Second
+		if err := waitReady(ctx, timeout, pid, func() bool { return jsonrpc.Live(opts.Layout.Socket) },
+			func() error { return startError(opts.Layout.Log, "manager failed to start") },
+			func() error {
+				return startError(opts.Layout.Log, fmt.Sprintf("manager did not start within %s", timeout))
+			},
+		); err != nil {
+			return Session{}, err
 		}
 		if client, err := jsonrpc.Dial(ctx, opts.Layout.Socket); err == nil {
 			return attach(ctx, client, opts)
@@ -120,16 +125,9 @@ func Stop(layout Layout) error {
 	if layout.Dir == "" {
 		layout = DefaultLayout()
 	}
-	pid, err := ReadPIDFile(layout.PID)
+	pid, err := requireLivePID(layout.PID, ErrNotRunning, func() { _ = os.Remove(layout.PID) })
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return ErrNotRunning
-		}
 		return err
-	}
-	if !PIDAlive(pid) {
-		_ = os.Remove(layout.PID)
-		return ErrNotRunning
 	}
 	if !jsonrpc.Live(layout.Socket) {
 		return ErrNotRunning
@@ -137,12 +135,60 @@ func Stop(layout Layout) error {
 	if err := TerminatePID(pid); err != nil {
 		return fmt.Errorf("stop manager: %w", err)
 	}
-	gone := time.Now().Add(2 * time.Second)
-	for jsonrpc.Live(layout.Socket) && time.Now().Before(gone) {
-		time.Sleep(20 * time.Millisecond)
-	}
+	waitWhile(2*time.Second, func() bool { return jsonrpc.Live(layout.Socket) })
 	_ = os.Remove(layout.PID)
 	return nil
+}
+
+func waitWhile(timeout time.Duration, still func() bool) {
+	deadline := time.Now().Add(timeout)
+	for still() && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func waitReady(ctx context.Context, timeout time.Duration, childPID int, ready func() bool, onDead, onTimeout func() error) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if ready() {
+			return nil
+		}
+		if childPID > 0 && !PIDAlive(childPID) {
+			return onDead()
+		}
+		select {
+		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return onTimeout()
+			}
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func requireLivePID(path string, missing error, onDead func()) (int, error) {
+	pid, err := ReadPIDFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, missing
+		}
+		return 0, err
+	}
+	if !PIDAlive(pid) {
+		if onDead != nil {
+			onDead()
+		}
+		return 0, missing
+	}
+	return pid, nil
+}
+
+func writePIDFile(path string) error {
+	return os.WriteFile(path, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600)
 }
 
 // ReadPIDFile reads a decimal pid from path.
@@ -168,10 +214,7 @@ func TerminatePID(pid int) error {
 	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
 		return err
 	}
-	deadline := time.Now().Add(3 * time.Second)
-	for PIDAlive(pid) && time.Now().Before(deadline) {
-		time.Sleep(20 * time.Millisecond)
-	}
+	waitWhile(3*time.Second, func() bool { return PIDAlive(pid) })
 	if PIDAlive(pid) {
 		_ = syscall.Kill(pid, syscall.SIGKILL)
 	}
@@ -193,7 +236,7 @@ func Serve(ctx context.Context, opts Options) error {
 		return err
 	}
 	defer endpoint.Close()
-	if err := os.WriteFile(opts.Layout.PID, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
+	if err := writePIDFile(opts.Layout.PID); err != nil {
 		return err
 	}
 	defer func() { _ = os.Remove(opts.Layout.PID) }()
@@ -224,7 +267,6 @@ func attach(ctx context.Context, client core.Manager, opts Options) (Session, er
 	}
 	return Session{
 		Manager:      client,
-		Host:         snapshot.Host.Alias,
 		PolicyReader: NewFilePolicyReader(opts.PoliciesPath),
 	}, nil
 }
@@ -238,7 +280,6 @@ func inProcess(host, sshConfig, policies string) (Session, error) {
 	manager := core.NewConfiguredManager(core.HostAlias(host), adapter, proxy.NewAllocator, reader.Source)
 	return Session{
 		Manager:      manager,
-		Host:         core.HostAlias(host),
 		PolicyReader: reader,
 	}, nil
 }
@@ -255,48 +296,35 @@ const (
 // singleton child and copies its Options encoding into opts. The child
 // enters Serve without parsing a Cobra command tree.
 func TakeManagerServeEnv(opts *Options) bool {
-	return takeServeEnv(envManagerServe, envManagerHost, envManagerPolicies, envManagerSSHConfig, opts)
-}
-
-func takeServeEnv(serveKey, hostKey, policiesKey, sshConfigKey string, opts *Options) bool {
-	if os.Getenv(serveKey) != "1" {
+	if os.Getenv(envManagerServe) != "1" {
 		return false
 	}
-	_ = os.Unsetenv(serveKey)
-	opts.HostFlag = os.Getenv(hostKey)
-	if policies := os.Getenv(policiesKey); policies != "" {
+	_ = os.Unsetenv(envManagerServe)
+	opts.HostFlag = os.Getenv(envManagerHost)
+	if policies := os.Getenv(envManagerPolicies); policies != "" {
 		opts.PoliciesPath = policies
 	}
-	if sshConfig := os.Getenv(sshConfigKey); sshConfig != "" {
+	if sshConfig := os.Getenv(envManagerSSHConfig); sshConfig != "" {
 		opts.SSHConfigPath = sshConfig
 	}
 	return true
 }
 
-func spawn(opts Options, host string) error {
-	_, err := startServeChild("SSH_FORWARD_MANAGER_BINARY", serveChildEnv(envManagerServe, envManagerHost, host, envManagerPolicies, envManagerSSHConfig, opts), opts.Layout.Dir, opts.Layout.Log)
-	return err
-}
-
-func serveChildEnv(serveKey, hostKey, host, policiesKey, sshConfigKey string, opts Options) []string {
-	extra := []string{
-		serveKey + "=1",
-		hostKey + "=" + host,
-		policiesKey + "=" + opts.PoliciesPath,
-		envConfigDir + "=" + opts.Layout.Dir,
-	}
-	if opts.SSHConfigPath != "" {
-		extra = append(extra, sshConfigKey+"="+opts.SSHConfigPath)
-	}
-	return extra
-}
-
-func startServeChild(binaryEnv string, extra []string, dir, logPath string) (int, error) {
-	executable, err := ResolveSpawnBinary(binaryEnv)
+func spawn(opts Options, host string) (int, error) {
+	executable, err := ResolveSpawnBinary("SSH_FORWARD_MANAGER_BINARY")
 	if err != nil {
 		return 0, err
 	}
-	return StartDetached(executable, nil, extra, dir, logPath)
+	extra := []string{
+		envManagerServe + "=1",
+		envManagerHost + "=" + host,
+		envManagerPolicies + "=" + opts.PoliciesPath,
+		envConfigDir + "=" + opts.Layout.Dir,
+	}
+	if opts.SSHConfigPath != "" {
+		extra = append(extra, envManagerSSHConfig+"="+opts.SSHConfigPath)
+	}
+	return StartDetached(executable, nil, extra, opts.Layout.Dir, opts.Layout.Log)
 }
 
 func startError(logPath, fallback string) error {

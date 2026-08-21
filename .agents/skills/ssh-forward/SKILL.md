@@ -2,8 +2,7 @@
 name: ssh-forward
 description: >-
   Operates the ssh-forward CLI: remember a remote port or Development Host
-  directory for Auto-forward, pin a default SSH alias, inspect status, or
-  start the loopback WebUI.
+  directory for Auto-forward, pin a default SSH alias, or inspect status.
   Use when forwarding a remote development listener to localhost, running
   ssh-forward, adding or removing a remembered port or --dir, or diagnosing
   why a local port is not reachable.
@@ -70,16 +69,7 @@ ssh-forward status --json
 
 `add` is idempotent. `remove` fails if that simple port or directory rule is not remembered. `add`/`remove` only create or drop those simple Auto-forward rules; hand-edited policies with extra matchers are left alone.
 
-Do not run `ssh-forward watch` or `ssh-forward manager serve` unless the user asked: `watch` streams until interrupt; `serve` holds the singleton in the foreground. `manager stop` / `manager restart` interrupt Active Forwards; run them only when the user asked to recover the singleton (CLI upgrade, incompatible manager, leftover runtime forwards). There is no TUI.
-
-When the user wants the loopback page:
-
-```bash
-ssh-forward ui
-ssh-forward ui status --json
-```
-
-`ui` prints `http://127.0.0.1:PORT/?token=…` (and opens a browser unless `SSH_FORWARD_UI_NO_OPEN=1`). The page keeps that secret as a cookie and may drop the query from the address bar; later visits still need that printed URL. It is idempotent while that process is running. `ui stop` ends only the page; Active Forwards and the Manager keep running. Do not run `ui` unless the user asked for the WebUI. `ssh-forward ui` starts the background page; it is not a blocking TUI.
+Do not run `ssh-forward watch` or `ssh-forward manager serve` unless the user asked: `watch` streams until interrupt; `serve` holds the singleton in the foreground. `manager stop` / `manager restart` interrupt Active Forwards; run them only when the user asked to recover the singleton (CLI upgrade, incompatible manager, leftover runtime forwards). There is no TUI and no WebUI.
 
 ## 4. Report live state
 
@@ -105,4 +95,4 @@ One manager owns one Development Host. A conflicting `--host` on a client comman
 - macOS: `~/Library/Application Support/ssh-forward/`
 - Linux: `$XDG_CONFIG_HOME/ssh-forward/` (or `~/.config/ssh-forward/`)
 
-The manager hot-reloads policies. Invalid input keeps the last valid set in the Manager process. A CLI/WebUI process that never parsed a valid file does not invent remembered ports from the corrupt file.
+The manager hot-reloads policies. Invalid input keeps the last valid set in the Manager process. A CLI process that never parsed a valid file does not invent remembered ports from the corrupt file.

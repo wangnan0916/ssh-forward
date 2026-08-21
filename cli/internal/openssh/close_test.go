@@ -1,4 +1,4 @@
-package openssh_test
+package openssh
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
-	"github.com/wangnan0916/ssh-forward/cli/internal/openssh"
 )
 
 func TestSessionCloseIsBoundedWhenOpenSSHIgnoresTerminate(t *testing.T) {
@@ -42,11 +41,11 @@ while True:
 	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
 		t.Fatalf("write scripted OpenSSH: %v", err)
 	}
-	adapter, err := openssh.New(openssh.Options{Executable: executable, ReadyTimeout: 5 * time.Second})
+	adapter, err := New(Options{Executable: executable, ReadyTimeout: 5 * time.Second})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	session, err := adapter.Start(context.Background(), "development")
+	session, err := adapter.start(context.Background(), "development")
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}

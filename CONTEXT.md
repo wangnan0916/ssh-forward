@@ -2,7 +2,7 @@
 
 This context describes how eligible TCP listeners on a remote development machine become reachable on a user's local machine, preferring the same port.
 
-Development path: **CLI** (includes the loopback WebUI) → **macOS desktop** (after the WebUI is ready). Do not start the desktop early. Details: [docs/product/mvp.md](docs/product/mvp.md). There is no TUI (ADR-0021).
+Development path: **CLI** (headless). A later macOS desktop is out of this tree. Details: [docs/product/mvp.md](docs/product/mvp.md). There is no TUI (ADR-0021).
 
 ## Language
 
@@ -115,7 +115,7 @@ The state in which no permitted Local Endpoint can be allocated because strict s
 _Avoid_: Remote failure, forwarding failure
 
 **Attention**:
-The presentation list of Local Port Conflicts that need the operator to act. CLI human status and the loopback WebUI share this grouping.
+The presentation list of Local Port Conflicts that need the operator to act. CLI human status uses this grouping.
 _Avoid_: error list, failed forwards, new listeners
 
 **Available**:

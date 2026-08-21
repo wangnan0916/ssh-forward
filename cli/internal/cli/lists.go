@@ -1,4 +1,4 @@
-package present
+package cli
 
 import (
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
@@ -17,36 +17,31 @@ const (
 	ReasonUnclassified    = "unclassified"
 )
 
-// Row is one WebUI / human-status line: a Remote Listener, Forward, conflict,
+// Row is one human-status line: a Remote Listener, Forward, conflict,
 // or remembered port with no current listener.
 type Row struct {
-	State    string `json:"state"`
-	Port     uint16 `json:"port"`
-	Local    uint16 `json:"local,omitempty"`
-	Exe      string `json:"exe,omitempty"`
-	Cwd      string `json:"cwd,omitempty"`
-	Reason   string `json:"reason,omitempty"`
-	PolicyID string `json:"policy_id,omitempty"`
+	State    string
+	Port     uint16
+	Local    uint16
+	Exe      string
+	Cwd      string
+	Reason   string
+	PolicyID string
 }
 
 // Lists is the Attention / Active / Waiting / Available grouping from a
 // HostSnapshot plus Remembered Auto-forward ports. Policy Evidence lives on
 // Available rows; it is not added to the Manager Snapshot.
 type Lists struct {
-	Attention []Row `json:"attention"`
-	Active    []Row `json:"active"`
-	Waiting   []Row `json:"waiting"`
-	Available []Row `json:"available"`
+	Attention []Row
+	Active    []Row
+	Waiting   []Row
+	Available []Row
 }
 
 func fromSnapshot(host *core.HostSnapshot, remembered []uint16, policies []core.ForwardingPolicy) Lists {
 	if host == nil {
-		return Lists{
-			Attention: []Row{},
-			Active:    []Row{},
-			Waiting:   []Row{},
-			Available: []Row{},
-		}
+		return Lists{}
 	}
 	forwarded := make(map[uint16]struct{}, len(host.Forwards))
 	for _, forward := range host.Forwards {

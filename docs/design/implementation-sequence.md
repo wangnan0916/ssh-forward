@@ -6,7 +6,7 @@ The completed throwaway spike validated one system `ssh -T -D … sh -s` connect
 
 ## Vertical slices
 
-Slices 1–7 are complete. One Forwarding Session carries the fixed versioned scanner plus SOCKS traffic. The Manager publishes canonical complete Snapshots with Discovery evidence and policy-reconciled Managed Forwards. Capability-negotiated JSON-RPC clients can Watch those Snapshots. The CLI is the public command surface: it auto-spawns a per-user manager and speaks the v1 wire. `ssh-forward ui start` serves a loopback WebUI as a JSON-RPC client of that manager.
+Slices 1–6 are complete. One Forwarding Session carries the fixed versioned scanner plus SOCKS traffic. The Manager publishes canonical complete Snapshots with Discovery evidence and policy-reconciled Managed Forwards. Capability-negotiated JSON-RPC clients can Watch those Snapshots. The CLI is the public command surface: it auto-spawns a per-user manager and speaks the v1 wire. The loopback WebUI was removed from this tree.
 
 Slice 5's observation-path hysteresis is two consecutive observations for create and disappearance. A saved policy edit applies immediately and resets that hysteresis. Session outage does not count as disappearance: the observation wake advances only on ObservationSets.
 
@@ -16,7 +16,7 @@ Slice 5's observation-path hysteresis is two consecutive observations for create
 4. Add agentless discovery and Snapshot Watch.
 5. Add Policy and continuous reconciliation.
 6. Complete the domain-oriented CLI.
-7. Build the loopback WebUI (after the CLI is ready). **Done.**
-8. Build the macOS desktop (after the WebUI is ready), then packaging, signing, notarization, and release checks.
+7. ~~Build the loopback WebUI.~~ Removed from this tree.
+8. Build the macOS desktop, then packaging, signing, notarization, and release checks.
 
 Each formal slice starts with one failing behavior test at an agreed Seam, adds only enough Implementation to pass, and then advances to the next behavior.

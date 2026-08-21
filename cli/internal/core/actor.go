@@ -11,28 +11,18 @@ import (
 	"time"
 )
 
-// hostActorOptions carries the actor's run-time assembly. The reconnect
-// policy (retryDelay/retryWait) is intentionally absent: it is configured
-// through managerOptions (the Manager's single configuration surface) and
-// handed to newHostActor as constructor arguments, so the pair cannot be
-// configured inconsistently between the two structs.
 type hostActorOptions struct {
-	host      HostAlias
-	connector HostConnector
-	dialer    *currentDialer
-	publish   func(hostView)
-	ctx       context.Context
-	// onObservation notifies the Manager that a new observation generation
-	// was applied. It fires once per ObservationSet — not on connection
-	// state or Discovery-only publications — so the reconciliation worker
-	// advances its hysteresis exactly once per generation.
+	host          HostAlias
+	connector     HostConnector
+	dialer        *currentDialer
+	publish       func(hostView)
+	ctx           context.Context
 	onObservation func()
+	retryDelay    func(int) time.Duration
+	retryWait     func(context.Context, time.Duration) bool
 }
 
-// hostActor owns one Development Host's Forwarding Session, Discovery State,
-// and reconnect scheduling. Observation ingestion happens here, outside the
-// Manager state lock, and blocking socket work can be scheduled from the
-// ingestion path without holding either state lock.
+// hostActor owns one Development Host's Forwarding Session, Discovery, and reconnect.
 type hostActor struct {
 	host       HostAlias
 	connector  HostConnector
@@ -53,29 +43,31 @@ type hostActor struct {
 	done          chan struct{}
 }
 
-func newHostActor(options hostActorOptions, retryDelay func(int) time.Duration, retryWait func(context.Context, time.Duration) bool) *hostActor {
+func newHostActor(options hostActorOptions) *hostActor {
+	if options.retryDelay == nil {
+		options.retryDelay = exponentialJitterDelay
+	}
+	if options.retryWait == nil {
+		options.retryWait = waitForRetry
+	}
 	return &hostActor{
 		host:       options.host,
 		connector:  options.connector,
 		dialer:     options.dialer,
 		publish:    options.publish,
 		onObserve:  options.onObservation,
-		retryDelay: retryDelay,
-		retryWait:  retryWait,
+		retryDelay: options.retryDelay,
+		retryWait:  options.retryWait,
 		ctx:        options.ctx,
 		state:      emptyHostView(options.host),
 		done:       make(chan struct{}),
 	}
 }
 
-// startIfNeeded launches the connect loop unless it is already running or
-// the Manager is shutting down. It is idempotent. It publishes Connecting
-// before the loop runs so the transition is visible as soon as arming
-// returns; the loop publishes from Connected onward.
 func (a *hostActor) startIfNeeded() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.armed() {
+	if a.active.Load() || a.ctx.Err() != nil {
 		return
 	}
 	a.active.Store(true)
@@ -86,22 +78,10 @@ func (a *hostActor) startIfNeeded() {
 	go a.run()
 }
 
-// armed is the single arming authority: the connect loop is either running
-// (active) or the Manager is shutting down (ctx done).
-func (a *hostActor) armed() bool {
-	return a.active.Load() || a.ctx.Err() != nil
-}
-
 func (a *hostActor) isActive() bool {
 	return a.active.Load()
 }
 
-// run marks the loop inactive on the way out. The connect loop itself also
-// sets active false before publishing its final Disconnected transition, so
-// a concurrently arriving command sees a completed session and can re-arm.
-// done is captured up front: a re-arm replaces a.done with a fresh channel
-// while this goroutine is still winding down, and each run must close only
-// the channel it was launched with.
 func (a *hostActor) run() {
 	a.mu.Lock()
 	done := a.done
@@ -199,7 +179,9 @@ func (a *hostActor) applySessionFact(fact SessionFact) {
 	case DiscoveryChange:
 		a.applyDiscoveryChange(fact)
 	default:
-		a.applyInvalidDiscoveryFact()
+		a.mu.Lock()
+		a.failDiscoveryLocked(ReasonSessionInvalid)
+		a.mu.Unlock()
 	}
 }
 
@@ -263,15 +245,6 @@ func (a *hostActor) applyDiscoveryChange(change DiscoveryChange) {
 	a.publishLocked()
 }
 
-func (a *hostActor) applyInvalidDiscoveryFact() {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.failDiscoveryLocked(ReasonSessionInvalid)
-}
-
-// failDiscoveryLocked is the actor's own failure verdict, reached through
-// admission: a misbehaving adapter (stale sequence, bad capability, unknown
-// budget, invalid report) must not corrupt the mirror.
 func (a *hostActor) failDiscoveryLocked(reason DiscoveryReason) {
 	diagnostic := discoveryFailureDiagnostic(reason)
 	discovery := a.state.Discovery
@@ -291,10 +264,6 @@ func (a *hostActor) publishConnectionFailure(reason SessionReason) {
 	a.publishLocked()
 }
 
-// publishLocked publishes one host view and is the single place that
-// suppresses no-change publications: it compares against the last view it
-// handed to the Manager. Callers mutate state and publish unconditionally, so
-// new state fields get dedup for free.
 func (a *hostActor) publishLocked() {
 	if reflect.DeepEqual(a.lastPublished, a.state) {
 		return
@@ -331,8 +300,6 @@ func waitForRetry(ctx context.Context, delay time.Duration) bool {
 	}
 }
 
-// sessionEnd is the single unwrap of a connect or consume error. Non-retry
-// dispositions end the loop; ConnectionDiagnostic distinguishes them.
 func sessionEnd(err error) (SessionDisposition, SessionReason) {
 	if errors.Is(err, context.Canceled) {
 		return SessionClosed, SessionReasonClosed
@@ -350,10 +317,6 @@ func closeHostSession(session HostSession) {
 
 var errTransportUnavailable = errors.New("Development Host transport is unavailable")
 
-// currentDialer is the concurrency-safe holder of the live Forwarding
-// Session's data path. The actor sets it exactly when it installs or removes
-// the session; Forward endpoint allocation reads through it, so endpoints
-// survive session replacement without holding either state lock.
 type currentDialer struct {
 	mu     sync.RWMutex
 	dialer Dialer
