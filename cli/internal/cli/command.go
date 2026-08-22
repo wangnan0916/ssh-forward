@@ -46,7 +46,7 @@ Name the host with --host ALIAS (-h is help). Pin one with: ssh-forward default 
 	}
 	root.AddCommand(
 		a.rememberCommand(true), a.rememberCommand(false), a.statusCommand(),
-		a.hostCommand(), a.defaultCommand(), a.managerCommand(),
+		a.hostCommand(), a.defaultCommand(), a.uninstallCommand(), a.managerCommand(),
 	)
 	root.InitDefaultHelpCmd()
 	for _, command := range root.Commands() {
@@ -183,6 +183,19 @@ func (a *App) defaultCommand() *cobra.Command {
 		},
 	}
 	return grouped(groupHost, annotateSkipManager(command))
+}
+
+func (a *App) uninstallCommand() *cobra.Command {
+	return annotateSkipManager(&cobra.Command{
+		Use: "uninstall", Short: "remove the background manager", Args: cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			if err := app.Uninstall(a.Options.Layout); err != nil {
+				return err
+			}
+			fmt.Fprintln(a.Options.Stdout, "Background manager removed; configuration kept.")
+			return nil
+		},
+	})
 }
 
 func (a *App) managerCommand() *cobra.Command {

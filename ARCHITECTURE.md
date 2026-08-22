@@ -28,7 +28,9 @@ CLI
 - `internal/app` owns the single config file, SSH alias selection, and the thin
   adapters that compose HTTP/Unix Socket and the user's OS service manager.
   A Manager loads its immutable port set at startup; `Connect` restarts it when
-  the selected host or configured ports differ from its current status.
+  the selected host, configured ports, protocol, or binary version differs
+  from the current process. `Uninstall` removes only the background service;
+  persistent intent remains user-owned configuration.
 - `internal/cli` formats status and edits remembered ports.
 
 Mechanisms are delegated to deep external modules: system OpenSSH handles SSH,

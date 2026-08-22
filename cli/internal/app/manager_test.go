@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"slices"
@@ -40,11 +41,11 @@ func TestManagerStatusRoundTrip(t *testing.T) {
 		Discovery: core.DiscoveryStatus{State: core.DiscoveryActive},
 		Forwards:  []core.ForwardStatus{{Port: 5173, State: core.ForwardActive}},
 	}
-	server := &http.Server{Handler: managerHandler(fixedManager{status: want})}
+	server := &http.Server{Handler: managerHandler(fixedManager{status: want}, "test-version")}
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close() })
 
-	manager, err := dialManager(context.Background(), path)
+	manager, err := dialManager(context.Background(), path, "test-version")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,6 +56,9 @@ func TestManagerStatusRoundTrip(t *testing.T) {
 	}
 	if got.Host != want.Host || len(got.Forwards) != 1 || got.Forwards[0] != want.Forwards[0] {
 		t.Fatalf("status = %#v, want %#v", got, want)
+	}
+	if _, err := dialManager(context.Background(), path, "other-version"); !errors.Is(err, ErrIncompatibleManager) {
+		t.Fatalf("version mismatch error = %v", err)
 	}
 }
 

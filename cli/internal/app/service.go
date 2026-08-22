@@ -76,6 +76,47 @@ func reinstallService(svc service.Service, layout Layout) error {
 	return installAndStart(svc)
 }
 
+// Uninstall stops and removes the per-user Manager service. Persistent port
+// configuration is deliberately kept so a later install can resume it.
+func Uninstall(layout Layout) error {
+	opts := Options{Layout: layout}.WithDefaults()
+	svc, err := newManagerService(context.Background(), opts, "")
+	if err != nil {
+		return err
+	}
+	return uninstallService(svc, opts.Layout)
+}
+
+type serviceUninstaller interface {
+	Status() (service.Status, error)
+	Stop() error
+	Uninstall() error
+}
+
+func uninstallService(svc serviceUninstaller, layout Layout) error {
+	status, err := svc.Status()
+	if errors.Is(err, service.ErrNotInstalled) {
+		_, err = stopLegacyManager(layout)
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	if status == service.StatusRunning {
+		if err := svc.Stop(); err != nil {
+			return err
+		}
+		waitSocketGone(layout.Socket, 2*time.Second)
+	}
+	if err := svc.Uninstall(); err != nil {
+		return err
+	}
+	if !socketLive(layout.Socket) {
+		_ = os.Remove(layout.Socket)
+	}
+	return nil
+}
+
 func newManagerService(ctx context.Context, opts Options, host string) (service.Service, error) {
 	program := newManagerProgram(ctx, opts, host)
 	return service.New(program, serviceConfig(opts, host, program.wait))
@@ -144,7 +185,7 @@ func (p *managerProgram) Start(service.Service) error {
 	p.listener = listener
 	p.manager = manager
 	p.server = &http.Server{
-		Handler:           managerHandler(manager),
+		Handler:           managerHandler(manager, p.opts.Version),
 		ReadHeaderTimeout: 2 * time.Second,
 		IdleTimeout:       30 * time.Second,
 		MaxHeaderBytes:    16 << 10,

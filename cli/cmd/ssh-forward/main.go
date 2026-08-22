@@ -18,7 +18,7 @@ import (
 
 // buildVersion is the product version, bumped with each release tag; the
 // formula's test and the brew audit both key off it.
-const buildVersion = "0.1.0-alpha.1"
+var buildVersion = "0.2.0-alpha.1"
 
 // versionString reports the product version plus the embedded build
 // revision (Go stamps vcs.revision into the binary), so --version tells a

@@ -121,6 +121,9 @@ func needsManager(cmd *cobra.Command) bool {
 func (a *App) prepareCommand(cmd *cobra.Command) error {
 	a.bindGlobalFlags(cmd)
 	a.Options = a.Options.WithDefaults()
+	if a.Version != "" {
+		a.Options.Version = a.Version
+	}
 	a.Options = withInteractive(a.Options)
 	if !needsManager(cmd) {
 		return nil
@@ -161,6 +164,7 @@ Host
   default ALIAS   pin the default host
 
 Use status --watch for live updates.
+Run uninstall before removing the binary.
 
 ssh-forward COMMAND --help for details.
 `

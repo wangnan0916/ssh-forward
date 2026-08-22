@@ -76,6 +76,9 @@ func TestRootHasNoPolicyOrDirectorySurface(t *testing.T) {
 	if err != nil || status.Flags().Lookup("watch") == nil {
 		t.Fatal("status --watch is missing")
 	}
+	if uninstall, _, err := root.Find([]string{"uninstall"}); err != nil || uninstall.Hidden {
+		t.Fatalf("uninstall command is missing: %v", err)
+	}
 	for _, command := range root.Commands() {
 		if command.Name() == "watch" || command.Name() == "manager" && !command.Hidden {
 			t.Fatalf("obsolete public command %q is still visible", command.Name())

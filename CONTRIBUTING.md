@@ -26,3 +26,15 @@ Behavior tests should use `core.Manager` (`Status`, `Close`) or its `Backend`
 interface. Keep HTTP/Unix Socket coverage to one status round trip and do not
 retest third-party parsing or OS service internals. Do not duplicate OpenSSH
 forwarding behavior in Go.
+
+## Releases
+
+Release tags and the default `buildVersion` use the same semantic version.
+GoReleaser builds macOS and Linux archives for AMD64 and ARM64:
+
+```bash
+goreleaser release --snapshot --clean
+```
+
+Push a release tag only after `main` is green. Tags containing a prerelease
+suffix such as `-alpha.1` become GitHub prereleases automatically.

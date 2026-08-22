@@ -14,7 +14,10 @@ import (
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
-const managerStatusPath = "/v1/status"
+const (
+	managerStatusPath      = "/v1/status"
+	managerProtocolVersion = 1
+)
 
 var ErrIncompatibleManager = errors.New("the running manager is incompatible")
 
@@ -37,7 +40,13 @@ func listenManager(path string) (net.Listener, error) {
 	return listener, nil
 }
 
-func managerHandler(manager core.Manager) http.Handler {
+type managerStatus struct {
+	ProtocolVersion int    `json:"protocol_version"`
+	ManagerVersion  string `json:"manager_version"`
+	core.Status
+}
+
+func managerHandler(manager core.Manager, version string) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet || request.URL.Path != managerStatusPath {
 			http.NotFound(writer, request)
@@ -49,7 +58,11 @@ func managerHandler(manager core.Manager) http.Handler {
 			return
 		}
 		writer.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(writer).Encode(status)
+		_ = json.NewEncoder(writer).Encode(managerStatus{
+			ProtocolVersion: managerProtocolVersion,
+			ManagerVersion:  version,
+			Status:          status,
+		})
 	})
 }
 
@@ -58,7 +71,7 @@ type managerClient struct {
 	transport *http.Transport
 }
 
-func dialManager(ctx context.Context, socket string) (core.Manager, error) {
+func dialManager(ctx context.Context, socket, version string) (core.Manager, error) {
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{Timeout: 250 * time.Millisecond}).DialContext(ctx, "unix", socket)
@@ -66,7 +79,7 @@ func dialManager(ctx context.Context, socket string) (core.Manager, error) {
 		ResponseHeaderTimeout: 2 * time.Second,
 	}
 	client := &managerClient{client: &http.Client{Transport: transport}, transport: transport}
-	if _, err := client.Status(ctx); err != nil {
+	if _, err := client.readStatus(ctx, version); err != nil {
 		_ = client.Close(context.Background())
 		return nil, err
 	}
@@ -74,6 +87,10 @@ func dialManager(ctx context.Context, socket string) (core.Manager, error) {
 }
 
 func (c *managerClient) Status(ctx context.Context) (core.Status, error) {
+	return c.readStatus(ctx, "")
+}
+
+func (c *managerClient) readStatus(ctx context.Context, version string) (core.Status, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://manager"+managerStatusPath, nil)
 	if err != nil {
 		return core.Status{}, err
@@ -89,11 +106,14 @@ func (c *managerClient) Status(ctx context.Context) (core.Status, error) {
 	if response.StatusCode != http.StatusOK {
 		return core.Status{}, fmt.Errorf("manager status: %s", response.Status)
 	}
-	var status core.Status
+	var status managerStatus
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&status); err != nil {
 		return core.Status{}, err
 	}
-	return status, nil
+	if status.ProtocolVersion != managerProtocolVersion || version != "" && status.ManagerVersion != version {
+		return core.Status{}, ErrIncompatibleManager
+	}
+	return status.Status, nil
 }
 
 func (c *managerClient) Close(context.Context) error {
@@ -101,14 +121,14 @@ func (c *managerClient) Close(context.Context) error {
 	return nil
 }
 
-func waitManager(ctx context.Context, socket string, timeout time.Duration) (core.Manager, error) {
+func waitManager(ctx context.Context, socket, version string, timeout time.Duration) (core.Manager, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
 	var lastErr error
 	for {
-		client, err := dialManager(ctx, socket)
+		client, err := dialManager(ctx, socket, version)
 		if err == nil {
 			return client, nil
 		}

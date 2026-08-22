@@ -26,6 +26,7 @@ type Options struct {
 	HostFlag      string
 	SSHConfigPath string
 	ConfigPath    string
+	Version       string
 	Interactive   bool
 	PickHost      HostPicker
 	Stdin         io.Reader
@@ -70,7 +71,7 @@ func Connect(ctx context.Context, opts Options) (core.Manager, error) {
 		return nil, err
 	}
 
-	client, dialErr := dialManager(ctx, opts.Layout.Socket)
+	client, dialErr := dialManager(ctx, opts.Layout.Socket, opts.Version)
 	replace := dialErr != nil && socketLive(opts.Layout.Socket)
 	if dialErr == nil {
 		status, statusErr := client.Status(ctx)
@@ -99,7 +100,7 @@ func Connect(ctx context.Context, opts Options) (core.Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("could not start the manager: %w", err)
 	}
-	client, err = waitManager(ctx, opts.Layout.Socket, managerStartWait)
+	client, err = waitManager(ctx, opts.Layout.Socket, opts.Version, managerStartWait)
 	if err != nil {
 		return nil, err
 	}

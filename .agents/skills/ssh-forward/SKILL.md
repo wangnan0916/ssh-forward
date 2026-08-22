@@ -74,3 +74,14 @@ report the command error instead of editing service-manager state directly.
 
 Persistent intent lives in one `config.jsonc`. Runtime process IDs and listener
 observations are rebuilt rather than persisted.
+
+## 4. Remove only on an explicit request
+
+When the user explicitly asks to uninstall ssh-forward, run:
+
+```bash
+ssh-forward uninstall
+```
+
+This removes the background Manager and keeps remembered Host and port intent.
+Report that a package-manager uninstall may now safely remove the binary.
