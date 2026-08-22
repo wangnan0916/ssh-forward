@@ -192,7 +192,7 @@ func (a *App) managerCommand() *cobra.Command {
 		return UsageError(errors.New("manager needs a subcommand (serve, stop, restart)"))
 	}}
 	command.AddCommand(
-		&cobra.Command{Use: "serve", Short: "run in the foreground", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return a.serveManager(cmd.Context()) }},
+		&cobra.Command{Use: "serve", Hidden: true, Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return a.serveManager(cmd.Context()) }},
 		&cobra.Command{Use: "stop", Short: "stop the background manager", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error { return a.runManagerStop() }},
 		&cobra.Command{Use: "restart", Short: "restart the background manager", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return a.runManagerRestart(cmd.Context()) }},
 	)
@@ -203,15 +203,12 @@ func (a *App) runManagerStop() error {
 	if err := app.Stop(a.Options.Layout); err != nil {
 		return err
 	}
-	fmt.Fprintln(a.Options.Stdout, "Stopped the manager. Forwards will return on the next status.")
+	fmt.Fprintln(a.Options.Stdout, "Stopped the manager. Forwards will return on the next command.")
 	return nil
 }
 
 func (a *App) runManagerRestart(ctx context.Context) error {
-	if err := app.Stop(a.Options.Layout); err != nil && !errors.Is(err, app.ErrNotRunning) {
-		return err
-	}
-	manager, err := app.Connect(ctx, a.connectOptions())
+	manager, err := app.Restart(ctx, a.connectOptions())
 	if err != nil {
 		if app.IsResolution(err) {
 			return UsageError(err)

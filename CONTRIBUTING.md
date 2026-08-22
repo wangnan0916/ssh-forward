@@ -23,5 +23,6 @@ a developer's configured hosts:
 ```
 
 Behavior tests should use `core.Manager` (`Status`, `Close`) or its `Backend`
-interface. Keep the wire test to a status round trip. Do not duplicate OpenSSH
+interface. Keep HTTP/Unix Socket coverage to one status round trip and do not
+retest third-party parsing or OS service internals. Do not duplicate OpenSSH
 forwarding behavior in Go.

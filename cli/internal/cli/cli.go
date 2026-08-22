@@ -16,9 +16,7 @@ import (
 // ErrUsage marks a flag or host-resolution failure that should exit 2.
 var ErrUsage = errors.New("usage")
 
-// App is the CLI surface: it parses one command line and talks to the
-// per-user Manager through app.Connect / app.Serve. Tests inject Manager
-// directly and skip Connect.
+// App is the CLI surface. Tests inject Manager directly and skip app.Connect.
 type App struct {
 	Manager core.Manager
 	Options app.Options
@@ -46,11 +44,6 @@ func (e *usageError) Is(target error) bool {
 
 // Run parses and executes one command line, e.g. ["status", "--json"].
 func (a *App) Run(ctx context.Context, args []string) error {
-	// Autospawned children carry empty argv; the Serve encoding is env, not
-	// a Cobra command tree. A leftover serve env must not swallow real args.
-	if len(args) == 0 && app.TakeManagerServeEnv(&a.Options) {
-		return a.serveManager(ctx)
-	}
 	command := a.RootCommand()
 	command.SetArgs(args)
 	if a.Options.Stdout != nil {

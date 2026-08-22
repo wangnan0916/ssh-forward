@@ -3,17 +3,13 @@ package app
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 )
 
-// Layout is the per-user product directory: Persistent intent files, the
-// Manager singleton socket, and its pid/log sit together.
+// Layout is the per-user persistent config and Manager socket.
 type Layout struct {
 	Dir    string
 	Config string
 	Socket string
-	PID    string
-	Log    string
 }
 
 // DefaultLayout resolves the product directory per cli-and-state.md:
@@ -25,8 +21,6 @@ func DefaultLayout() Layout {
 		Dir:    dir,
 		Config: filepath.Join(dir, "config.jsonc"),
 		Socket: filepath.Join(dir, "manager.sock"),
-		PID:    filepath.Join(dir, "manager.pid"),
-		Log:    filepath.Join(dir, "manager.log"),
 	}
 }
 
@@ -34,22 +28,11 @@ func configDir() string {
 	if override := os.Getenv("SSH_FORWARD_CONFIG_DIR"); override != "" {
 		return override
 	}
-	var base string
-	switch runtime.GOOS {
-	case "darwin":
-		base = filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "ssh-forward")
-	case "linux":
-		base = os.Getenv("XDG_CONFIG_HOME")
-		if base == "" {
-			base = filepath.Join(os.Getenv("HOME"), ".config")
-		}
-		base = filepath.Join(base, "ssh-forward")
-	case "windows":
-		base = filepath.Join(os.Getenv("APPDATA"), "ssh-forward")
-	default:
-		base = "."
+	base, err := os.UserConfigDir()
+	if err != nil {
+		return "."
 	}
-	return base
+	return filepath.Join(base, "ssh-forward")
 }
 
 // DefaultSSHConfigPath is the user's SSH client configuration. The OpenSSH

@@ -21,7 +21,8 @@ ssh-forward remove 5173
 ```
 
 `my-dev` is a literal `Host` alias from your SSH config. The first command that
-needs a connection starts one background manager for the current OS user.
+needs a connection automatically installs and starts a user-scoped background
+manager; later commands reuse it.
 
 ## Install
 
@@ -47,7 +48,7 @@ ssh-forward status [--json] [--watch]
 ssh-forward watch [--json]
 ssh-forward host [--json]
 ssh-forward default [ALIAS]
-ssh-forward manager serve|stop|restart
+ssh-forward manager stop|restart
 ```
 
 Global options are `--host ALIAS` and `--ssh-config PATH`. Set
@@ -61,9 +62,13 @@ Global options are `--host ALIAS` and `--ssh-config PATH`. Set
    installed and no process metadata is collected.
 3. For each remembered port that is currently listening, the manager
    supervises one `ssh -N -L 127.0.0.1:PORT:127.0.0.1:PORT HOST` process.
-4. A small user-only Unix socket lets later CLI calls read manager status.
+4. HTTP over a user-only Unix socket lets later CLI calls read manager status.
    `watch` polls that status; the server does not implement a streaming state
    platform.
+
+The OS user service manager (launchd on macOS, the detected init system on
+Linux) owns process startup, restart, and logs. Installation and startup happen
+automatically when a command first needs the Manager.
 
 There is no alternate local-port allocation. If the same local port is in use,
 status reports the conflict and retries later.

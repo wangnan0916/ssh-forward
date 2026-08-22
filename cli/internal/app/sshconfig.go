@@ -1,116 +1,104 @@
 package app
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+
+	sshconfig "github.com/kevinburke/ssh_config"
 )
 
-// ConfiguredHosts reads the user's SSH client configuration and returns
-// the literal Host aliases defined there, in file order. Patterns (Host
-// *, Host *.example.com) are excluded: they name many machines, not one.
-// Include directives are followed recursively; missing include files are
-// ignored (like ssh), a missing top-level file means "no hosts
-// configured". Only the Host and Include directives are read — everything
-// else in the file is configuration for ssh itself, not for us.
-func ConfiguredHosts(configPath string) ([]string, error) {
-	return configuredHosts(configPath, make(map[string]bool), 0)
+// ConfiguredHosts returns literal Host aliases in OpenSSH file order.
+// ssh_config parses Host syntax; this function only walks Include directives
+// because the library deliberately keeps included configs internal.
+func ConfiguredHosts(path string) ([]string, error) {
+	hosts, err := configuredHosts(path, make(map[string]bool), 0)
+	return dedupeHosts(hosts), err
 }
 
-func configuredHosts(configPath string, seen map[string]bool, depth int) ([]string, error) {
-	if depth > 8 {
-		return nil, nil // include depth guard; deeper files are ignored
+func configuredHosts(path string, seen map[string]bool, depth int) ([]string, error) {
+	if depth > 5 {
+		return nil, nil
 	}
-	resolved, err := expandUserPath(configPath)
+	resolved, err := filepath.Abs(path)
 	if err != nil {
-		return nil, err
-	}
-	content, err := os.ReadFile(resolved)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
 	if seen[resolved] {
-		return nil, nil // include cycle guard
+		return nil, nil
+	}
+	content, err := os.ReadFile(resolved)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
 	}
 	seen[resolved] = true
 
 	var hosts []string
 	for _, line := range strings.Split(string(content), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || strings.HasPrefix(fields[0], "#") {
 			continue
 		}
-		fields := strings.Fields(trimmed)
 		switch {
 		case strings.EqualFold(fields[0], "Host"):
-			for _, name := range fields[1:] {
-				if literalHost(name) {
-					hosts = append(hosts, name)
+			config, err := sshconfig.Decode(strings.NewReader(line + "\n"))
+			if err != nil {
+				return nil, err
+			}
+			for _, host := range config.Hosts {
+				for _, pattern := range host.Patterns {
+					if alias := pattern.String(); literalHost(alias) {
+						hosts = append(hosts, alias)
+					}
 				}
 			}
 		case strings.EqualFold(fields[0], "Include"):
 			for _, pattern := range fields[1:] {
-				included, err := expandInclude(pattern, filepath.Dir(resolved))
-				if err != nil {
-					continue // unreadable includes are ignored, like ssh
+				if pattern == "=" {
+					continue
 				}
-				for _, path := range included {
-					nested, err := configuredHosts(path, seen, depth+1)
-					if err != nil {
-						continue
+				if strings.HasPrefix(pattern, "#") {
+					break
+				}
+				matches, err := expandInclude(strings.Trim(pattern, `"`))
+				if err != nil {
+					continue
+				}
+				for _, match := range matches {
+					included, err := configuredHosts(match, seen, depth+1)
+					if err == nil {
+						hosts = append(hosts, included...)
 					}
-					hosts = append(hosts, nested...)
 				}
 			}
 		}
 	}
-	return dedupeHosts(hosts), nil
+	return hosts, nil
 }
 
-// literalHost reports whether a Host value names one machine: patterns
-// (with *, ?, or !) are excluded.
 func literalHost(name string) bool {
-	return !strings.ContainsAny(name, "*?!")
+	return name != "" && !strings.ContainsAny(name, "*?!")
 }
 
-// expandUserPath resolves a leading ~/ against the user's home directory.
-func expandUserPath(path string) (string, error) {
-	if !strings.HasPrefix(path, "~/") {
-		return path, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, path[2:]), nil
-}
-
-// expandInclude resolves one Include value into concrete file paths:
-// relative patterns are based on ~/.ssh (like ssh), ~/ expands, and glob
-// characters expand. Unmatched globs yield nothing, silently.
-func expandInclude(pattern, dir string) ([]string, error) {
-	resolved := pattern
-	if strings.HasPrefix(resolved, "~/") {
+func expandInclude(pattern string) ([]string, error) {
+	if strings.HasPrefix(pattern, "~/") {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return nil, err
 		}
-		resolved = filepath.Join(home, resolved[2:])
-	} else if !filepath.IsAbs(resolved) {
+		pattern = filepath.Join(home, pattern[2:])
+	} else if !filepath.IsAbs(pattern) {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return nil, err
 		}
-		resolved = filepath.Join(home, ".ssh", resolved)
+		pattern = filepath.Join(home, ".ssh", pattern)
 	}
-	matches, err := filepath.Glob(resolved)
-	if err != nil {
-		return nil, err
-	}
-	return matches, nil
+	return filepath.Glob(pattern)
 }
 
 func dedupeHosts(hosts []string) []string {

@@ -12,7 +12,7 @@ Anything that does not serve this sentence is outside the current design.
 ```text
 CLI
  ├─ config.jsonc (default host and remembered ports)
- └─ Manager.Status over a user-only Unix socket
+ └─ GET /v1/status over a user-only Unix socket
                          │
                       Manager
                ┌─────────┴─────────┐
@@ -25,10 +25,14 @@ CLI
   `Status` and `Close`; its true-external backend has `Observe` and `Forward`.
 - `internal/openssh` owns process invocation, the fixed remote scanner,
   readiness checks, and bounded SSH error classification.
-- `internal/app` owns the single config file, SSH alias selection, background
-  process lifecycle, PID file, and Unix socket composition.
-- `internal/jsonrpc` exposes only protocol version and manager status.
+- `internal/app` owns the single config file, SSH alias selection, and the thin
+  adapters that compose HTTP/Unix Socket and the user's OS service manager.
 - `internal/cli` formats status and edits remembered ports.
+
+Mechanisms are delegated to deep external modules: system OpenSSH handles SSH,
+`kardianos/service` handles resident process lifecycle, `net/http` handles local
+IPC, `ssh_config` parses Host declarations, and `hujson` parses JSONC. Product
+code keeps only their composition and the forwarding state machine.
 
 ## State
 

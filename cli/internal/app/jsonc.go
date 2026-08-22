@@ -3,79 +3,12 @@ package app
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-)
 
-func stripJSONC(input []byte) ([]byte, error) {
-	output := make([]byte, 0, len(input))
-	inString := false
-	inLineComment := false
-	inBlockComment := false
-	for index := 0; index < len(input); index++ {
-		current := input[index]
-		switch {
-		case inLineComment:
-			if current == '\n' {
-				inLineComment = false
-				output = append(output, current)
-			}
-			continue
-		case inBlockComment:
-			if current == '*' && index+1 < len(input) && input[index+1] == '/' {
-				inBlockComment = false
-				index++
-			}
-			continue
-		case inString:
-			output = append(output, current)
-			if current == '\\' && index+1 < len(input) {
-				index++
-				output = append(output, input[index])
-				continue
-			}
-			if current == '"' {
-				inString = false
-			}
-			continue
-		}
-		switch current {
-		case '"':
-			inString = true
-			output = append(output, current)
-		case '/':
-			if index+1 < len(input) && input[index+1] == '/' {
-				inLineComment = true
-				index++
-			} else if index+1 < len(input) && input[index+1] == '*' {
-				inBlockComment = true
-				index++
-			} else {
-				output = append(output, current)
-			}
-		case ',':
-			next := index + 1
-			for next < len(input) && (input[next] == ' ' || input[next] == '\t' || input[next] == '\n' || input[next] == '\r') {
-				next++
-			}
-			if next < len(input) && (input[next] == ']' || input[next] == '}') {
-				continue
-			}
-			output = append(output, current)
-		default:
-			output = append(output, current)
-		}
-	}
-	if inString {
-		return nil, errors.New("jsonc: unterminated string")
-	}
-	if inBlockComment {
-		return nil, errors.New("jsonc: unterminated block comment")
-	}
-	return output, nil
-}
+	"github.com/tailscale/hujson"
+)
 
 func writeAtomic(path string, data []byte, tmpPattern string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -106,7 +39,7 @@ func readJSONC(path, label string, dest any) error {
 	if err != nil {
 		return err
 	}
-	plain, err := stripJSONC(content)
+	plain, err := hujson.Standardize(content)
 	if err != nil {
 		return err
 	}
