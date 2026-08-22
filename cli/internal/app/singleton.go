@@ -252,10 +252,6 @@ func attach(ctx context.Context, client core.Manager, opts Options) (Session, er
 	snapshot, err := client.Snapshot(ctx)
 	if err != nil {
 		_ = client.Close(context.Background())
-		var domain *core.DomainError
-		if errors.As(err, &domain) && domain.Kind == "invalid_scope" {
-			return Session{}, ErrIncompatibleManager
-		}
 		return Session{}, fmt.Errorf("could not read the running manager: %w", err)
 	}
 	if snapshot.Host == nil {

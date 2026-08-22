@@ -1,32 +1,33 @@
 # Local IPC protocol
 
-## Transport and framing
+## Module seam
 
-The manager accepts a current-user-only Unix domain socket on macOS/Linux. Named pipes for Windows are deferred with the Windows Local Machine surface. Go uses pinned `github.com/creachadair/jrpc2` on both sides of the session after hello; the client and server share one bounded newline-framing implementation in the same `jsonrpc` module that owns Listen/Dial/Serve. Hello stays outside jrpc2 so pipelined requests cannot overtake negotiation. Every frame is one bounded, compact UTF-8 JSON-RPC 2.0 object followed by LF. Swift uses Foundation `Codable` and the same golden wire fixtures. Domain types never marshal directly onto the wire.
+The `jsonrpc` module adapts the narrow `core.Manager` interface to one per-user Unix socket. `jrpc2` owns JSON-RPC parsing, request IDs, dispatch, standard errors, concurrency, and notifications. The module owns only the Unix endpoint, bounded line framing, wire DTOs, protocol version, and the Snapshot Watch mapping. Domain types never marshal directly onto the wire.
 
-## Session handshake
-
-`system.hello` must be the first request. It negotiates protocol major/minor, capabilities, and maximum frame bytes. Protocol v1 begins at `1.0`, with an initial maximum frame size of 1,048,576 bytes. The server replies with its negotiated version, only the capabilities it currently implements, and `max_frame_bytes`. Unknown requested capabilities are ignored; `hello-success.jsonl` still sends `cancel-v1` to prove that. The first optional capability is `watch-snapshot-v1`, which permits server Snapshot and resync notifications; it does not permit client notifications. There is no `system.cancel` method: in-flight calls follow the request context.
-
-The Adapter handles hello synchronously before starting generic JSON-RPC dispatch, so pipelined requests cannot overtake negotiation. A manager or built-in method before hello returns code `-32001` with `data.kind = "hello_required"` and closes the session. An incompatible major returns code `-32002` with `data.kind = "incompatible_protocol"`, the supported version, and closes. A higher same-major minor negotiates down to the server minor. Minor behavior is capability-gated.
+The Go client checks compatibility with an ordinary `system.version` call before exposing a remote Manager:
 
 ```json
-{"jsonrpc":"2.0","id":"1","method":"system.hello","params":{"protocol":{"major":1,"minor":0},"capabilities":["watch-snapshot-v1"]}}
-{"jsonrpc":"2.0","id":"1","result":{"protocol":{"major":1,"minor":0},"capabilities":["watch-snapshot-v1"],"max_frame_bytes":1048576}}
+{"jsonrpc":"2.0","id":"1","method":"system.version"}
+{"jsonrpc":"2.0","id":"1","result":{"version":1}}
 ```
 
-JSON-RPC request IDs correlate one attempt.
+There is one integer protocol version. A mismatch means the live Manager must be restarted. There is no pre-dispatch handshake, minor-version negotiation, or capability system; new optional behavior should not be added until a real second client requires it.
 
 ## Methods
 
-- `manager.snapshot` — return a complete Snapshot. v1 clients omit params or send `{}` (that means the whole Snapshot). The server still accepts `{"scope":{"kind":"all"}}` so older clients keep working; any other `scope.kind` returns `invalid_scope`. A live singleton that still requires `scope=all` is incompatible — recover with `ssh-forward manager restart`. A new Manager returns `{"snapshot":{"revision":0}}`. The single `host` entry (present once a Development Host is configured) carries alias, Connection State, optional `connection_diagnostic` for a terminal Forwarding Session failure (`invalid_alias`, `authentication_failed`, `host_key_failed`), Discovery State/Capability with a `diagnostic` explaining partiality or failure (`scanner_reported_partial`, `process_metadata_unavailable`, `evidence_truncated`, a scanner failure reason, or `observation_resync`), optional `policy_diagnostic` when the policies file is unreadable (`policies_file_invalid`) while last-valid policies remain in effect, baseline and scanner identity, complete deterministically ordered Listener Observations with bounded Process Chains, complete Forwards, and `local_port_conflicts` when any Local Port Conflict is current.
-- `manager.watch` — with `watch-snapshot-v1`, same params as `manager.snapshot`. Return `{"watch_id":"watch-…","snapshot":…}`. The response is written before that Watch can emit `manager.snapshot` notifications carrying the same `watch_id` and later complete Snapshots.
-- `manager.unwatch` — idempotently end one Watch by `watch_id` and report whether it was active. Its response is ordered after any already-started bounded notification write, and no notification for that Watch follows the response.
+- `system.version` — return `{"version":1}`.
+- `manager.snapshot` — no params; return one complete wire Snapshot. A new Manager returns `{"snapshot":{"revision":0}}`.
+- `manager.watch` — no params; create a Watch and return its ID plus the initial complete Snapshot.
+- `manager.unwatch` — idempotently close one Watch by ID and report whether it was active.
 
-Each watcher keeps bounded initial/latest-value state; it is not a durable event log. One IPC connection may own at most eight active Watches, and the Manager admits at most 128 globally. Notifications never consume inbound request-admission slots. Revisions may skip because intermediate states are coalesced. An oversized Snapshot or a Manager-required resync yields `manager.resync_required` and ends that Watch; any other stream end stops the Watch silently. If even the small resync notification cannot be delivered, the connection closes and the client reconnects for a fresh complete Snapshot.
+Later complete Snapshots arrive as `manager.snapshot` notifications containing the Watch ID. A Watch is latest-value state, not a durable event log, so revisions may skip. Because `jrpc2` may deliver a server notification concurrently with the subscribe response, clients retain the latest notification for an as-yet-unregistered Watch ID and apply it after the response. This keeps ordering machinery out of the transport Adapter without losing state.
 
-## Errors and safety
+An oversized Snapshot or a Manager-required resync sends `manager.resync_required` and ends that Watch. Any other stream end is silent. `manager.unwatch` is serialized with an in-progress notification write, so no notification for that Watch follows the unwatch response. The Manager's own global Watch limit remains the single resource limit; the IPC Adapter does not add another per-connection policy.
 
-JSON-RPC standard codes cover parse, invalid request, unknown method, and invalid parameters. Application codes cover `manager_closed` (`-32014`) and retryable `watch_limit` (`-32015`). Calling a Watch method without negotiating `watch-snapshot-v1` returns `-32003` with `data.kind = "capability_required"`. Each application error includes stable `data.kind` and `retryable`. Go error strings and domain structs are never exposed as contracts. Frames, nesting, strings, collections, and pending requests are bounded. A frame larger than the negotiated/server maximum is closed before unbounded accumulation, and invalid UTF-8 is rejected before JSON decoding. Batch arrays are not part of this protocol: the server returns JSON-RPC `-32600` and closes. Client notifications are not supported by any current capability: they return `-32600` and close. The Adapter admits at most 64 pending calls and executes at most eight handlers concurrently, applying stream backpressure beyond those bounds. Outbound responses and notifications share one serialized writer with a five-second write deadline. Unsupported object fields may be accepted additively within a compatible major, but unknown enum values such as an unsupported Scope kind are rejected explicitly.
+## Transport and errors
 
-Shared Go/Swift fixtures live under `test/protocol/`. The v1 corpus covers hello; empty, Managed Forward, and Discovery Snapshots; Watch startup/unwatch; capability and Watch-limit errors; Snapshot notification; and resync. Additional typed errors, cancellation races, malformed and oversized frames, reconnect, and version mismatch have programmatic Go coverage and can gain shared fixtures when a Swift Adapter needs them.
+Each frame is one compact UTF-8 JSON value followed by LF. Frames are limited to 1 MiB, writes are serialized with a five-second deadline, and invalid UTF-8 or oversized input closes the connection. All other JSON-RPC behavior, including malformed requests, batches, unknown methods, and ordinary request concurrency, is delegated to pinned `jrpc2`. At most eight handlers execute concurrently.
+
+Application errors expose stable `data.kind` and `retryable` fields. Current kinds are `manager_closed` and `watch_limit`; internal Go errors remain private. Snapshot and error wire DTOs stay separate from core domain types.
+
+Shared wire fixtures live under `test/protocol/v1/` and cover the version call, complete Snapshots, Watch start/unwatch, Watch-limit errors, notifications, and resync. Programmatic tests cover bounded framing, Watch cleanup, notification coalescing, and the notification-before-response race.

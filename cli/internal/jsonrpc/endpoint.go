@@ -101,8 +101,8 @@ func (e *Endpoint) Serve(ctx context.Context, manager core.Manager) error {
 	}
 }
 
-// Dial connects to the running singleton and negotiates the JSON-RPC v1
-// session, returning a Manager whose operations are remote calls.
+// Dial connects to the running singleton, checks its protocol version, and
+// returns a Manager whose operations are remote calls.
 func Dial(ctx context.Context, path string) (core.Manager, error) {
 	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", path)
 	if err != nil {

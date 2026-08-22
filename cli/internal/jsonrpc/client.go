@@ -14,63 +14,30 @@ import (
 	"github.com/wangnan0916/ssh-forward/cli/internal/snapshot"
 )
 
-// DialConn negotiates a JSON-RPC v1 session on conn and returns a Manager
-// whose operations are remote calls. Hello stays outside jrpc2 (same as
-// ServeConn); afterwards Dial and Serve share the jrpc2 session.
+// DialConn checks the protocol version and returns a Manager whose operations
+// are remote JSON-RPC calls.
 func DialConn(ctx context.Context, conn net.Conn) (core.Manager, error) {
 	frames := newFrameChannel(conn, maxFrameBytes)
-	stop := context.AfterFunc(ctx, func() { _ = frames.Close() })
-	if err := offerHello(frames); err != nil {
-		stop()
-		_ = frames.Close()
-		return nil, err
+	client := &managerClient{
+		watches: make(map[string]*remoteStream),
+		pending: make(map[string]watchUpdate),
 	}
-	if !stop() || ctx.Err() != nil {
-		_ = frames.Close()
-		return nil, ctx.Err()
-	}
-
-	client := &managerClient{watches: make(map[string]*remoteStream)}
 	client.rpc = jrpc2.NewClient(frames, &jrpc2.ClientOptions{
 		OnNotify: client.onNotify,
 		OnStop: func(_ *jrpc2.Client, err error) {
 			client.failWatches(err)
 		},
 	})
+	var version versionResult
+	if err := client.call(ctx, methodVersion, nil, &version); err != nil {
+		_ = client.rpc.Close()
+		return nil, fmt.Errorf("manager protocol version: %w", err)
+	}
+	if version.Version != protocolVersion {
+		_ = client.rpc.Close()
+		return nil, fmt.Errorf("manager speaks protocol %d, want %d", version.Version, protocolVersion)
+	}
 	return client, nil
-}
-
-func offerHello(frames *frameChannel) error {
-	if err := sendEnvelope(frames, requestEnvelope{
-		JSONRPC: "2.0",
-		ID:      json.RawMessage("1"),
-		Method:  "system.hello",
-		Params:  json.RawMessage(`{"protocol":{"major":1,"minor":0},"capabilities":["watch-snapshot-v1"]}`),
-	}); err != nil {
-		return fmt.Errorf("manager hello: %w", err)
-	}
-	message, err := frames.Recv()
-	if err != nil {
-		return fmt.Errorf("manager hello: %w", err)
-	}
-	var envelope struct {
-		Result json.RawMessage `json:"result"`
-		Error  *wireError      `json:"error"`
-	}
-	if err := json.Unmarshal(message, &envelope); err != nil {
-		return fmt.Errorf("manager hello: malformed result: %w", err)
-	}
-	if envelope.Error != nil {
-		return decodeServerError(envelope.Error)
-	}
-	var hello helloResult
-	if err := json.Unmarshal(envelope.Result, &hello); err != nil {
-		return fmt.Errorf("manager hello: malformed result: %w", err)
-	}
-	if hello.Protocol.Major != protocolMajor {
-		return fmt.Errorf("manager speaks protocol %d, want %d", hello.Protocol.Major, protocolMajor)
-	}
-	return nil
 }
 
 // managerClient implements core.Manager over the wire through jrpc2.
@@ -79,7 +46,23 @@ type managerClient struct {
 
 	mu      sync.Mutex
 	watches map[string]*remoteStream
+	pending map[string]watchUpdate
 	closed  bool
+}
+
+type watchUpdate struct {
+	snapshot *core.Snapshot
+	err      error
+}
+
+func (u watchUpdate) apply(stream *remoteStream) {
+	if u.err != nil {
+		stream.fail(u.err)
+		return
+	}
+	if u.snapshot != nil {
+		stream.push(*u.snapshot)
+	}
 }
 
 func (c *managerClient) call(ctx context.Context, method string, params, result any) error {
@@ -88,7 +71,7 @@ func (c *managerClient) call(ctx context.Context, method string, params, result 
 
 func (c *managerClient) Snapshot(ctx context.Context) (core.Snapshot, error) {
 	var wrapped snapshotResult
-	if err := c.call(ctx, methodSnapshot, struct{}{}, &wrapped); err != nil {
+	if err := c.call(ctx, methodSnapshot, nil, &wrapped); err != nil {
 		return core.Snapshot{}, err
 	}
 	return snapshot.Decode(wrapped.Snapshot), nil
@@ -96,7 +79,7 @@ func (c *managerClient) Snapshot(ctx context.Context) (core.Snapshot, error) {
 
 func (c *managerClient) Watch(ctx context.Context) (core.SnapshotStream, error) {
 	var payload watchResult
-	if err := c.call(ctx, methodWatch, struct{}{}, &payload); err != nil {
+	if err := c.call(ctx, methodWatch, nil, &payload); err != nil {
 		return nil, err
 	}
 	stream := newRemoteStream(c, payload.WatchID, snapshot.Decode(payload.Snapshot))
@@ -106,7 +89,12 @@ func (c *managerClient) Watch(ctx context.Context) (core.SnapshotStream, error) 
 		return nil, errors.New("manager connection is closed")
 	}
 	c.watches[payload.WatchID] = stream
+	pending, hasPending := c.pending[payload.WatchID]
+	delete(c.pending, payload.WatchID)
 	c.mu.Unlock()
+	if hasPending {
+		pending.apply(stream)
+	}
 	return stream, nil
 }
 
@@ -122,24 +110,31 @@ func (c *managerClient) onNotify(request *jrpc2.Request) {
 		if request.UnmarshalParams(&payload) != nil {
 			return
 		}
-		if stream := c.lookup(payload.WatchID); stream != nil {
-			stream.push(snapshot.Decode(payload.Snapshot))
-		}
+		snap := snapshot.Decode(payload.Snapshot)
+		c.deliver(payload.WatchID, watchUpdate{snapshot: &snap})
 	case methodResyncRequired:
 		var payload resyncNotification
 		if request.UnmarshalParams(&payload) != nil {
 			return
 		}
-		if stream := c.lookup(payload.WatchID); stream != nil {
-			stream.fail(core.ErrResyncRequired)
-		}
+		c.deliver(payload.WatchID, watchUpdate{err: core.ErrResyncRequired})
 	}
 }
 
-func (c *managerClient) lookup(watchID string) *remoteStream {
+func (c *managerClient) deliver(watchID string, update watchUpdate) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.watches[watchID]
+	if c.closed {
+		c.mu.Unlock()
+		return
+	}
+	stream := c.watches[watchID]
+	if stream == nil {
+		c.pending[watchID] = update
+		c.mu.Unlock()
+		return
+	}
+	c.mu.Unlock()
+	update.apply(stream)
 }
 
 func (c *managerClient) failWatches(err error) {
@@ -153,6 +148,7 @@ func (c *managerClient) failWatches(err error) {
 		stream.fail(err)
 		delete(c.watches, id)
 	}
+	clear(c.pending)
 }
 
 func (c *managerClient) unwatch(watchID string) {
@@ -220,12 +216,17 @@ func (s *remoteStream) nextLocked() (core.Snapshot, bool, error) {
 
 func (s *remoteStream) Close() error {
 	s.client.mu.Lock()
-	_, registered := s.client.watches[s.watchID]
-	delete(s.client.watches, s.watchID)
+	registered := s.client.watches[s.watchID] == s
 	s.client.mu.Unlock()
 	if registered {
 		s.fail(errors.New("watch closed"))
 		s.client.unwatch(s.watchID)
+		s.client.mu.Lock()
+		if s.client.watches[s.watchID] == s {
+			delete(s.client.watches, s.watchID)
+		}
+		delete(s.client.pending, s.watchID)
+		s.client.mu.Unlock()
 	}
 	return nil
 }
@@ -243,18 +244,4 @@ func decodeRPCError(err error) error {
 		return err
 	}
 	return &core.DomainError{Kind: core.ErrorKind(data.Kind), Retryable: data.Retryable}
-}
-
-func decodeServerError(wire *wireError) error {
-	if wire == nil {
-		return errors.New("empty error")
-	}
-	if data, ok := wire.Data.(map[string]any); ok {
-		kind, _ := data["kind"].(string)
-		retryable, _ := data["retryable"].(bool)
-		if kind != "" {
-			return &core.DomainError{Kind: core.ErrorKind(kind), Retryable: retryable}
-		}
-	}
-	return errors.New(wire.Message)
 }

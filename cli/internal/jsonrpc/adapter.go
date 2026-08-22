@@ -17,24 +17,14 @@ import (
 // ServeConn runs one JSON-RPC v1 session on conn until it ends.
 func ServeConn(ctx context.Context, conn net.Conn, manager core.Manager) error {
 	frames := newFrameChannel(conn, maxFrameBytes)
-	// Negotiate before starting jrpc2 so pipelined or built-in methods cannot
-	// overtake the session handshake.
-	stopHandshake := context.AfterFunc(ctx, func() { _ = frames.Close() })
-	capabilities, err := negotiateHello(frames)
-	if err != nil {
-		stopHandshake()
-		return normalizeServeError(err)
-	}
-	if !stopHandshake() || ctx.Err() != nil {
-		return nil
-	}
-
-	session := newConnectionSession(ctx, manager, capabilities)
-	frames.bindPending(maxPendingCalls, session.onResponseSent)
+	session := newConnectionSession(ctx, manager)
 	defer session.close()
 	methods := handler.Map{
-		methodSnapshot: func(ctx context.Context, request *jrpc2.Request) (any, error) {
-			return handleSnapshot(ctx, request, manager)
+		methodVersion: func(context.Context, *jrpc2.Request) (any, error) {
+			return versionResult{Version: protocolVersion}, nil
+		},
+		methodSnapshot: func(ctx context.Context, _ *jrpc2.Request) (any, error) {
+			return handleSnapshot(ctx, manager)
 		},
 		methodWatch:   session.handleWatch,
 		methodUnwatch: session.handleUnwatch,
@@ -42,7 +32,7 @@ func ServeConn(ctx context.Context, conn net.Conn, manager core.Manager) error {
 	stopSession := context.AfterFunc(ctx, func() { _ = frames.Close() })
 	defer stopSession()
 	server := jrpc2.NewServer(methods, &jrpc2.ServerOptions{
-		AllowPush:      capabilities.watchSnapshot,
+		AllowPush:      true,
 		Concurrency:    maxHandlers,
 		DisableBuiltin: true,
 		NewContext:     func() context.Context { return session.ctx },
@@ -70,10 +60,7 @@ func marshalManagerError(err error) error {
 	}
 }
 
-func handleSnapshot(ctx context.Context, request *jrpc2.Request, manager core.Manager) (any, error) {
-	if err := parseSnapshotParams(request); err != nil {
-		return nil, err
-	}
+func handleSnapshot(ctx context.Context, manager core.Manager) (any, error) {
 	snap, err := manager.Snapshot(ctx)
 	if err != nil {
 		return nil, internalError()
@@ -84,9 +71,8 @@ func handleSnapshot(ctx context.Context, request *jrpc2.Request, manager core.Ma
 func normalizeServeError(err error) error {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) ||
 		errors.Is(err, io.ErrClosedPipe) || errors.Is(err, net.ErrClosed) ||
-		errors.Is(err, errFrameTooLarge) || errors.Is(err, errHandshakeRejected) ||
-		errors.Is(err, errBatchUnsupported) || errors.Is(err, errInvalidUTF8) ||
-		errors.Is(err, errNotificationRejected) || channel.IsErrClosing(err) {
+		errors.Is(err, errFrameTooLarge) || errors.Is(err, errInvalidUTF8) ||
+		channel.IsErrClosing(err) {
 		return nil
 	}
 	return err

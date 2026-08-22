@@ -14,75 +14,54 @@ import (
 )
 
 type connectionSession struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	manager      core.Manager
-	capabilities negotiatedCapabilities
-	server       *jrpc2.Server
+	ctx     context.Context
+	cancel  context.CancelFunc
+	manager core.Manager
+	server  *jrpc2.Server
 
-	mu                    sync.Mutex
-	workers               sync.WaitGroup
-	closed                bool
-	pendingWatches        int
-	nextWatchID           uint64
-	watches               map[string]*connectionWatch
-	pendingWatchResponses map[string]string
+	mu          sync.Mutex
+	workers     sync.WaitGroup
+	closed      bool
+	nextWatchID uint64
+	watches     map[string]*connectionWatch
 }
 
 type connectionWatch struct {
-	id       string
-	stream   core.SnapshotStream
-	activate chan struct{}
+	id     string
+	stream core.SnapshotStream
 
 	mu      sync.Mutex
 	stopped bool
 }
 
-func newConnectionSession(ctx context.Context, manager core.Manager, capabilities negotiatedCapabilities) *connectionSession {
+func newConnectionSession(ctx context.Context, manager core.Manager) *connectionSession {
 	sessionCtx, cancel := context.WithCancel(ctx)
 	return &connectionSession{
-		ctx:                   sessionCtx,
-		cancel:                cancel,
-		manager:               manager,
-		capabilities:          capabilities,
-		watches:               make(map[string]*connectionWatch),
-		pendingWatchResponses: make(map[string]string),
+		ctx:     sessionCtx,
+		cancel:  cancel,
+		manager: manager,
+		watches: make(map[string]*connectionWatch),
 	}
 }
 
 func (s *connectionSession) handleWatch(ctx context.Context, request *jrpc2.Request) (any, error) {
-	if !s.capabilities.watchSnapshot {
-		return nil, errWatchCapabilityRequired
-	}
-	if err := parseSnapshotParams(request); err != nil {
-		return nil, err
-	}
-	if !s.reserveWatchSlot() {
-		return nil, errWatchLimit
+	if request.IsNotification() {
+		return nil, errInvalidParameters
 	}
 	stream, err := s.manager.Watch(ctx)
 	if err != nil {
-		s.releaseWatchSlot()
 		return nil, marshalManagerError(err)
 	}
 	initial, err := stream.Next(ctx)
 	if err != nil {
-		s.releaseWatchSlot()
 		_ = stream.Close()
 		return nil, internalError()
 	}
 	watch, ok := s.registerWatch(stream)
 	if !ok {
-		s.releaseWatchSlot()
 		_ = stream.Close()
 		return nil, internalError()
 	}
-	// Record which request id this response introduces: onResponseSent then
-	// activates the Watch by looking up the already-decoded request id,
-	// instead of re-parsing the result the handler itself just marshalled.
-	s.mu.Lock()
-	s.pendingWatchResponses[request.ID()] = watch.id
-	s.mu.Unlock()
 
 	go func() {
 		defer s.workers.Done()
@@ -94,54 +73,13 @@ func (s *connectionSession) handleWatch(ctx context.Context, request *jrpc2.Requ
 	}, nil
 }
 
-func (s *connectionSession) onResponseSent(envelope decodedResponse) {
-	s.mu.Lock()
-	watchID, ok := s.pendingWatchResponses[string(envelope.ID)]
-	delete(s.pendingWatchResponses, string(envelope.ID))
-	s.mu.Unlock()
-	if !ok {
-		return
-	}
-	s.mu.Lock()
-	watch := s.watches[watchID]
-	s.mu.Unlock()
-	if watch == nil {
-		return
-	}
-	select {
-	case <-watch.activate:
-	default:
-		close(watch.activate)
-	}
-}
-
 func (s *connectionSession) handleUnwatch(_ context.Context, request *jrpc2.Request) (any, error) {
-	if !s.capabilities.watchSnapshot {
-		return nil, errWatchCapabilityRequired
-	}
 	var params unwatchParams
-	if paramsText := request.ParamString(); paramsText == "" || json.Unmarshal([]byte(paramsText), &params) != nil ||
-		len(params.WatchID) == 0 || len(params.WatchID) > maxWatchID {
+	if request.UnmarshalParams(&params) != nil || params.WatchID == "" {
 		return nil, errInvalidParameters
 	}
 	stopped := s.removeWatch(params.WatchID, nil)
 	return unwatchResult{WatchID: params.WatchID, Stopped: stopped}, nil
-}
-
-func (s *connectionSession) reserveWatchSlot() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed || len(s.watches)+s.pendingWatches >= maxSessionWatches {
-		return false
-	}
-	s.pendingWatches++
-	return true
-}
-
-func (s *connectionSession) releaseWatchSlot() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.pendingWatches--
 }
 
 func (s *connectionSession) registerWatch(stream core.SnapshotStream) (*connectionWatch, bool) {
@@ -150,12 +88,10 @@ func (s *connectionSession) registerWatch(stream core.SnapshotStream) (*connecti
 	if s.closed {
 		return nil, false
 	}
-	s.pendingWatches--
 	s.nextWatchID++
 	watch := &connectionWatch{
-		id:       "watch-" + strconv.FormatUint(s.nextWatchID, 10),
-		stream:   stream,
-		activate: make(chan struct{}),
+		id:     "watch-" + strconv.FormatUint(s.nextWatchID, 10),
+		stream: stream,
 	}
 	s.watches[watch.id] = watch
 	s.workers.Add(1)
@@ -164,11 +100,6 @@ func (s *connectionSession) registerWatch(stream core.SnapshotStream) (*connecti
 
 func (s *connectionSession) runWatch(watch *connectionWatch) {
 	defer s.removeWatch(watch.id, watch)
-	select {
-	case <-watch.activate:
-	case <-s.ctx.Done():
-		return
-	}
 	for {
 		snap, err := watch.stream.Next(s.ctx)
 		if err != nil {
