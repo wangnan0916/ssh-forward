@@ -16,55 +16,26 @@ import (
 // ServeConn runs one JSON-RPC session on conn until it ends.
 func ServeConn(ctx context.Context, conn net.Conn, manager core.Manager) error {
 	frames := newFrameChannel(conn, maxFrameBytes)
-	session := newConnectionSession(ctx, manager)
-	defer session.close()
 	methods := handler.Map{
 		methodVersion: func(context.Context, *jrpc2.Request) (any, error) {
 			return versionResult{Version: protocolVersion}, nil
 		},
-		methodSnapshot: func(ctx context.Context, _ *jrpc2.Request) (any, error) {
-			return handleSnapshot(ctx, manager)
+		methodStatus: func(ctx context.Context, _ *jrpc2.Request) (any, error) {
+			status, err := manager.Status(ctx)
+			if err != nil {
+				return nil, internalError()
+			}
+			return statusResult{Status: status}, nil
 		},
-		methodWatch:   session.handleWatch,
-		methodUnwatch: session.handleUnwatch,
 	}
 	stopSession := context.AfterFunc(ctx, func() { _ = frames.Close() })
 	defer stopSession()
 	server := jrpc2.NewServer(methods, &jrpc2.ServerOptions{
-		AllowPush:      true,
 		Concurrency:    maxHandlers,
 		DisableBuiltin: true,
-		NewContext:     func() context.Context { return session.ctx },
 	})
-	session.server = server
 	server.Start(frames)
 	return normalizeServeError(server.Wait())
-}
-
-func marshalManagerError(err error) error {
-	var domainError *core.DomainError
-	if !errors.As(err, &domainError) {
-		return internalError()
-	}
-	switch domainError.Kind {
-	case core.ErrorManagerClosed:
-		return (&jrpc2.Error{
-			Code:    -32014,
-			Message: "Manager is closed",
-		}).WithData(errorData{Kind: string(domainError.Kind), Retryable: domainError.Retryable})
-	case core.ErrorWatchLimit:
-		return watchLimitError()
-	default:
-		return internalError()
-	}
-}
-
-func handleSnapshot(ctx context.Context, manager core.Manager) (any, error) {
-	snap, err := manager.Snapshot(ctx)
-	if err != nil {
-		return nil, internalError()
-	}
-	return snapshotResult{Snapshot: snap}, nil
 }
 
 func normalizeServeError(err error) error {

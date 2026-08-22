@@ -1,2 +1,0 @@
-{"jsonrpc":"2.0","id":"1","method":"manager.watch"}
-{"jsonrpc":"2.0","id":"1","error":{"code":-32015,"message":"too many active Watches","data":{"kind":"watch_limit","retryable":true}}}

@@ -1,1 +1,0 @@
-{"jsonrpc":"2.0","method":"manager.resync_required","params":{"watch_id":"watch-1","reason":"snapshot_too_large"}}

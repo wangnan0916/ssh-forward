@@ -1,178 +1,68 @@
 package openssh
 
 import (
-	"context"
-	"encoding/hex"
-	"errors"
-	"fmt"
-	"os"
-	"path/filepath"
-	"strconv"
+	"reflect"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/wangnan0916/ssh-forward/cli/internal/core"
-
-	"github.com/google/go-cmp/cmp"
 )
 
-func TestSessionReturnsValidatedListenerObservation(t *testing.T) {
-	directory := t.TempDir()
-	scannerPath := filepath.Join(directory, "scanner")
-	executable := filepath.Join(directory, "ssh")
-	hexText := func(value string) string { return hex.EncodeToString([]byte(value)) }
-	bootFrame := func(sequence int) string {
-		return fmt.Sprintf("SF1\tB\t%d\tfull\tpartial\n", sequence)
-	}
-	var queued strings.Builder
-	for sequence := 2; sequence <= 12; sequence++ {
-		queued.WriteString(bootFrame(sequence))
-		fmt.Fprintf(&queued, "SF1\tE\t%d\n", sequence)
-	}
-	queued.WriteString("invalid-one\n")
-	queued.WriteString(bootFrame(13))
-	queued.WriteString("invalid-two\n")
-	queued.WriteString(bootFrame(14))
-	queued.WriteString("invalid-three\n")
-	queued.WriteString(bootFrame(15))
-	script := fmt.Sprintf(`#!/usr/bin/python3
-import json
-import signal
-import socket
-import sys
-
-arguments = sys.argv[1:]
-scanner = sys.stdin.read()
-with open(%s, "w") as output:
-    output.write(scanner)
-dynamic = arguments[arguments.index("-D") + 1]
-port = int(dynamic.rsplit(":", 1)[1])
-listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-listener.bind(("127.0.0.1", port))
-listener.listen()
-listener.settimeout(0.1)
-print("invalid", flush=True)
-print(%s, flush=True)
-print(%s, flush=True)
-print(%s, flush=True)
-print(%s, flush=True)
-sys.stdout.write(%s)
-sys.stdout.flush()
-running = True
-def stop(_signum, _frame):
-    global running
-    running = False
-signal.signal(signal.SIGTERM, stop)
-signal.signal(signal.SIGINT, stop)
-while running:
-    try:
-        connection, _ = listener.accept()
-    except TimeoutError:
-        continue
-    with connection:
-        greeting = b""
-        while len(greeting) < 3:
-            chunk = connection.recv(3 - len(greeting))
-            if not chunk:
-                break
-            greeting += chunk
-        if greeting == bytes([5, 1, 0]):
-            connection.sendall(bytes([5, 0]))
-listener.close()
-`,
-		strconv.Quote(scannerPath),
-		strconv.Quote(strings.Join([]string{"SF1", "B", "1", "full", "partial"}, "\t")),
-		strconv.Quote(strings.Join([]string{"SF1", "L", "1", "ipv4", "loopback", "38080", "12345"}, "\t")),
-		strconv.Quote(strings.Join([]string{"SF1", "P", "1", "12345", "42", "0", "42", hexText("/usr/bin/python3"), hexText("/workspace"), hexText("python3\x00fixture.py\x00")}, "\t")),
-		strconv.Quote(strings.Join([]string{"SF1", "E", "1"}, "\t")),
-		strconv.Quote(queued.String()),
-	)
-	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
-		t.Fatalf("write scripted OpenSSH: %v", err)
-	}
-	adapter, err := New(Options{Executable: executable, ReadyTimeout: 5 * time.Second})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	session, err := adapter.start(context.Background(), "development")
-	if err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		_ = session.Close(ctx)
+func TestScanPortFrames(t *testing.T) {
+	input := "PF1\tB\t1\nPF1\tP\t1\t8080\nPF1\tP\t1\t5173\nPF1\tE\t1\n" +
+		"PF1\tB\t2\nPF1\tE\t2\n"
+	var observations [][]uint16
+	err := scanPortFrames(strings.NewReader(input), func(ports []uint16) {
+		observations = append(observations, ports)
 	})
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	fact, err := session.Next(ctx)
 	if err != nil {
-		t.Fatalf("degraded Next: %v", err)
+		t.Fatal(err)
 	}
-	change, ok := fact.(core.DiscoveryChange)
-	if !ok || change.State != core.DiscoveryDegraded || change.Reason != core.ReasonObservationInvalid {
-		t.Fatalf("first invalid frame fact = %#v, want degraded DiscoveryChange", fact)
+	want := [][]uint16{{5173, 8080}, {}}
+	if !reflect.DeepEqual(observations, want) {
+		t.Fatalf("observations = %#v, want %#v", observations, want)
 	}
-	fact, err = session.Next(ctx)
-	if err != nil {
-		t.Fatalf("observation Next: %v", err)
-	}
-	observationSet, ok := fact.(core.ObservationSet)
-	if !ok {
-		t.Fatalf("fact = %#v, want ObservationSet", fact)
-	}
-	wantCapability := core.DiscoveryCapability{
-		RemoteListeners: core.CapabilityFull,
-		ProcessMetadata: core.CapabilityPartial,
-	}
-	if observationSet.Sequence != 1 || !cmp.Equal(observationSet.Capability, wantCapability) {
-		t.Fatalf("ObservationSet mismatch (-got +want):\n%s", cmp.Diff(observationSet.Capability, wantCapability))
-	}
-	if len(observationSet.Observations) != 1 {
-		t.Fatalf("Listener Observations = %#v, want one", observationSet.Observations)
-	}
-	observation := observationSet.Observations[0]
-	if observation.Family != core.FamilyIPv4 || observation.BindScope != core.BindLoopback || observation.RemotePort != 38080 {
-		t.Fatalf("Listener Observation = %#v", observation)
-	}
-	wantProcesses := []core.ProcessChain{{Processes: []core.ProcessMetadata{{
-		PID:              42,
-		Executable:       "/usr/bin/python3",
-		WorkingDirectory: "/workspace",
-		Arguments:        []string{"python3", "fixture.py"},
-	}}}}
-	if diff := cmp.Diff(observation.Processes, wantProcesses); diff != "" {
-		t.Fatalf("Process Chains mismatch (-got +want):\n%s", diff)
-	}
-	scanner, err := os.ReadFile(scannerPath)
-	if err != nil {
-		t.Fatalf("read streamed scanner: %v", err)
-	}
-	// The streamed script must contain the SF1 frame emission and /proc
-	// listener path.
-	if !strings.Contains(string(scanner), `printf 'SF1\tB\t`) || !strings.Contains(string(scanner), "/proc/net/tcp") {
-		t.Fatalf("streamed scanner is not the embedded /proc scanner: %q", scanner)
-	}
+}
 
-	foundFailed := false
-	for attempt := 0; attempt < 16; attempt++ {
-		fact, err := session.Next(ctx)
-		if err != nil {
-			t.Fatalf("queued fact %d Next: %v", attempt+1, err)
-		}
-		if change, ok := fact.(core.DiscoveryChange); ok && change.State == core.DiscoveryFailed {
-			foundFailed = true
-			break
+func TestScanPortFramesRejectsMalformedSequence(t *testing.T) {
+	input := "PF1\tB\t2\nPF1\tP\t1\t8080\n"
+	if err := scanPortFrames(strings.NewReader(input), func([]uint16) {}); err == nil {
+		t.Fatal("malformed sequence was accepted")
+	}
+}
+
+func TestScanPortFramesRejectsTruncatedObservation(t *testing.T) {
+	if err := scanPortFrames(strings.NewReader("PF1\tB\t1\n"), func([]uint16) {}); err == nil {
+		t.Fatal("truncated observation was accepted")
+	}
+}
+
+func TestClassifyError(t *testing.T) {
+	tests := map[string]string{
+		"Permission denied (publickey).":       "authentication_failed",
+		"Host key verification failed.":        "host_key_failed",
+		"bind: Address already in use":         "local_port_conflict",
+		"ssh: connect to host dev port 22: no": "transport_unavailable",
+	}
+	for stderr, want := range tests {
+		err := classifyError(assertError{}, stderr)
+		if err.Error() != want {
+			t.Errorf("classifyError(%q) = %q, want %q", stderr, err, want)
 		}
 	}
-	if !foundFailed {
-		t.Fatal("terminal DiscoveryFailed fact was lost under bounded queue pressure")
+}
+
+type assertError struct{}
+
+func (assertError) Error() string { return "failed" }
+
+func TestValidAlias(t *testing.T) {
+	for _, alias := range []string{"dev", "user@host", "dev.example"} {
+		if !validAlias(alias) {
+			t.Errorf("validAlias(%q) = false", alias)
+		}
 	}
-	quietContext, cancelQuiet := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancelQuiet()
-	if _, err := session.Next(quietContext); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Next after failed discovery = %v, want deadline while Forwarding Session remains alive", err)
+	for _, alias := range []string{"", "-oProxyCommand=bad", "two words", "line\nbreak"} {
+		if validAlias(alias) {
+			t.Errorf("validAlias(%q) = true", alias)
+		}
 	}
 }

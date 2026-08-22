@@ -4,7 +4,6 @@ go 1.26.6
 
 require (
 	github.com/creachadair/jrpc2 v1.3.5
-	github.com/google/go-cmp v0.7.0
 	github.com/spf13/cobra v1.10.2
 )
 

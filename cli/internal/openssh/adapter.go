@@ -3,27 +3,24 @@ package openssh
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
-	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
-	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
 )
 
 var ErrInvalidAlias = errors.New("invalid Development Host alias")
 
-// maxStderrTailBytes bounds the retained stderr tail used to classify exit
-// causes; the same 64 KiB magnitude as the scanner's maxScannerFrameBytes,
-// named here so the budget has one declaration.
 const maxStderrTailBytes = 64 << 10
 
 type Options struct {
@@ -33,6 +30,8 @@ type Options struct {
 	WaitDelay    time.Duration
 }
 
+// Adapter observes remote listeners and keeps one OpenSSH local forward
+// alive. OpenSSH owns the forwarding data plane.
 type Adapter struct {
 	executable   string
 	configFile   string
@@ -47,45 +46,125 @@ func New(options Options) (*Adapter, error) {
 	if options.ConfigFile != "" && !filepath.IsAbs(options.ConfigFile) {
 		return nil, errors.New("OpenSSH config path is not absolute")
 	}
-	readyTimeout := options.ReadyTimeout
-	if readyTimeout <= 0 {
-		readyTimeout = 10 * time.Second
+	if options.ReadyTimeout <= 0 {
+		options.ReadyTimeout = 10 * time.Second
 	}
-	waitDelay := options.WaitDelay
-	if waitDelay <= 0 {
-		waitDelay = 2 * time.Second
+	if options.WaitDelay <= 0 {
+		options.WaitDelay = 2 * time.Second
 	}
 	return &Adapter{
-		executable:   options.Executable,
-		configFile:   options.ConfigFile,
-		readyTimeout: readyTimeout,
-		waitDelay:    waitDelay,
+		executable: options.Executable, configFile: options.ConfigFile,
+		readyTimeout: options.ReadyTimeout, waitDelay: options.WaitDelay,
 	}, nil
 }
 
-func (a *Adapter) Connect(ctx context.Context, host core.HostAlias) (core.HostSession, error) {
+func (a *Adapter) Observe(ctx context.Context, host core.HostAlias, emit func([]uint16)) error {
 	alias := string(host)
 	if err := a.validateAlias(ctx, alias); err != nil {
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return ctx.Err()
 		}
-		return nil, &core.SessionError{
-			Disposition: core.SessionSuspend,
-			Reason:      core.SessionReasonInvalidAlias,
-		}
+		return backendError("invalid_alias")
 	}
-	session, err := a.start(ctx, alias)
-	if err == nil {
-		return session, nil
+	arguments := append(a.configArguments(),
+		"-T", "-o", "ControlMaster=no", "-o", "ControlPath=none",
+		alias, "sh", "-s",
+	)
+	command := exec.Command(a.executable, arguments...)
+	stderr := &boundedBuffer{limit: maxStderrTailBytes}
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return err
 	}
+	command.Stdin = strings.NewReader(scannerScript)
+	command.Stderr = stderr
+	command.Env = approvedEnvironment()
+	command.WaitDelay = a.waitDelay
+	configureProcess(command)
+	if err := command.Start(); err != nil {
+		return err
+	}
+	stop := context.AfterFunc(ctx, func() { _ = terminateProcess(command) })
+	scanErr := scanPortFrames(stdout, emit)
+	if scanErr != nil {
+		_ = terminateProcess(command)
+	}
+	waitErr := command.Wait()
+	stop()
 	if ctx.Err() != nil {
-		return nil, ctx.Err()
+		return ctx.Err()
 	}
-	var sessionError *core.SessionError
-	if errors.As(err, &sessionError) {
-		return nil, sessionError
+	if scanErr != nil {
+		return backendError("discovery_invalid")
 	}
-	return nil, retryTransportError()
+	return classifyError(waitErr, stderr.String())
+}
+
+func (a *Adapter) Forward(ctx context.Context, host core.HostAlias, port uint16, ready func()) error {
+	alias := string(host)
+	if !validAlias(alias) {
+		return backendError("invalid_alias")
+	}
+	forward := fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", port, port)
+	arguments := append(a.configArguments(),
+		"-N", "-T", "-o", "ControlMaster=no", "-o", "ControlPath=none",
+		"-o", "ExitOnForwardFailure=yes", "-L", forward, alias,
+	)
+	command := exec.Command(a.executable, arguments...)
+	stderr := &boundedBuffer{limit: maxStderrTailBytes}
+	command.Stderr = stderr
+	command.Stdout = io.Discard
+	command.Env = approvedEnvironment()
+	command.WaitDelay = a.waitDelay
+	configureProcess(command)
+	if err := command.Start(); err != nil {
+		return err
+	}
+	done := make(chan error, 1)
+	go func() { done <- command.Wait() }()
+
+	deadline := time.NewTimer(a.readyTimeout)
+	probe := time.NewTicker(25 * time.Millisecond)
+	defer deadline.Stop()
+	defer probe.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			stopProcess(command, done, a.waitDelay)
+			return ctx.Err()
+		case err := <-done:
+			return classifyError(err, stderr.String())
+		case <-deadline.C:
+			stopProcess(command, done, a.waitDelay)
+			return backendError("forward_start_timeout")
+		case <-probe.C:
+			connection, err := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", port), 50*time.Millisecond)
+			if err != nil {
+				continue
+			}
+			_ = connection.Close()
+			ready()
+			select {
+			case <-ctx.Done():
+				stopProcess(command, done, a.waitDelay)
+				return ctx.Err()
+			case err := <-done:
+				return classifyError(err, stderr.String())
+			}
+		}
+	}
+}
+
+func stopProcess(command *exec.Cmd, done <-chan error, delay time.Duration) {
+	_ = terminateProcess(command)
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		_ = killProcess(command)
+		<-done
+	}
 }
 
 func (a *Adapter) validateAlias(ctx context.Context, alias string) error {
@@ -101,76 +180,6 @@ func (a *Adapter) validateAlias(ctx context.Context, alias string) error {
 	return command.Run()
 }
 
-func (a *Adapter) start(ctx context.Context, alias string) (*Session, error) {
-	// Connect validates first for the transport seam, but tests also
-	// start sessions directly and must never hand an unchecked alias
-	// (e.g. one starting with '-') to ssh.
-	if !validAlias(alias) {
-		return nil, ErrInvalidAlias
-	}
-	socksAddress, err := reserveSOCKSAddress()
-	if err != nil {
-		return nil, err
-	}
-	arguments := append(a.configArguments(),
-		"-T",
-		"-o", "ControlMaster=no",
-		"-o", "ControlPath=none",
-		"-o", "ExitOnForwardFailure=yes",
-		"-D", socksAddress.String(),
-		alias,
-		"sh", "-s",
-	)
-	command := exec.Command(a.executable, arguments...)
-	stderr := &boundedBuffer{limit: maxStderrTailBytes}
-	stdout, err := command.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	command.Stdin = strings.NewReader(scannerScript)
-	command.Stderr = stderr
-	command.Env = approvedEnvironment()
-	command.WaitDelay = a.waitDelay
-	configureProcess(command)
-	if err := command.Start(); err != nil {
-		return nil, err
-	}
-	session := &Session{
-		command:     command,
-		dialer:      proxy.NewSOCKS5Dialer(socksAddress),
-		done:        make(chan struct{}),
-		stderr:      stderr,
-		facts:       newSessionFactQueue(),
-		scannerDone: make(chan struct{}),
-	}
-	go session.readScanner(stdout)
-	go session.wait()
-	if err := session.waitUntilReady(ctx, socksAddress, a.readyTimeout); err != nil {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		_ = session.Close(cleanupCtx)
-		return nil, err
-	}
-	return session, nil
-}
-
-// reserveSOCKSAddress reserves an ephemeral 127.0.0.1 port for the SOCKS
-// listener. Production sibling of the test-only freePort/availablePort pair
-// (core and proxy test packages) that uses the same reserve-and-release
-// idiom; unlike them it runs in the product path, so it is not a helper to
-// share — keep the three bodies deliberately in step.
-func reserveSOCKSAddress() (netip.AddrPort, error) {
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		return netip.AddrPort{}, err
-	}
-	address := listener.Addr().(*net.TCPAddr).AddrPort()
-	if err := listener.Close(); err != nil {
-		return netip.AddrPort{}, err
-	}
-	return address, nil
-}
-
 func (a *Adapter) configArguments() []string {
 	if a.configFile == "" {
 		return nil
@@ -178,20 +187,36 @@ func (a *Adapter) configArguments() []string {
 	return []string{"-F", a.configFile}
 }
 
+func backendError(diagnostic string) error {
+	return &core.BackendError{Diagnostic: diagnostic}
+}
+
+func classifyError(err error, stderr string) error {
+	if err == nil {
+		return backendError("transport_unavailable")
+	}
+	message := strings.ToLower(stderr)
+	switch {
+	case strings.Contains(message, "permission denied"),
+		strings.Contains(message, "too many authentication failures"),
+		strings.Contains(message, "no supported authentication methods"):
+		return backendError("authentication_failed")
+	case strings.Contains(message, "host key verification failed"),
+		strings.Contains(message, "remote host identification has changed"):
+		return backendError("host_key_failed")
+	case strings.Contains(message, "address already in use"),
+		strings.Contains(message, "cannot listen to port"):
+		return backendError("local_port_conflict")
+	default:
+		return backendError("transport_unavailable")
+	}
+}
+
 func approvedEnvironment() []string {
-	// The LC_* locale family passes wholesale below; the explicit entries
-	// are every other allowlisted variable.
 	allowed := map[string]bool{
-		"DISPLAY":       true,
-		"HOME":          true,
-		"LANG":          true,
-		"LOGNAME":       true,
-		"PATH":          true,
-		"SHELL":         true,
-		"SSH_AUTH_SOCK": true,
-		"TERM":          true,
-		"TMPDIR":        true,
-		"USER":          true,
+		"DISPLAY": true, "HOME": true, "LANG": true, "LOGNAME": true,
+		"PATH": true, "SHELL": true, "SSH_AUTH_SOCK": true, "TERM": true,
+		"TMPDIR": true, "USER": true,
 	}
 	var environment []string
 	for _, entry := range os.Environ() {
@@ -214,4 +239,31 @@ func validAlias(alias string) bool {
 		}
 	}
 	return true
+}
+
+type boundedBuffer struct {
+	mu    sync.Mutex
+	limit int
+	data  []byte
+}
+
+func (b *boundedBuffer) Write(data []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(data) >= b.limit {
+		b.data = append(b.data[:0], data[len(data)-b.limit:]...)
+		return len(data), nil
+	}
+	overflow := max(len(b.data)+len(data)-b.limit, 0)
+	if overflow > 0 {
+		b.data = append(b.data[:0], b.data[overflow:]...)
+	}
+	b.data = append(b.data, data...)
+	return len(data), nil
+}
+
+func (b *boundedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return string(b.data)
 }

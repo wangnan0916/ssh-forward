@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 
 	"github.com/spf13/cobra"
 
@@ -21,12 +22,7 @@ var ErrUsage = errors.New("usage")
 type App struct {
 	Manager core.Manager
 	Options app.Options
-	// PolicyReader is this process's policies-file path. In-process it is
-	// shared with the Manager's Source; a JSON-RPC client gets a cold
-	// reader whose last-valid starts empty. bindDefaults creates one when
-	// nil so tests can still inject a primed reader.
-	PolicyReader *app.FilePolicyReader
-	Version      string
+	Version string
 
 	sessionOwned bool
 }
@@ -49,8 +45,6 @@ func (e *usageError) Is(target error) bool {
 }
 
 // Run parses and executes one command line, e.g. ["status", "--json"].
-// Commands follow the product domain (cli-and-state.md); every resource
-// command supports --json structured output.
 func (a *App) Run(ctx context.Context, args []string) error {
 	// Autospawned children carry empty argv; the Serve encoding is env, not
 	// a Cobra command tree. A leftover serve env must not swallow real args.
@@ -84,18 +78,8 @@ func (a *App) closeSession() {
 
 func (a *App) bindGlobalFlags(cmd *cobra.Command) {
 	a.Options.HostFlag, _ = cmd.Flags().GetString("host")
-	if policies, _ := cmd.Flags().GetString("policies"); policies != "" {
-		a.Options.PoliciesPath = policies
-	}
 	if sshConfig, _ := cmd.Flags().GetString("ssh-config"); sshConfig != "" {
 		a.Options.SSHConfigPath = sshConfig
-	}
-}
-
-func (a *App) bindDefaults() {
-	a.Options = a.Options.WithDefaults()
-	if a.PolicyReader == nil && a.Options.PoliciesPath != "" {
-		a.PolicyReader = app.NewFilePolicyReader(a.Options.PoliciesPath)
 	}
 }
 
@@ -147,7 +131,7 @@ func needsManager(cmd *cobra.Command) bool {
 
 func (a *App) prepareCommand(cmd *cobra.Command) error {
 	a.bindGlobalFlags(cmd)
-	a.bindDefaults()
+	a.Options = a.Options.WithDefaults()
 	a.Options = withInteractive(a.Options)
 	if !needsManager(cmd) {
 		return nil
@@ -159,15 +143,14 @@ func (a *App) ensureSession(ctx context.Context) error {
 	if a.Manager != nil {
 		return nil
 	}
-	session, err := app.Connect(ctx, a.connectOptions())
+	manager, err := app.Connect(ctx, a.connectOptions())
 	if err != nil {
 		if app.IsResolution(err) {
 			return UsageError(err)
 		}
 		return err
 	}
-	a.Manager = session.Manager
-	a.PolicyReader = session.PolicyReader
+	a.Manager = manager
 	a.sessionOwned = true
 	return nil
 }
@@ -188,7 +171,7 @@ Host
   host            aliases from ~/.ssh/config
   default ALIAS   pin the default host
 
-More: watch, policy, manager (recovery)
+More: watch, manager (recovery)
 
 ssh-forward COMMAND --help for details.
 `
@@ -199,9 +182,9 @@ func missingCommand(cmd *cobra.Command) error {
 }
 
 func requirePort(command, text string) (uint16, error) {
-	port, ok := parsePort(text)
-	if !ok {
+	port, err := strconv.ParseUint(text, 10, 16)
+	if err != nil || port == 0 {
 		return 0, fmt.Errorf("%s requires one remote port 1..65535", command)
 	}
-	return port, nil
+	return uint16(port), nil
 }

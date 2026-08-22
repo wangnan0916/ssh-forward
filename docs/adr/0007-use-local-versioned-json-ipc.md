@@ -1,3 +1,0 @@
-# Use local JSON-RPC 2.0 IPC
-
-CLI and desktop clients communicate with the local manager through a current-user Unix domain socket. The Go Adapter is one module: Unix socket lifecycle plus JSON-RPC session (`creachadair/jrpc2` with bounded newline framing). Project-owned methods define version negotiation, idempotency, typed errors, and Snapshot Watch/resync semantics; Swift uses a small Foundation `Codable` peer. Endpoint permissions restrict access to the current user. Wire types stay separate from the Manager Interface. A Windows named-pipe adapter is not split out until Windows Local Machine is in scope; one transport adapter is a hypothetical seam.

@@ -1,2 +1,0 @@
-{"jsonrpc":"2.0","id":"1","method":"manager.watch"}
-{"jsonrpc":"2.0","id":"1","result":{"watch_id":"watch-1","snapshot":{"revision":3}}}

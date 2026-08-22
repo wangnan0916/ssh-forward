@@ -1,2 +1,0 @@
-{"jsonrpc":"2.0","id":"1","method":"manager.snapshot"}
-{"jsonrpc":"2.0","id":"1","result":{"snapshot":{"revision":0}}}

@@ -1,3 +1,0 @@
-# Focus on discovered development listeners
-
-The product will provide an editor-independent version of the VS Code Ports experience: discover eligible listeners on a Development Host, explain their process context, and apply explicit forwarding policies. It will not grow into a general SSH profile, credential, or arbitrary-tunnel manager; system OpenSSH remains responsible for authentication and SSH configuration. The desktop may relay interactive prompts through an ephemeral `SSH_ASKPASS` bridge but will not retain passwords or passphrases. This deliberately gives up the breadth offered by products such as Core Tunnel in exchange for a smaller security boundary and a differentiated remote-development workflow.

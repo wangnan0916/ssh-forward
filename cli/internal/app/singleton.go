@@ -16,7 +16,6 @@ import (
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 	"github.com/wangnan0916/ssh-forward/cli/internal/jsonrpc"
 	"github.com/wangnan0916/ssh-forward/cli/internal/openssh"
-	"github.com/wangnan0916/ssh-forward/cli/internal/proxy"
 )
 
 // HostPicker chooses one Development Host alias from a candidate list.
@@ -31,7 +30,6 @@ type Options struct {
 	Layout        Layout
 	HostFlag      string
 	SSHConfigPath string
-	PoliciesPath  string
 	ConfigPath    string
 	Interactive   bool
 	PickHost      HostPicker
@@ -40,21 +38,22 @@ type Options struct {
 	Stderr        io.Writer
 }
 
-// Session is one use of the per-user Manager: either a JSON-RPC client of
-// the live singleton or an in-process Manager.
-type Session struct {
-	Manager core.Manager
-	// PolicyReader is this process's policies file: Source feeds the Manager,
-	// Effective feeds NewDocument, AddPort/RemovePort are the CLI writers.
-	PolicyReader *FilePolicyReader
-}
-
 func (o Options) WithDefaults() Options {
 	if o.Layout.Dir == "" {
 		o.Layout = DefaultLayout()
-	}
-	if o.PoliciesPath == "" {
-		o.PoliciesPath = o.Layout.Policies
+	} else {
+		if o.Layout.Config == "" {
+			o.Layout.Config = filepath.Join(o.Layout.Dir, "config.jsonc")
+		}
+		if o.Layout.Socket == "" {
+			o.Layout.Socket = filepath.Join(o.Layout.Dir, "manager.sock")
+		}
+		if o.Layout.PID == "" {
+			o.Layout.PID = filepath.Join(o.Layout.Dir, "manager.pid")
+		}
+		if o.Layout.Log == "" {
+			o.Layout.Log = filepath.Join(o.Layout.Dir, "manager.log")
+		}
 	}
 	if o.ConfigPath == "" {
 		o.ConfigPath = o.Layout.Config
@@ -78,29 +77,29 @@ var (
 
 // Connect returns a Manager for this user: dial the live singleton, else
 // auto-spawn it and dial, else (SSH_FORWARD_NO_AUTOSPAWN=1) build an
-// in-process Manager. The caller owns Session.Manager and must Close it.
-func Connect(ctx context.Context, opts Options) (Session, error) {
+// in-process Manager. The caller owns the returned Manager and must Close it.
+func Connect(ctx context.Context, opts Options) (core.Manager, error) {
 	opts = opts.WithDefaults()
 	client, err := jsonrpc.Dial(ctx, opts.Layout.Socket)
 	if err == nil {
 		return attach(ctx, client, opts)
 	}
 	if ctx.Err() != nil {
-		return Session{}, ctx.Err()
+		return nil, ctx.Err()
 	}
 	if jsonrpc.Live(opts.Layout.Socket) {
-		return Session{}, ErrIncompatibleManager
+		return nil, ErrIncompatibleManager
 	}
 
 	host, err := ResolveHost(opts)
 	if err != nil {
-		return Session{}, err
+		return nil, err
 	}
 
 	if os.Getenv("SSH_FORWARD_NO_AUTOSPAWN") != "1" {
 		pid, err := spawn(opts, host)
 		if err != nil {
-			return Session{}, fmt.Errorf("could not start the manager: %w", err)
+			return nil, fmt.Errorf("could not start the manager: %w", err)
 		}
 		timeout := 5 * time.Second
 		if err := waitReady(ctx, timeout, pid, func() bool { return jsonrpc.Live(opts.Layout.Socket) },
@@ -109,14 +108,14 @@ func Connect(ctx context.Context, opts Options) (Session, error) {
 				return startError(opts.Layout.Log, fmt.Sprintf("manager did not start within %s", timeout))
 			},
 		); err != nil {
-			return Session{}, err
+			return nil, err
 		}
 		if client, err := jsonrpc.Dial(ctx, opts.Layout.Socket); err == nil {
 			return attach(ctx, client, opts)
 		}
 	}
 
-	return inProcess(host, opts.SSHConfigPath, opts.PoliciesPath)
+	return inProcess(host, opts.SSHConfigPath, opts.ConfigPath)
 }
 
 // Stop ends this user's manager if we wrote its pid and it still answers
@@ -240,51 +239,46 @@ func Serve(ctx context.Context, opts Options) error {
 		return err
 	}
 	defer func() { _ = os.Remove(opts.Layout.PID) }()
-	session, err := inProcess(host, opts.SSHConfigPath, opts.PoliciesPath)
+	manager, err := inProcess(host, opts.SSHConfigPath, opts.ConfigPath)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = session.Manager.Close(context.Background()) }()
-	return endpoint.Serve(ctx, session.Manager)
+	defer func() { _ = manager.Close(context.Background()) }()
+	return endpoint.Serve(ctx, manager)
 }
 
-func attach(ctx context.Context, client core.Manager, opts Options) (Session, error) {
-	snapshot, err := client.Snapshot(ctx)
+func attach(ctx context.Context, client core.Manager, opts Options) (core.Manager, error) {
+	status, err := client.Status(ctx)
 	if err != nil {
 		_ = client.Close(context.Background())
-		return Session{}, fmt.Errorf("could not read the running manager: %w", err)
+		return nil, fmt.Errorf("could not read the running manager: %w", err)
 	}
-	if snapshot.Host == nil {
+	if status.Host == "" {
 		_ = client.Close(context.Background())
-		return Session{}, errors.New("the running manager has no Development Host configured")
+		return nil, errors.New("the running manager has no Development Host configured")
 	}
-	if opts.HostFlag != "" && opts.HostFlag != string(snapshot.Host.Alias) {
-		fmt.Fprintf(opts.Stderr, "ssh-forward: warning: --host %s ignored; the running manager owns %s. Switch with: ssh-forward manager restart\n", opts.HostFlag, snapshot.Host.Alias)
+	if opts.HostFlag != "" && opts.HostFlag != string(status.Host) {
+		fmt.Fprintf(opts.Stderr, "ssh-forward: warning: --host %s ignored; the running manager owns %s. Switch with: ssh-forward manager restart\n", opts.HostFlag, status.Host)
 	}
-	return Session{
-		Manager:      client,
-		PolicyReader: NewFilePolicyReader(opts.PoliciesPath),
-	}, nil
+	return client, nil
 }
 
-func inProcess(host, sshConfig, policies string) (Session, error) {
+func inProcess(host, sshConfig, configPath string) (core.Manager, error) {
 	adapter, err := NewOpenSSHAdapter(sshConfig)
 	if err != nil {
-		return Session{}, err
+		return nil, err
 	}
-	reader := NewFilePolicyReader(policies)
-	manager := core.NewConfiguredManager(core.HostAlias(host), adapter, proxy.NewAllocator, reader.Source)
-	return Session{
-		Manager:      manager,
-		PolicyReader: reader,
-	}, nil
+	manager := core.NewManager(core.HostAlias(host), adapter, func() ([]uint16, error) {
+		return Ports(configPath, host)
+	})
+	return manager, nil
 }
 
 const (
 	envManagerServe     = "SSH_FORWARD_MANAGER_SERVE"
 	envManagerHost      = "SSH_FORWARD_MANAGER_HOST"
-	envManagerPolicies  = "SSH_FORWARD_MANAGER_POLICIES"
 	envManagerSSHConfig = "SSH_FORWARD_MANAGER_SSH_CONFIG"
+	envManagerConfig    = "SSH_FORWARD_MANAGER_CONFIG"
 	envConfigDir        = "SSH_FORWARD_CONFIG_DIR"
 )
 
@@ -297,8 +291,8 @@ func TakeManagerServeEnv(opts *Options) bool {
 	}
 	_ = os.Unsetenv(envManagerServe)
 	opts.HostFlag = os.Getenv(envManagerHost)
-	if policies := os.Getenv(envManagerPolicies); policies != "" {
-		opts.PoliciesPath = policies
+	if config := os.Getenv(envManagerConfig); config != "" {
+		opts.ConfigPath = config
 	}
 	if sshConfig := os.Getenv(envManagerSSHConfig); sshConfig != "" {
 		opts.SSHConfigPath = sshConfig
@@ -314,7 +308,7 @@ func spawn(opts Options, host string) (int, error) {
 	extra := []string{
 		envManagerServe + "=1",
 		envManagerHost + "=" + host,
-		envManagerPolicies + "=" + opts.PoliciesPath,
+		envManagerConfig + "=" + opts.ConfigPath,
 		envConfigDir + "=" + opts.Layout.Dir,
 	}
 	if opts.SSHConfigPath != "" {

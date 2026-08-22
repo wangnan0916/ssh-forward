@@ -1,3 +1,0 @@
-# Store policies in versioned files
-
-Forwarding Policies will use a documented, schema-versioned JSONC file as their source of truth rather than an opaque local database or cloud account. The accepted dialect is RFC 8259 JSON plus line comments, block comments, and trailing commas; the CLI will preserve comments through a HuJSON syntax tree when modifying the file. Users may inspect, annotate, back up, and version the policy directly, while JSON Schema provides editor validation. The manager watches valid external edits and reconciles them, while revision checks prevent UI writes from overwriting concurrent changes. This keeps automation portable and decisions auditable, at the cost of explicit schema migration, comment-preserving patches, and concurrent-write handling.

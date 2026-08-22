@@ -1,22 +1,24 @@
-# Security Policy
+# Security policy
 
-This project is pre-1.0. Please report vulnerabilities against `main`.
+Report vulnerabilities privately through
+[GitHub Security Advisories](https://github.com/wangnan0916/ssh-forward/security/advisories/new).
 
-## Reporting a vulnerability
-
-Use [GitHub Security Advisories](https://github.com/wangnan0916/ssh-forward/security/advisories/new) so the report stays private until a fix is ready.
-
-Do not open a public issue, pull request, or discussion for a vulnerability.
-
-Please include:
-
-- The `ssh-forward --version` string
-- The Local Machine OS and the Development Host OS
-- Steps to reproduce, or a minimal proof of concept
-- The impact you expect (for example: unexpected bind, process metadata leak, manager takeover)
+Please include the version, local OS, Development Host OS, reproduction steps,
+and expected impact.
 
 ## Trust boundary
 
-`ssh-forward` uses the current OS user and system OpenSSH as its local trust boundary. It does not store SSH credentials. Local Endpoints and the SSH SOCKS reservation bind only to loopback.
+- SSH authentication, keys, host verification, jump hosts, and proxy settings
+  belong to system OpenSSH. This project stores no credentials.
+- Host aliases and ports are passed as an argument vector to an absolute `ssh`
+  executable; no local shell interpolates them.
+- The remote command is a fixed embedded script. It reads only
+  `/proc/net/tcp` and returns loopback port numbers.
+- Every local forward binds explicitly to `127.0.0.1`.
+- The manager socket and state files are accessible only to the current OS
+  user.
+- Remote scanner frames, stderr retention, and observed listener counts are
+  bounded.
 
-See [docs/security/threat-model.md](docs/security/threat-model.md) for the full model, including guarantees that are not yet enforced.
+The manager can expose a remote service to other processes running as the same
+local user. Remember only ports you intend to make locally reachable.

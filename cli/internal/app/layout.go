@@ -9,12 +9,11 @@ import (
 // Layout is the per-user product directory: Persistent intent files, the
 // Manager singleton socket, and its pid/log sit together.
 type Layout struct {
-	Dir      string
-	Config   string
-	Policies string
-	Socket   string
-	PID      string
-	Log      string
+	Dir    string
+	Config string
+	Socket string
+	PID    string
+	Log    string
 }
 
 // DefaultLayout resolves the product directory per cli-and-state.md:
@@ -23,12 +22,11 @@ type Layout struct {
 func DefaultLayout() Layout {
 	dir := configDir()
 	return Layout{
-		Dir:      dir,
-		Config:   filepath.Join(dir, "config.jsonc"),
-		Policies: filepath.Join(dir, "policies.jsonc"),
-		Socket:   filepath.Join(dir, "manager.sock"),
-		PID:      filepath.Join(dir, "manager.pid"),
-		Log:      filepath.Join(dir, "manager.log"),
+		Dir:    dir,
+		Config: filepath.Join(dir, "config.jsonc"),
+		Socket: filepath.Join(dir, "manager.sock"),
+		PID:    filepath.Join(dir, "manager.pid"),
+		Log:    filepath.Join(dir, "manager.log"),
 	}
 }
 

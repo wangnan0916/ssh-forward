@@ -1,184 +1,120 @@
 # ssh-forward
 
-Discover ports on a Linux development host and use them on localhost through your existing OpenSSH setup. Same port locally when it is free.
+See the loopback TCP ports listening on one Linux SSH host and keep selected
+ports available on the same port at `localhost`.
 
 [![CI](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml/badge.svg)](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-The first public release is the **CLI**. The desktop app is not in this repository yet. There is no TUI.
+The product deliberately does one job. It is not an SSH client, host-profile
+manager, credential store, generic tunnel editor, or process-policy engine.
+Authentication and connection options stay in system OpenSSH and
+`~/.ssh/config`.
 
-This is not a general SSH tunnel, credential, key, or host-profile manager. Authentication stays with system OpenSSH and `~/.ssh/config`.
+## Quick start
 
-## Why
+```bash
+ssh-forward default my-dev
+ssh-forward status              # see remote loopback listeners
+ssh-forward add 5173            # keep remote 5173 on localhost:5173
+ssh-forward remove 5173
+```
 
-- **Remember a port.** `add 5173` auto-forwards that remote port when a service is listening. When nothing is listening, it does not occupy a local port. The rule survives manager and SSH restarts.
-- **Remember a project.** `add --dir /home/dev/src/app` auto-forwards listeners whose process working directory is in that tree on the Development Host (not a path on your Mac).
-- **System OpenSSH.** The product launches the platform `ssh` binary. It does not embed SSH, store passwords, or replace your SSH config.
+`my-dev` is a literal `Host` alias from your SSH config. The first command that
+needs a connection starts one background manager for the current OS user.
 
 ## Install
 
-Needs a system OpenSSH client.
+The only runtime dependency is a system OpenSSH client.
 
 ```bash
 brew install --HEAD wangnan0916/ssh-forward/ssh-forward
 ```
 
-Or with [Go](https://go.dev/dl/) 1.26 or newer:
+Or build with Go 1.26 or newer:
 
 ```bash
-go install github.com/wangnan0916/ssh-forward/cli/cmd/ssh-forward@main
-```
-
-```bash
-git clone https://github.com/wangnan0916/ssh-forward.git
-cd ssh-forward/cli
+cd cli
 go build -o ssh-forward ./cmd/ssh-forward
 ```
-
-## Quick start
-
-The Development Host is an SSH alias from your client config (`~/.ssh/config`).
-
-```bash
-ssh-forward default my-dev
-ssh-forward add 5173
-ssh-forward status
-# open http://127.0.0.1:5173
-ssh-forward remove 5173
-```
-
-Or remember everything in one project directory on the host:
-
-```bash
-ssh-forward add --dir /home/dev/src/my-app
-ssh-forward remove --dir /home/dev/src/my-app
-```
-
-`status` starts a per-user manager in the background. Later commands talk to that singleton over a user-only Unix socket. Use `ssh-forward manager serve` to run it in the foreground. `ssh-forward manager restart` is the recovery path after a CLI upgrade or a stuck singleton.
-
-## How it compares
-
-| | `ssh -L` | VS Code Ports | ssh-forward |
-|---|---|---|---|
-| Discovers remote listeners | no | yes (VS Code Server) | yes (agentless) |
-| Policy | none | `remote.portsAttributes` | `add` / `remove` → `policies.jsonc` |
-| SSH implementation | system OpenSSH | VS Code Remote-SSH | system OpenSSH |
-| Credentials | your SSH config | your SSH config | your SSH config |
-| Arbitrary tunnels | yes | limited | no (remote loopback ports only) |
 
 ## Commands
 
 ```text
-ssh-forward                           # how to use it (does not connect)
-ssh-forward add 5173                  # remember a remote port
-ssh-forward add --dir /home/dev/app   # remember a Development Host directory
-ssh-forward remove 5173
-ssh-forward remove --dir /home/dev/app
-ssh-forward default <alias>           # pin the default Development Host
+ssh-forward add PORT
+ssh-forward remove PORT
 ssh-forward status [--json] [--watch]
-ssh-forward watch [--json]            # stream snapshots (JSONL with --json)
-ssh-forward policy [--json]           # list policies
-ssh-forward host [--json]             # hosts from the SSH client config
-ssh-forward manager serve             # run the singleton in the foreground
-ssh-forward manager stop              # stop the singleton (recovery)
-ssh-forward manager restart           # stop, then auto-spawn again
+ssh-forward watch [--json]
+ssh-forward host [--json]
+ssh-forward default [ALIAS]
+ssh-forward manager serve|stop|restart
 ```
 
-`status` shows the host, connection, forwards, waiting remembered ports, unmatched loopback ports you can `add`, and local bind conflicts. Process details and wildcard listeners are in `--json`. On a terminal it waits until SSH has connected. Name the host with `--host ALIAS` (`-h` is help).
+Global options are `--host ALIAS` and `--ssh-config PATH`. Set
+`SSH_FORWARD_CONFIG_DIR` to move product state.
 
-`--host` overrides the default host. `--ssh-config PATH` points at an explicit SSH client config. `SSH_FORWARD_CONFIG_DIR` overrides the product config directory.
+## How it works
 
-## Agent skill
+1. A fixed shell script runs through `ssh HOST sh -s` and reads
+   `/proc/net/tcp` on the Linux host.
+2. It reports at most 256 IPv4 loopback listeners. No remote agent is
+   installed and no process metadata is collected.
+3. For each remembered port that is currently listening, the manager
+   supervises one `ssh -N -L 127.0.0.1:PORT:127.0.0.1:PORT HOST` process.
+4. A small user-only Unix socket lets later CLI calls read manager status.
+   `watch` polls that status; the server does not implement a streaming state
+   platform.
 
-Install the usage skill for Cursor, Claude Code, Codex, and other agents:
+There is no alternate local-port allocation. If the same local port is in use,
+status reports the conflict and retries later.
 
-```bash
-npx skills add wangnan0916/ssh-forward
-```
+## Configuration
 
-The skill lives in [`.agents/skills/ssh-forward/`](.agents/skills/ssh-forward/).
-
-## Forwarding policies
-
-`add` and `remove` write `policies.jsonc`. The manager hot-reloads it about every two seconds. You can still edit the file by hand for more specific matchers.
+All persistent intent is in one `config.jsonc`:
 
 ```jsonc
 {
   "schema_version": 1,
-  "policies": [
-    {
-      "id": "port-5173",
-      "priority": 10,
-      "action": "auto_forward",
-      "conditions": [
-        { "remote_ports": { "from": 5173, "to": 5173 } }
-      ]
-    },
-    {
-      "id": "dir-/home/dev/src/my-app",
-      "priority": 10,
-      "action": "auto_forward",
-      "conditions": [
-        { "working_directory_tree": "/home/dev/src/my-app" }
-      ]
-    }
-  ]
+  "default_host": "my-dev",
+  "forwards": {
+    "my-dev": [5173, 8080]
+  }
 }
 ```
 
-Locations:
+The manager reloads this file while running. Runtime observations and process
+IDs are not persisted.
+
+Default directories:
 
 - macOS: `~/Library/Application Support/ssh-forward/`
-- Linux: `$XDG_CONFIG_HOME/ssh-forward/` (or `~/.config/ssh-forward/`)
+- Linux: `$XDG_CONFIG_HOME/ssh-forward/` or `~/.config/ssh-forward/`
 
-## Status
+## Current limits
 
-Public **alpha** (`0.1.0-alpha.1`). The CLI covers discovery, remembered Auto-forward for ports and directories, reconnect, and JSON-RPC to a per-user manager.
-
-Not in this release:
-
-- macOS menu-bar app and Dashboard
-- comment-preserving policy writes
-- login monitoring and idle manager exit
-- HTTP/HTTPS “open in browser” actions
-- Windows as a Local Machine
-- more than one Development Host in a single manager process
-
-## Security
-
-Local Endpoints bind only to loopback. System `ssh` is launched by absolute path with an argument vector, never through a shell. The remote scanner is a fixed script; host aliases and process metadata never modify it. No SSH credential is stored.
-
-See [SECURITY.md](SECURITY.md) to report a vulnerability and [docs/security/threat-model.md](docs/security/threat-model.md) for the model.
+- Linux Development Hosts only
+- one active SSH host per manager
+- IPv4 loopback TCP listeners only
+- same local and remote port only
+- CLI and JSON status only; no desktop UI
 
 ## Development
-
-Fast tests do not require Docker:
 
 ```bash
 cd cli
 go test ./...
 go test -race ./...
+go vet ./...
 ```
 
-Real Linux/OpenSSH integration tests use only the disposable container harness and never resolve a configured Development Host:
+The disposable Linux/OpenSSH integration test requires Docker:
 
 ```bash
 ./scripts/test-integration
 ```
 
-The integration harness requires Docker Engine 28 or newer through a local Unix socket.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the development path, test seams, and pull-request expectations.
-
-## Design
-
-- [Domain language](./CONTEXT.md)
-- [Implementation sequence](./docs/design/implementation-sequence.md)
-- [Core Manager Interface](./docs/design/core-interface.md)
-- [JSON-RPC protocol](./docs/design/ipc-protocol.md)
-- [CLI and state](./docs/product/cli-and-state.md)
-- [ADRs](./docs/adr/)
-- [Threat model](./docs/security/threat-model.md)
+See [ARCHITECTURE.md](ARCHITECTURE.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
+[SECURITY.md](SECURITY.md).
 
 ## License
 

@@ -1,35 +1,27 @@
 # Contributing
 
-The current surface is the headless CLI. Keep changes inside that contract unless a document in `docs/` is being updated to match.
+Keep changes inside the one-sentence contract in [ARCHITECTURE.md](ARCHITECTURE.md).
+Prefer deleting a requirement over adding a framework for a hypothetical
+client.
 
-Development path: **CLI**. There is no TUI. See [docs/product/mvp.md](docs/product/mvp.md).
-
-## Development Host language
-
-Use the terms in [CONTEXT.md](CONTEXT.md). In particular: Development Host, Remote Listener, Local Endpoint, Forwarding Policy, Managed Forward.
-
-## Tests
-
-Fast tests do not need Docker:
+## Checks
 
 ```bash
 cd cli
 go test ./...
 go test -race ./...
+go vet ./...
+test -z "$(gofmt -l .)"
+go mod tidy -diff
 ```
 
-Linux/OpenSSH integration tests use only the disposable container harness and never resolve a configured Development Host:
+The real OpenSSH path uses a disposable Linux container and never connects to
+a developer's configured hosts:
 
 ```bash
 ./scripts/test-integration
 ```
 
-That harness needs Docker Engine 28 or newer on a local Unix socket.
-
-Behavior tests should drive `core.Manager` (`Snapshot`, `Watch`, `Close`) or an Adapter interface. Do not assert on actor mailboxes or unexported fields.
-
-## Pull requests
-
-- Match the surrounding style and comments.
-- Update the implementation-status map in the relevant `docs/product/` file when a documented behavior lands or is deferred.
-- Do not add analytics, credential storage, or a second SSH stack.
+Behavior tests should use `core.Manager` (`Status`, `Close`) or its `Backend`
+interface. Keep the wire test to a status round trip. Do not duplicate OpenSSH
+forwarding behavior in Go.

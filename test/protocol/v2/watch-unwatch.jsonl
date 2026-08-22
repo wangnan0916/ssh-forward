@@ -1,6 +1,0 @@
-{"jsonrpc":"2.0","id":"1","method":"manager.watch"}
-{"jsonrpc":"2.0","id":"1","result":{"watch_id":"watch-1","snapshot":{"revision":3}}}
-{"jsonrpc":"2.0","id":"2","method":"manager.unwatch","params":{"watch_id":"watch-1"}}
-{"jsonrpc":"2.0","id":"2","result":{"watch_id":"watch-1","stopped":true}}
-{"jsonrpc":"2.0","id":"3","method":"manager.unwatch","params":{"watch_id":"watch-1"}}
-{"jsonrpc":"2.0","id":"3","result":{"watch_id":"watch-1","stopped":false}}
