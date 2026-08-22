@@ -1,0 +1,50 @@
+name: Bug report
+description: Report incorrect ssh-forward behavior
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for helping improve ssh-forward. Remove hostnames, usernames, and credentials from logs before posting.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `ssh-forward --version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: local_os
+    attributes:
+      label: Local operating system
+      options:
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: remote_os
+    attributes:
+      label: Remote Linux distribution
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: List the commands and observable result.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: Sanitized status
+      description: Optional output of `ssh-forward status --json` with sensitive values removed.
+      render: json

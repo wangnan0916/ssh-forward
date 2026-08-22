@@ -1,0 +1,118 @@
+#!/bin/sh
+
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+random_bytes=$(od -An -N12 -tx1 /dev/urandom) || {
+    printf 'could not generate integration run ID\n' >&2
+    exit 1
+}
+random_id=$(printf '%s' "$random_bytes" | tr -d ' \n')
+if [ "${#random_id}" -ne 24 ]; then
+    printf 'could not generate integration run ID\n' >&2
+    exit 1
+fi
+run_prefix=${SSH_FORWARD_TEST_RUN_ID:-run}
+case "$run_prefix" in
+    *[!a-z0-9_-]*) printf 'invalid SSH_FORWARD_TEST_RUN_ID prefix: %s\n' "$run_prefix" >&2; exit 2 ;;
+esac
+if [ "${#run_prefix}" -gt 32 ]; then
+    printf 'SSH_FORWARD_TEST_RUN_ID prefix is too long\n' >&2
+    exit 2
+fi
+run_id=$run_prefix-$random_id
+if [ "${#run_id}" -gt 57 ]; then
+    printf 'composed integration run ID is too long: %s\n' "$run_id" >&2
+    exit 2
+fi
+export SSH_FORWARD_TEST_RUN_ID=$run_id
+set -a
+. "$root/scripts/internal/harness.env"
+set +a
+docker_context=${SSH_FORWARD_TEST_DOCKER_CONTEXT:-$(docker context show)}
+export SSH_FORWARD_TEST_DOCKER_CONTEXT=$docker_context
+
+active_pid=''
+setup_output=''
+host_ready=0
+terminate_child() {
+    child_pid=$1
+    pids=$child_pid
+    frontier=$child_pid
+    depth=0
+    while [ "$depth" -lt 8 ]; do
+        next=''
+        for parent in $frontier; do
+            children=$(pgrep -P "$parent" 2>/dev/null || true)
+            [ -z "$children" ] || next="$next $children"
+        done
+        [ -n "$next" ] || break
+        pids="$pids $next"
+        frontier=$next
+        depth=$((depth + 1))
+    done
+    kill -TERM $pids 2>/dev/null || true
+    attempt=0
+    while kill -0 "$child_pid" 2>/dev/null && [ "$attempt" -lt 50 ]; do
+        attempt=$((attempt + 1))
+        sleep 0.1
+    done
+    survivors=''
+    for pid in $pids; do
+        kill -0 "$pid" 2>/dev/null && survivors="$survivors $pid"
+    done
+    if [ -n "$survivors" ]; then
+        kill -KILL $survivors 2>/dev/null || true
+        sleep 0.1
+    fi
+    remaining=''
+    for pid in $survivors; do
+        kill -0 "$pid" 2>/dev/null && remaining="$remaining $pid"
+    done
+    if [ -n "$remaining" ]; then
+        printf 'managed integration processes survived SIGKILL:%s\n' "$remaining" >&2
+        return 1
+    fi
+    wait "$child_pid" 2>/dev/null || true
+}
+cleanup() {
+    status=$?
+    trap - 0 HUP INT TERM
+    cleanup_failed=0
+    if [ -n "$active_pid" ]; then
+        terminate_child "$active_pid" || cleanup_failed=1
+    fi
+    validation_marker="$root/.tmp/integration/$run_id/context_validated"
+    if [ "$host_ready" -eq 1 ] || [ -f "$validation_marker" ]; then
+        "$root/scripts/internal/test-host-down" || cleanup_failed=1
+    fi
+    [ -z "$setup_output" ] || rm -f "$setup_output"
+    if [ "$status" -eq 0 ] && [ "$cleanup_failed" -ne 0 ]; then status=1; fi
+    exit "$status"
+}
+trap cleanup 0
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+run_managed() {
+    "$@" &
+    active_pid=$!
+    if wait "$active_pid"; then
+        active_pid=''
+        return 0
+    else
+        command_status=$?
+        active_pid=''
+        return "$command_status"
+    fi
+}
+
+setup_output=$(mktemp "${TMPDIR:-/tmp}/ssh-forward-integration-$run_id.XXXXXX")
+run_managed "$root/scripts/internal/test-host-up" >"$setup_output"
+host_ready=1
+export SSH_FORWARD_TEST_SSH_CONFIG=$(cat "$setup_output")
+rm -f "$setup_output"
+setup_output=''
+cd "$root/cli"
+run_managed go test -tags=integration ./...

@@ -1,0 +1,62 @@
+name: integration
+
+# Two jobs, two honest homes:
+#
+#  - macOS job: everything that depends on macOS behavior (system ssh
+#    quirks, Unix-socket paths, the singleton IPC) — no Docker, because
+#    hosted macOS runners cannot nest virtualization (colima cannot start
+#    a VM there).
+#  - Linux job: the disposable-Development-Host suite (scripts/
+#    test-integration) on a native-Docker runner, leaving Docker spotless.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  macos-unit:
+    runs-on: macos-15 # Apple Silicon, matching the local machine
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+
+      - name: Unit, race, vet, and format
+        run: |
+          set -e
+          cd cli
+          go build ./...
+          go test ./... -count=1
+          go test -race ./... -count=1
+          go vet ./...
+          test -z "$(gofmt -l .)"
+          go mod tidy -diff
+
+  docker-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+
+      - name: Integration suites (disposable containers)
+        run: ./scripts/test-integration
+
+      - name: Verify Docker is spotless afterwards
+        run: |
+          containers=$(docker ps -a --format '{{.Names}}' | grep -c ssh-forward || true)
+          images=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -c ssh-forward || true)
+          networks=$(docker network ls --format '{{.Name}}' | grep -c ssh-forward || true)
+          echo "leftovers: containers=$containers images=$images networks=$networks"
+          test "$containers" = 0 && test "$images" = 0 && test "$networks" = 0

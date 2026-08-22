@@ -1,0 +1,56 @@
+#!/bin/sh
+
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+compose="$root/test/integration/ssh-host/compose.yaml"
+set -a
+. "$root/scripts/internal/harness.env"
+set +a
+run_id=${SSH_FORWARD_TEST_RUN_ID:?SSH_FORWARD_TEST_RUN_ID is required}
+case "$run_id" in
+    *[!a-z0-9_-]*) printf 'invalid SSH_FORWARD_TEST_RUN_ID: %s\n' "$run_id" >&2; exit 2 ;;
+esac
+project=ssh-forward-integration-$run_id
+image=$SSH_FORWARD_TEST_IMAGE:$run_id
+state_dir="$root/.tmp/integration/$run_id"
+docker_context=${SSH_FORWARD_TEST_DOCKER_CONTEXT:-}
+if [ -z "$docker_context" ] && [ -s "$state_dir/docker_context" ]; then
+    docker_context=$(cat "$state_dir/docker_context")
+fi
+[ -n "$docker_context" ] || { printf '%s\n' 'Docker context is unavailable for cleanup' >&2; exit 1; }
+export SSH_FORWARD_TEST_AUTHORIZED_KEYS="$state_dir/authorized_keys"
+
+run_bounded() {
+    "$@" &
+    command_pid=$!
+    (
+        sleep 30
+        if kill -0 "$command_pid" 2>/dev/null; then
+            kill -TERM "$command_pid" 2>/dev/null || true
+            sleep 2
+            kill -KILL "$command_pid" 2>/dev/null || true
+        fi
+    ) &
+    watchdog_pid=$!
+    if wait "$command_pid"; then command_status=0; else command_status=$?; fi
+    kill "$watchdog_pid" 2>/dev/null || true
+    wait "$watchdog_pid" 2>/dev/null || true
+    return "$command_status"
+}
+
+status=0
+if ! run_bounded docker --context "$docker_context" compose -p "$project" -f "$compose" down --timeout 10 --volumes --remove-orphans >/dev/null; then
+    printf 'failed to tear down integration project %s\n' "$project" >&2
+    status=1
+fi
+if [ -f "$state_dir/image_expected" ]; then
+    if ! run_bounded docker --context "$docker_context" image rm "$image" >/dev/null; then
+        printf 'failed to remove integration image %s\n' "$image" >&2
+        status=1
+    fi
+fi
+rm -rf "$state_dir"
+rmdir "$root/.tmp/integration" 2>/dev/null || true
+rmdir "$root/.tmp" 2>/dev/null || true
+exit "$status"
