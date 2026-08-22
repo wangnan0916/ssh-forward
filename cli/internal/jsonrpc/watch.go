@@ -10,7 +10,6 @@ import (
 	"github.com/creachadair/jrpc2"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
-	"github.com/wangnan0916/ssh-forward/cli/internal/snapshot"
 )
 
 type connectionSession struct {
@@ -69,7 +68,7 @@ func (s *connectionSession) handleWatch(ctx context.Context, request *jrpc2.Requ
 	}()
 	return watchResult{
 		WatchID:  watch.id,
-		Snapshot: snapshot.Encode(initial),
+		Snapshot: initial,
 	}, nil
 }
 
@@ -108,7 +107,7 @@ func (s *connectionSession) runWatch(watch *connectionWatch) {
 			}
 			return
 		}
-		params := snapshotNotification{WatchID: watch.id, Snapshot: snapshot.Encode(snap)}
+		params := snapshotNotification{WatchID: watch.id, Snapshot: snap}
 		if !notificationFits(methodSnapshot, params) {
 			s.sendResyncRequired(watch, "snapshot_too_large")
 			return

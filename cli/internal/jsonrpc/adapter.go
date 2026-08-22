@@ -11,10 +11,9 @@ import (
 	"github.com/creachadair/jrpc2/handler"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
-	"github.com/wangnan0916/ssh-forward/cli/internal/snapshot"
 )
 
-// ServeConn runs one JSON-RPC v1 session on conn until it ends.
+// ServeConn runs one JSON-RPC session on conn until it ends.
 func ServeConn(ctx context.Context, conn net.Conn, manager core.Manager) error {
 	frames := newFrameChannel(conn, maxFrameBytes)
 	session := newConnectionSession(ctx, manager)
@@ -65,7 +64,7 @@ func handleSnapshot(ctx context.Context, manager core.Manager) (any, error) {
 	if err != nil {
 		return nil, internalError()
 	}
-	return snapshotResult{Snapshot: snapshot.Encode(snap)}, nil
+	return snapshotResult{Snapshot: snap}, nil
 }
 
 func normalizeServeError(err error) error {

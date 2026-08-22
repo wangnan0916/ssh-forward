@@ -12,7 +12,6 @@ import (
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/app"
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
-	"github.com/wangnan0916/ssh-forward/cli/internal/snapshot"
 )
 
 func (a *App) writeStatusHuman(snap core.Snapshot) error {
@@ -144,11 +143,7 @@ func (a *App) writeJSON(value any) error {
 }
 
 func (a *App) writeSnapshotJSON(snap core.Snapshot) error {
-	encoded, err := snapshot.Marshal(snap)
-	if err != nil {
-		return err
-	}
-	return a.writeJSONLine(encoded)
+	return a.writeJSON(snap)
 }
 
 func (a *App) writeJSONLine(encoded []byte) error {

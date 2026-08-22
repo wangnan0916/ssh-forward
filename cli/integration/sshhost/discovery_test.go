@@ -26,8 +26,8 @@ func TestAgentlessDiscoveryThroughDisposableDevelopmentHost(t *testing.T) {
 	if host.Discovery.State != core.DiscoveryHealthy && host.Discovery.State != core.DiscoveryDegraded {
 		t.Fatalf("Discovery State = %q, want healthy or degraded", host.Discovery.State)
 	}
-	if host.Discovery.Capability.RemoteListeners != core.CapabilityFull || host.Discovery.Capability.SocketIdentity != core.CapabilityFull {
-		t.Fatalf("Discovery Capability = %#v, want complete listener and socket evidence", host.Discovery.Capability)
+	if host.Discovery.Capability.RemoteListeners != core.CapabilityFull {
+		t.Fatalf("Discovery Capability = %#v, want complete listener evidence", host.Discovery.Capability)
 	}
 	assertFixtureObservation(t, host.ListenerObservations, core.FamilyIPv4, fixturePortV4())
 	assertFixtureObservation(t, host.ListenerObservations, core.FamilyIPv6, fixturePortV6())
@@ -59,9 +59,6 @@ func assertFixtureObservation(t *testing.T, observations []core.ListenerObservat
 	for _, observation := range observations {
 		if observation.Family != family || observation.BindScope != core.BindLoopback || observation.RemotePort != port {
 			continue
-		}
-		if len(observation.SocketIdentities) == 0 || !strings.HasPrefix(string(observation.SocketIdentities[0]), "socket:") {
-			t.Fatalf("fixture Socket Identities = %#v", observation.SocketIdentities)
 		}
 		for _, chain := range observation.Processes {
 			if len(chain.Processes) != 0 && strings.Contains(chain.Processes[0].Executable, "python") {

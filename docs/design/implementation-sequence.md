@@ -6,7 +6,7 @@ The completed throwaway spike validated one system `ssh -T -D … sh -s` connect
 
 ## Vertical slices
 
-Slices 1–6 are complete. One Forwarding Session carries the fixed versioned scanner plus SOCKS traffic. The Manager publishes canonical complete Snapshots with Discovery evidence and policy-reconciled Managed Forwards. A small versioned JSON-RPC Adapter lets clients Snapshot and Watch that state. The CLI is the public command surface: it auto-spawns a per-user manager and speaks the v1 wire. The loopback WebUI was removed from this tree.
+Slices 1–6 are complete. One Forwarding Session carries the fixed versioned scanner plus SOCKS traffic. The Manager publishes canonical complete Snapshots with Discovery evidence and policy-reconciled Managed Forwards. A small versioned JSON-RPC Adapter lets clients Snapshot and Watch that state. The CLI is the public command surface: it auto-spawns a per-user manager and speaks the v2 wire. The loopback WebUI was removed from this tree.
 
 Slice 5's observation-path hysteresis is two consecutive observations for create and disappearance. A saved policy edit applies immediately and resets that hysteresis. Session outage does not count as disappearance: the observation wake advances only on ObservationSets.
 

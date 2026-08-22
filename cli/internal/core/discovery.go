@@ -7,14 +7,12 @@ import (
 
 const (
 	MaxRetainedListenerObservations = 256
-	MaxRetainedSocketIdentities     = 512
 	MaxRetainedProcessRecords       = 512
 	MaxRetainedProcessMetadataBytes = 128 << 10
 )
 
 type evidenceTruncation struct {
 	listeners bool
-	sockets   bool
 	processes bool
 }
 
@@ -23,7 +21,6 @@ func stoppedDiscovery() DiscoverySnapshot {
 		State: DiscoveryStopped,
 		Capability: DiscoveryCapability{
 			RemoteListeners: CapabilityUnavailable,
-			SocketIdentity:  CapabilityUnavailable,
 			ProcessMetadata: CapabilityUnavailable,
 		},
 	}
@@ -37,7 +34,6 @@ func startingDiscovery() DiscoverySnapshot {
 
 func validDiscoveryCapability(capability DiscoveryCapability) bool {
 	return validCapabilityAvailability(capability.RemoteListeners) &&
-		validCapabilityAvailability(capability.SocketIdentity) &&
 		validCapabilityAvailability(capability.ProcessMetadata)
 }
 
@@ -50,16 +46,7 @@ func validCapabilityAvailability(capability CapabilityAvailability) bool {
 	}
 }
 
-func validCapabilityReason(reason CapabilityReason) bool {
-	switch reason {
-	case CapabilityReasonNone, CapabilityReasonScannerReported, CapabilityReasonEvidenceMissing, CapabilityReasonEvidenceTruncated:
-		return true
-	default:
-		return false
-	}
-}
-
-func discoveryDiagnostic(gapped bool, capability DiscoveryCapability, capabilityReason CapabilityReason, failure DiscoveryReason) string {
+func discoveryDiagnostic(gapped bool, capability DiscoveryCapability, failure DiscoveryReason) string {
 	switch failure {
 	case ReasonObservationInvalid:
 		return "invalid_scanner_frame"
@@ -68,30 +55,23 @@ func discoveryDiagnostic(gapped bool, capability DiscoveryCapability, capability
 	case ReasonSessionInvalid:
 		return "invalid_session_fact"
 	case "":
-		// No failure: a gap or capability partiality may still apply.
 	default:
 		return ""
 	}
 	if gapped {
 		return "observation_resync"
 	}
-	if capabilityFull(capability) {
-		return ""
-	}
-	switch capabilityReason {
-	case CapabilityReasonEvidenceTruncated:
-		return "evidence_truncated"
-	case CapabilityReasonEvidenceMissing:
-		return "process_metadata_unavailable"
-	case CapabilityReasonScannerReported:
+	if capability.RemoteListeners != CapabilityFull {
 		return "scanner_reported_partial"
-	default:
-		return ""
 	}
+	if capability.ProcessMetadata != CapabilityFull {
+		return "process_metadata_unavailable"
+	}
+	return ""
 }
 
 func discoveryFailureDiagnostic(reason DiscoveryReason) string {
-	return discoveryDiagnostic(false, DiscoveryCapability{}, CapabilityReasonNone, reason)
+	return discoveryDiagnostic(false, DiscoveryCapability{}, reason)
 }
 
 func validDiscoveryReason(reason DiscoveryReason) bool {
@@ -104,7 +84,7 @@ func validDiscoveryReason(reason DiscoveryReason) bool {
 }
 
 func admitObservationSet(set ObservationSet, lastSequence uint64) (gapped bool, ok bool) {
-	if set.Sequence == 0 || set.Sequence <= lastSequence || !validDiscoveryCapability(set.Capability) || !validObservationBudget(set.Budget) || !validCapabilityReason(set.CapabilityReason) {
+	if set.Sequence == 0 || set.Sequence <= lastSequence || !validDiscoveryCapability(set.Capability) {
 		return false, false
 	}
 	return set.Sequence != lastSequence+1, true
@@ -115,17 +95,8 @@ func admitDiscoveryChange(change DiscoveryChange) bool {
 		validDiscoveryCapability(change.Capability) && validDiscoveryReason(change.Reason)
 }
 
-func validObservationBudget(budget ObservationBudget) bool {
-	return budget.Listeners >= 1 && budget.Listeners <= MaxRetainedListenerObservations &&
-		budget.Sockets >= 1 && budget.Sockets <= MaxRetainedSocketIdentities &&
-		budget.ProcessRecords >= 1 && budget.ProcessRecords <= MaxRetainedProcessRecords &&
-		budget.MetadataBytes >= 1 && budget.MetadataBytes <= MaxRetainedProcessMetadataBytes
-}
-
 func capabilityFull(capability DiscoveryCapability) bool {
-	return capability.RemoteListeners == CapabilityFull &&
-		capability.SocketIdentity == CapabilityFull &&
-		capability.ProcessMetadata == CapabilityFull
+	return capability.RemoteListeners == CapabilityFull && capability.ProcessMetadata == CapabilityFull
 }
 
 func discoveryStateForCapability(capability DiscoveryCapability) DiscoveryState {
@@ -163,7 +134,6 @@ func mergeBoundedListenerObservations(retained, current []ListenerObservation) (
 	}
 	bounded, additional := boundListenerObservations(canonicalListenerObservations(observations))
 	truncated.listeners = truncated.listeners || additional.listeners
-	truncated.sockets = truncated.sockets || additional.sockets
 	truncated.processes = truncated.processes || additional.processes
 	return bounded, truncated
 }
@@ -171,9 +141,6 @@ func mergeBoundedListenerObservations(retained, current []ListenerObservation) (
 func degradeTruncatedCapability(capability *DiscoveryCapability, truncated evidenceTruncation) {
 	if truncated.listeners && capability.RemoteListeners != CapabilityUnavailable {
 		capability.RemoteListeners = CapabilityPartial
-	}
-	if truncated.sockets && capability.SocketIdentity != CapabilityUnavailable {
-		capability.SocketIdentity = CapabilityPartial
 	}
 	if truncated.processes && capability.ProcessMetadata != CapabilityUnavailable {
 		capability.ProcessMetadata = CapabilityPartial
@@ -183,7 +150,6 @@ func degradeTruncatedCapability(capability *DiscoveryCapability, truncated evide
 func boundListenerObservations(observations []ListenerObservation) ([]ListenerObservation, evidenceTruncation) {
 	bounded := make([]ListenerObservation, 0, min(len(observations), MaxRetainedListenerObservations))
 	var truncated evidenceTruncation
-	socketCount := 0
 	processCount := 0
 	metadataBytes := 0
 	for _, observation := range observations {
@@ -195,13 +161,6 @@ func boundListenerObservations(observations []ListenerObservation) ([]ListenerOb
 			Family:     observation.Family,
 			BindScope:  observation.BindScope,
 			RemotePort: observation.RemotePort,
-		}
-		availableSockets := MaxRetainedSocketIdentities - socketCount
-		keptSockets := min(len(observation.SocketIdentities), availableSockets)
-		item.SocketIdentities = slices.Clone(observation.SocketIdentities[:keptSockets])
-		socketCount += keptSockets
-		if keptSockets != len(observation.SocketIdentities) {
-			truncated.sockets = true
 		}
 		for _, chain := range observation.Processes {
 			boundedChain := ProcessChain{}
@@ -238,16 +197,6 @@ func processMetadataSize(process ProcessMetadata) int {
 
 func mergePartialListenerObservation(retained, current ListenerObservation) ListenerObservation {
 	merged := cloneListenerObservation(retained)
-	identities := make(map[SocketIdentity]struct{}, len(merged.SocketIdentities)+len(current.SocketIdentities))
-	for _, identity := range merged.SocketIdentities {
-		identities[identity] = struct{}{}
-	}
-	for _, identity := range current.SocketIdentities {
-		if _, found := identities[identity]; !found {
-			merged.SocketIdentities = append(merged.SocketIdentities, identity)
-			identities[identity] = struct{}{}
-		}
-	}
 	chains := make(map[int]int, len(merged.Processes))
 	for index, chain := range merged.Processes {
 		chains[firstProcessPID(chain)] = index
@@ -265,17 +214,12 @@ func mergePartialListenerObservation(retained, current ListenerObservation) List
 }
 
 func listenerKey(observation ListenerObservation) remoteListenerKey {
-	return remoteListenerKey{
-		family: observation.Family,
-		scope:  observation.BindScope,
-		port:   observation.RemotePort,
-	}
+	return remoteListenerKey{family: observation.Family, scope: observation.BindScope, port: observation.RemotePort}
 }
 
 func canonicalListenerObservations(observations []ListenerObservation) []ListenerObservation {
 	canonical := cloneListenerObservations(observations)
 	for index := range canonical {
-		slices.Sort(canonical[index].SocketIdentities)
 		slices.SortFunc(canonical[index].Processes, func(left, right ProcessChain) int {
 			return cmp.Compare(firstProcessPID(left), firstProcessPID(right))
 		})
@@ -287,10 +231,7 @@ func canonicalListenerObservations(observations []ListenerObservation) []Listene
 		if order := cmp.Compare(left.BindScope, right.BindScope); order != 0 {
 			return order
 		}
-		if order := cmp.Compare(left.RemotePort, right.RemotePort); order != 0 {
-			return order
-		}
-		return cmp.Compare(firstSocketIdentity(left), firstSocketIdentity(right))
+		return cmp.Compare(left.RemotePort, right.RemotePort)
 	})
 	return canonical
 }
@@ -305,11 +246,10 @@ func cloneListenerObservations(observations []ListenerObservation) []ListenerObs
 
 func cloneListenerObservation(observation ListenerObservation) ListenerObservation {
 	cloned := ListenerObservation{
-		Family:           observation.Family,
-		BindScope:        observation.BindScope,
-		RemotePort:       observation.RemotePort,
-		SocketIdentities: slices.Clone(observation.SocketIdentities),
-		Processes:        make([]ProcessChain, len(observation.Processes)),
+		Family:     observation.Family,
+		BindScope:  observation.BindScope,
+		RemotePort: observation.RemotePort,
+		Processes:  make([]ProcessChain, len(observation.Processes)),
 	}
 	for chainIndex, chain := range observation.Processes {
 		cloned.Processes[chainIndex].Processes = make([]ProcessMetadata, len(chain.Processes))
@@ -326,11 +266,4 @@ func firstProcessPID(chain ProcessChain) int {
 		return 0
 	}
 	return chain.Processes[0].PID
-}
-
-func firstSocketIdentity(observation ListenerObservation) SocketIdentity {
-	if len(observation.SocketIdentities) == 0 {
-		return ""
-	}
-	return observation.SocketIdentities[0]
 }

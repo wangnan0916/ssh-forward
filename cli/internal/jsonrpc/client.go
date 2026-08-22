@@ -11,7 +11,6 @@ import (
 	"github.com/creachadair/jrpc2"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
-	"github.com/wangnan0916/ssh-forward/cli/internal/snapshot"
 )
 
 // DialConn checks the protocol version and returns a Manager whose operations
@@ -74,7 +73,7 @@ func (c *managerClient) Snapshot(ctx context.Context) (core.Snapshot, error) {
 	if err := c.call(ctx, methodSnapshot, nil, &wrapped); err != nil {
 		return core.Snapshot{}, err
 	}
-	return snapshot.Decode(wrapped.Snapshot), nil
+	return wrapped.Snapshot, nil
 }
 
 func (c *managerClient) Watch(ctx context.Context) (core.SnapshotStream, error) {
@@ -82,7 +81,7 @@ func (c *managerClient) Watch(ctx context.Context) (core.SnapshotStream, error) 
 	if err := c.call(ctx, methodWatch, nil, &payload); err != nil {
 		return nil, err
 	}
-	stream := newRemoteStream(c, payload.WatchID, snapshot.Decode(payload.Snapshot))
+	stream := newRemoteStream(c, payload.WatchID, payload.Snapshot)
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -110,8 +109,7 @@ func (c *managerClient) onNotify(request *jrpc2.Request) {
 		if request.UnmarshalParams(&payload) != nil {
 			return
 		}
-		snap := snapshot.Decode(payload.Snapshot)
-		c.deliver(payload.WatchID, watchUpdate{snapshot: &snap})
+		c.deliver(payload.WatchID, watchUpdate{snapshot: &payload.Snapshot})
 	case methodResyncRequired:
 		var payload resyncNotification
 		if request.UnmarshalParams(&payload) != nil {

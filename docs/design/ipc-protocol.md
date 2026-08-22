@@ -30,4 +30,4 @@ Each frame is one compact UTF-8 JSON value followed by LF. Frames are limited to
 
 Application errors expose stable `data.kind` and `retryable` fields. Current kinds are `manager_closed` and `watch_limit`; internal Go errors remain private. Snapshot and error wire DTOs stay separate from core domain types.
 
-Shared wire fixtures live under `test/protocol/v1/` and cover the version call, complete Snapshots, Watch start/unwatch, Watch-limit errors, notifications, and resync. Programmatic tests cover bounded framing, Watch cleanup, notification coalescing, and the notification-before-response race.
+Shared wire fixtures live under `test/protocol/v2/` and cover the version call, complete Snapshots, Watch start/unwatch, Watch-limit errors, notifications, and resync. Programmatic tests cover bounded framing, Watch cleanup, notification coalescing, and the notification-before-response race.

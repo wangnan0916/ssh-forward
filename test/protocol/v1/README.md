@@ -1,3 +1,0 @@
-# IPC v1 golden transcripts
-
-Request/response `.jsonl` transcripts contain alternating client request and manager response frames without transport newlines inside a frame. Files named `watch-notification` or `watch-resync-required` contain one expected manager notification. Go and future Swift Adapter tests consume the same corpus. It covers the protocol version, empty and Managed Forward Snapshots, discovery fields, Watch startup/unwatch, Watch-limit errors, Snapshot notification, and resync. Malformed UTF-8, oversized records, connection closure, and notification ordering remain programmatic tests.

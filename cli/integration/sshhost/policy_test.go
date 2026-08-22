@@ -64,7 +64,7 @@ func TestPolicyIgnoreThroughDisposableDevelopmentHost(t *testing.T) {
 	})
 	waitForBaseline(t, manager)
 
-	first := waitForSnapshot(t, manager, "ignored listener settles", func(snapshot core.Snapshot) bool {
+	waitForSnapshot(t, manager, "ignored listener settles", func(snapshot core.Snapshot) bool {
 		if snapshot.Host == nil {
 			return false
 		}
@@ -75,9 +75,11 @@ func TestPolicyIgnoreThroughDisposableDevelopmentHost(t *testing.T) {
 		}
 		return false
 	})
-	waitForSnapshot(t, manager, "second generation after ignore", func(snapshot core.Snapshot) bool {
-		return snapshot.Revision > first.Revision
-	})
+	// Ignore does not change published state, so a stable second observation
+	// correctly leaves the revision unchanged. Wait one scanner cadence to
+	// give reconciliation another observation without relying on incidental
+	// diagnostic fields to force a publication.
+	time.Sleep(2500 * time.Millisecond)
 	snapshot, err := manager.Snapshot(context.Background())
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)

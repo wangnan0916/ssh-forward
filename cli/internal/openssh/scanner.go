@@ -2,10 +2,8 @@ package openssh
 
 import (
 	"bufio"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -17,43 +15,9 @@ import (
 const (
 	maxScannerFrameBytes = 64 << 10
 	maxProcessArguments  = 64
+	maxProcessDepth      = 16
+	maxProcessTextBytes  = 4096
 )
-
-// Parser frame caps and script-local text limits are derived from the
-// embedded scanner.sh, the adapter's single declaration of every scan
-// bound. Core retention caps are independent: an ObservationSet budget
-// must fit inside MaxRetained*, not equal the parser caps.
-var (
-	maxProcessDepth             = scannerBudget("process_depth_limit")
-	maxProcessTextBytes         = scannerBudget("process_text_bytes")
-	maxIdentityTextBytes        = scannerBudget("identity_text_bytes")
-	maxObservedListeners        = scannerBudget("listener_limit")
-	maxObservedSockets          = scannerBudget("socket_record_limit")
-	maxProcessRecords           = scannerBudget("process_record_limit")
-	maxObservationMetadataBytes = scannerBudget("metadata_bytes_limit")
-)
-
-// scannerBudget reads one budget declaration from the embedded scanner
-// script, following derived declarations such as socket_record_limit and
-// metadata_hex_limit back to their numeric source. A missing or malformed
-// declaration is a package build error: the parser and the script it parses
-// must agree at startup, not by convention.
-func scannerBudget(name string) int {
-	for _, line := range strings.Split(scannerScript, "\n") {
-		if !strings.HasPrefix(line, name+"=") {
-			continue
-		}
-		value := strings.TrimPrefix(line, name+"=")
-		if number, err := strconv.Atoi(value); err == nil {
-			return number
-		}
-		if strings.HasPrefix(value, "$") {
-			return scannerBudget(strings.TrimPrefix(value, "$"))
-		}
-		panic("scanner.sh declares " + name + " with an unsupported expression: " + value)
-	}
-	panic("scanner.sh does not declare " + name)
-}
 
 var errInvalidScannerFrame = errors.New("invalid scanner frame")
 
@@ -61,10 +25,7 @@ type scannerParser struct {
 	active         bool
 	sequence       uint64
 	lastSequence   uint64
-	boot           string
-	network        string
 	capability     core.DiscoveryCapability
-	budget         core.ObservationBudget
 	listeners      []scannerListener
 	listenerKeys   map[string]struct{}
 	inodeListeners map[string]string
@@ -72,10 +33,6 @@ type scannerParser struct {
 	processes      map[string]map[int]map[int]core.ProcessMetadata
 	processCount   int
 	metadataSize   int
-	// degradedEvidence records that the parser itself downgraded a
-	// capability from what the scanner declared, so end() can distinguish
-	// "scanner reported partial" from "the parser saw incomplete evidence".
-	degradedEvidence bool
 }
 
 type scannerListener struct {
@@ -121,7 +78,7 @@ func scanObservationFrames(reader io.Reader, emit func(core.SessionFact)) {
 				continue
 			}
 		}
-		fact, complete, err := parser.accept(line)
+		set, complete, err := parser.accept(line)
 		if err != nil {
 			parser.abort()
 			discarding = true
@@ -131,7 +88,6 @@ func scanObservationFrames(reader io.Reader, emit func(core.SessionFact)) {
 		if !complete {
 			continue
 		}
-		set := fact.(core.ObservationSet)
 		lastCapability = set.Capability
 		invalidCount = 0
 		emit(set)
@@ -158,80 +114,54 @@ func isObservationBegin(line string) bool {
 	return len(fields) >= 2 && fields[1] == "B"
 }
 
-// accept consumes one wire frame line. The frame layout is the contract
-// documented at the top of scanner.sh (the embedded script); this parser is
-// its consuming side, and the two must be extended together.
-func (p *scannerParser) accept(line string) (core.SessionFact, bool, error) {
+func (p *scannerParser) accept(line string) (core.ObservationSet, bool, error) {
 	if !utf8.ValidString(line) || len(line) == 0 {
-		return nil, false, errInvalidScannerFrame
+		return core.ObservationSet{}, false, errInvalidScannerFrame
 	}
 	fields := strings.Split(line, "\t")
 	if len(fields) < 2 || fields[0] != "SF1" {
-		return nil, false, errInvalidScannerFrame
+		return core.ObservationSet{}, false, errInvalidScannerFrame
 	}
 	switch fields[1] {
 	case "B":
-		return nil, false, p.begin(fields)
+		return core.ObservationSet{}, false, p.begin(fields)
 	case "L":
-		return nil, false, p.listener(fields)
+		return core.ObservationSet{}, false, p.listener(fields)
 	case "P":
-		return nil, false, p.process(fields)
+		return core.ObservationSet{}, false, p.process(fields)
 	case "E":
 		set, err := p.end(fields)
 		if err != nil {
-			return nil, false, err
+			return core.ObservationSet{}, false, err
 		}
 		return set, true, nil
 	default:
-		return nil, false, errInvalidScannerFrame
+		return core.ObservationSet{}, false, errInvalidScannerFrame
 	}
 }
 
 func (p *scannerParser) begin(fields []string) error {
-	if p.active || len(fields) != 12 {
+	if p.active || len(fields) != 5 {
 		return errInvalidScannerFrame
 	}
 	sequence, err := parseUint(fields[2], 64)
-	// Cheap stream-local filter: a non-increasing sequence cannot be a
-	// legitimate observation. Core admission is the authority; this only
-	// avoids passing bad frames up the stream.
 	if err != nil || sequence == 0 || sequence <= p.lastSequence {
 		return errInvalidScannerFrame
 	}
-	boot, err := decodeText(fields[3], maxIdentityTextBytes, false)
-	if err != nil {
-		return errInvalidScannerFrame
-	}
-	network, err := decodeText(fields[4], maxIdentityTextBytes, false)
-	if err != nil {
-		return errInvalidScannerFrame
-	}
-	remoteListeners, err := parseCapability(fields[5])
+	remoteListeners, err := parseCapability(fields[3])
 	if err != nil {
 		return err
 	}
-	socketIdentity, err := parseCapability(fields[6])
-	if err != nil {
-		return err
-	}
-	processMetadata, err := parseCapability(fields[7])
-	if err != nil {
-		return err
-	}
-	budget, err := parseObservationBudget(fields[8], fields[9], fields[10], fields[11])
+	processMetadata, err := parseCapability(fields[4])
 	if err != nil {
 		return err
 	}
 	p.active = true
 	p.sequence = sequence
-	p.boot = boot
-	p.network = network
 	p.capability = core.DiscoveryCapability{
 		RemoteListeners: remoteListeners,
-		SocketIdentity:  socketIdentity,
 		ProcessMetadata: processMetadata,
 	}
-	p.budget = budget
 	p.listeners = nil
 	p.listenerKeys = make(map[string]struct{})
 	p.inodeListeners = make(map[string]string)
@@ -243,7 +173,7 @@ func (p *scannerParser) begin(fields []string) error {
 }
 
 func (p *scannerParser) listener(fields []string) error {
-	if !p.active || len(fields) != 7 || fields[2] != strconv.FormatUint(p.sequence, 10) || len(p.listeners) >= p.budget.Sockets {
+	if !p.active || len(fields) != 7 || fields[2] != strconv.FormatUint(p.sequence, 10) || len(p.listeners) >= core.MaxRetainedListenerObservations {
 		return errInvalidScannerFrame
 	}
 	family := core.AddressFamily(fields[3])
@@ -285,7 +215,7 @@ func (p *scannerParser) listener(fields []string) error {
 }
 
 func (p *scannerParser) process(fields []string) error {
-	if !p.active || len(fields) != 10 || fields[2] != strconv.FormatUint(p.sequence, 10) || p.processCount >= p.budget.ProcessRecords {
+	if !p.active || len(fields) != 10 || fields[2] != strconv.FormatUint(p.sequence, 10) || p.processCount >= core.MaxRetainedProcessRecords {
 		return errInvalidScannerFrame
 	}
 	inode, err := parseDecimalIdentity(fields[3])
@@ -300,20 +230,20 @@ func (p *scannerParser) process(fields []string) error {
 		return err
 	}
 	depth, err := parseUint(fields[5], 8)
-	if err != nil || depth >= uint64(maxProcessDepth) {
+	if err != nil || depth >= maxProcessDepth {
 		return errInvalidScannerFrame
 	}
 	pid, err := parsePositiveInt(fields[6])
 	if err != nil {
 		return err
 	}
-	recordSize, err := encodedMetadataSize(fields[7], fields[8], fields[9])
-	if err != nil || p.metadataSize+recordSize > p.budget.MetadataBytes {
-		return errInvalidScannerFrame
-	}
 	executable, executableAvailable, err := decodeMetadataText(fields[7])
 	if err != nil {
 		return err
+	}
+	recordSize := (len(fields[7]) + len(fields[8]) + len(fields[9])) / 2
+	if p.metadataSize+recordSize > core.MaxRetainedProcessMetadataBytes {
+		return errInvalidScannerFrame
 	}
 	workingDirectory, workingDirectoryAvailable, err := decodeMetadataText(fields[8])
 	if err != nil {
@@ -325,7 +255,6 @@ func (p *scannerParser) process(fields []string) error {
 	}
 	if !executableAvailable || !workingDirectoryAvailable || !argumentsAvailable {
 		p.capability.ProcessMetadata = core.CapabilityPartial
-		p.degradedEvidence = true
 	}
 	p.metadataSize += recordSize
 	owners := p.processes[inode]
@@ -357,12 +286,9 @@ func (p *scannerParser) end(fields []string) (core.ObservationSet, error) {
 	}
 	observations := make(map[string]*core.ListenerObservation)
 	for _, listener := range p.listeners {
-		key := fmt.Sprintf("%s\x00%s\x00%05d", listener.family, listener.scope, listener.port)
+		key := strings.Join([]string{string(listener.family), string(listener.scope), strconv.Itoa(int(listener.port))}, "\x00")
 		observation := observations[key]
 		if observation == nil {
-			if len(observations) >= p.budget.Listeners {
-				return core.ObservationSet{}, errInvalidScannerFrame
-			}
 			observation = &core.ListenerObservation{
 				Family:     listener.family,
 				BindScope:  listener.scope,
@@ -370,31 +296,16 @@ func (p *scannerParser) end(fields []string) (core.ObservationSet, error) {
 			}
 			observations[key] = observation
 		}
-		if p.capability.SocketIdentity != core.CapabilityUnavailable && p.boot != "unavailable" && p.network != "unavailable" && listener.inode != "0" {
-			observation.SocketIdentities = append(observation.SocketIdentities, socketIdentity(p.boot, p.network, listener))
-		}
 		observation.Processes = append(observation.Processes, p.processChains(listener.inode)...)
 	}
 	items := make([]core.ListenerObservation, 0, len(observations))
 	for _, observation := range observations {
 		items = append(items, *observation)
 	}
-	reason := core.CapabilityReasonNone
-	if p.degradedEvidence {
-		reason = core.CapabilityReasonEvidenceMissing
-	} else if p.capability.RemoteListeners != core.CapabilityFull ||
-		p.capability.SocketIdentity != core.CapabilityFull ||
-		p.capability.ProcessMetadata != core.CapabilityFull {
-		reason = core.CapabilityReasonScannerReported
-	}
 	set := core.ObservationSet{
-		Sequence:         p.sequence,
-		ScannerVersion:   scannerVersion,
-		ScannerChecksum:  embeddedScannerChecksum,
-		Capability:       p.capability,
-		CapabilityReason: reason,
-		Budget:           p.budget,
-		Observations:     items,
+		Sequence:     p.sequence,
+		Capability:   p.capability,
+		Observations: items,
 	}
 	p.lastSequence = p.sequence
 	p.abort()
@@ -405,13 +316,11 @@ func (p *scannerParser) processChains(inode string) []core.ProcessChain {
 	owners := p.processes[inode]
 	if len(owners) == 0 && p.capability.ProcessMetadata == core.CapabilityFull {
 		p.capability.ProcessMetadata = core.CapabilityPartial
-		p.degradedEvidence = true
 	}
 	chains := make([]core.ProcessChain, 0, len(owners))
 	for _, records := range owners {
 		if _, found := records[0]; !found {
 			p.capability.ProcessMetadata = core.CapabilityPartial
-			p.degradedEvidence = true
 			continue
 		}
 		chain := core.ProcessChain{Processes: make([]core.ProcessMetadata, 0, len(records))}
@@ -424,7 +333,6 @@ func (p *scannerParser) processChains(inode string) []core.ProcessChain {
 		}
 		if len(chain.Processes) != len(records) {
 			p.capability.ProcessMetadata = core.CapabilityPartial
-			p.degradedEvidence = true
 		}
 		chains = append(chains, chain)
 	}
@@ -434,10 +342,7 @@ func (p *scannerParser) processChains(inode string) []core.ProcessChain {
 func (p *scannerParser) abort() {
 	p.active = false
 	p.sequence = 0
-	p.boot = ""
-	p.network = ""
 	p.capability = core.DiscoveryCapability{}
-	p.budget = core.ObservationBudget{}
 	p.listeners = nil
 	p.listenerKeys = nil
 	p.inodeListeners = nil
@@ -445,34 +350,6 @@ func (p *scannerParser) abort() {
 	p.processes = nil
 	p.processCount = 0
 	p.metadataSize = 0
-}
-
-// parseObservationBudget validates the declared evidence budget: each
-// dimension must be at least one and within the scanner's own frame limits, so
-// a mismatched script cannot silently change what core may retain.
-func parseObservationBudget(listeners, sockets, processRecords, metadataBytes string) (core.ObservationBudget, error) {
-	parse := func(value string, maximum uint64) (int, error) {
-		parsed, err := parseUint(value, 32)
-		if err != nil || parsed == 0 || parsed > maximum {
-			return 0, errInvalidScannerFrame
-		}
-		return int(parsed), nil
-	}
-	budget := core.ObservationBudget{}
-	var err error
-	if budget.Listeners, err = parse(listeners, uint64(maxObservedListeners)); err != nil {
-		return core.ObservationBudget{}, err
-	}
-	if budget.Sockets, err = parse(sockets, uint64(maxObservedSockets)); err != nil {
-		return core.ObservationBudget{}, err
-	}
-	if budget.ProcessRecords, err = parse(processRecords, uint64(maxProcessRecords)); err != nil {
-		return core.ObservationBudget{}, err
-	}
-	if budget.MetadataBytes, err = parse(metadataBytes, uint64(maxObservationMetadataBytes)); err != nil {
-		return core.ObservationBudget{}, err
-	}
-	return budget, nil
 }
 
 func parseCapability(value string) (core.CapabilityAvailability, error) {
@@ -488,7 +365,6 @@ func parseCapability(value string) (core.CapabilityAvailability, error) {
 func unavailableDiscoveryCapability() core.DiscoveryCapability {
 	return core.DiscoveryCapability{
 		RemoteListeners: core.CapabilityUnavailable,
-		SocketIdentity:  core.CapabilityUnavailable,
 		ProcessMetadata: core.CapabilityUnavailable,
 	}
 }
@@ -520,10 +396,6 @@ func parseDecimalIdentity(value string) (string, error) {
 	return value, nil
 }
 
-// decodeBoundedHex decodes one hex-encoded frame field, enforcing the
-// envelope invariant shared by every field decoder: the hex text is even and
-// decodes to at most maximum bytes. Field-specific policy (absent vs empty,
-// UTF-8, NUL separation) stays in the callers.
 func decodeBoundedHex(value string, maximum int) ([]byte, error) {
 	if len(value) > maximum*2 || len(value)%2 != 0 {
 		return nil, errInvalidScannerFrame
@@ -533,29 +405,6 @@ func decodeBoundedHex(value string, maximum int) ([]byte, error) {
 		return nil, errInvalidScannerFrame
 	}
 	return decoded, nil
-}
-
-func decodeText(value string, maximum int, allowEmpty bool) (string, error) {
-	decoded, err := decodeBoundedHex(value, maximum)
-	if err != nil {
-		return "", err
-	}
-	if (!allowEmpty && len(decoded) == 0) || !utf8.Valid(decoded) || strings.IndexByte(string(decoded), 0) >= 0 {
-		return "", errInvalidScannerFrame
-	}
-	return string(decoded), nil
-}
-
-func encodedMetadataSize(values ...string) (int, error) {
-	total := 0
-	for _, value := range values {
-		decoded, err := decodeBoundedHex(value, maxProcessTextBytes)
-		if err != nil {
-			return 0, err
-		}
-		total += len(decoded)
-	}
-	return total, nil
 }
 
 func decodeMetadataText(value string) (string, bool, error) {
@@ -586,9 +435,4 @@ func decodeArguments(value string) ([]string, bool, error) {
 		parts = parts[:maxProcessArguments]
 	}
 	return parts, complete, nil
-}
-
-func socketIdentity(boot, network string, listener scannerListener) core.SocketIdentity {
-	digest := sha256.Sum256([]byte(strings.Join([]string{boot, network, string(listener.family), listener.inode}, "\x00")))
-	return core.SocketIdentity("socket:" + hex.EncodeToString(digest[:]))
 }

@@ -39,26 +39,12 @@ type SessionFact interface {
 }
 
 type ObservationSet struct {
-	Sequence         uint64
-	ScannerVersion   int
-	ScannerChecksum  string
-	Capability       DiscoveryCapability
-	CapabilityReason CapabilityReason
-	Budget           ObservationBudget
-	Observations     []ListenerObservation
+	Sequence     uint64
+	Capability   DiscoveryCapability
+	Observations []ListenerObservation
 }
 
 func (ObservationSet) isSessionFact() {}
-
-// ObservationBudget is the evidence the adapter declares its scans are
-// bounded to; core validates it against its own retention caps so a
-// mismatched scanner cannot silently exceed what a full scan may retain.
-type ObservationBudget struct {
-	Listeners      int
-	Sockets        int
-	ProcessRecords int
-	MetadataBytes  int
-}
 
 // DiscoveryReason is the domain vocabulary an adapter uses to report why
 // Discovery is degraded or failed. Framing, streams, and scanner scripts

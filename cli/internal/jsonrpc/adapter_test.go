@@ -110,7 +110,7 @@ func (s *testSession) exchange(t *testing.T, request string) []byte {
 func TestServeReportsProtocolVersion(t *testing.T) {
 	session := newTestSession(t)
 	response := session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"system.version"}`)
-	assertJSONEqual(t, response, []byte(`{"jsonrpc":"2.0","id":"1","result":{"version":1}}`))
+	assertJSONEqual(t, response, []byte(`{"jsonrpc":"2.0","id":"1","result":{"version":2}}`))
 }
 
 func TestServeSnapshotDoesNotRequireHandshakeOrScope(t *testing.T) {
@@ -167,7 +167,6 @@ func TestSharedGoldenTranscripts(t *testing.T) {
 						State: core.DiscoveryStarting,
 						Capability: core.DiscoveryCapability{
 							RemoteListeners: core.CapabilityUnavailable,
-							SocketIdentity:  core.CapabilityUnavailable,
 							ProcessMetadata: core.CapabilityUnavailable,
 						},
 					},
@@ -179,7 +178,7 @@ func TestSharedGoldenTranscripts(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			path := filepath.Join("..", "..", "..", "test", "protocol", "v1", test.name)
+			path := filepath.Join("..", "..", "..", "test", "protocol", "v2", test.name)
 			contents, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
@@ -207,19 +206,15 @@ func discoveryFixtureSnapshot() core.Snapshot {
 				State: core.DiscoveryDegraded,
 				Capability: core.DiscoveryCapability{
 					RemoteListeners: core.CapabilityFull,
-					SocketIdentity:  core.CapabilityFull,
 					ProcessMetadata: core.CapabilityPartial,
 				},
 				BaselineEstablished: true,
-				ScannerVersion:      1,
-				ScannerChecksum:     "abc123",
 				Diagnostic:          "process_metadata_partial",
 			},
 			ListenerObservations: []core.ListenerObservation{{
-				Family:           core.FamilyIPv4,
-				BindScope:        core.BindLoopback,
-				RemotePort:       8080,
-				SocketIdentities: []core.SocketIdentity{core.SocketIdentity("socket:one")},
+				Family:     core.FamilyIPv4,
+				BindScope:  core.BindLoopback,
+				RemotePort: 8080,
 				Processes: []core.ProcessChain{{Processes: []core.ProcessMetadata{{
 					PID:              42,
 					Executable:       "/usr/bin/python3",
@@ -243,7 +238,7 @@ func TestServeReturnsCompleteManagerSnapshot(t *testing.T) {
 	}}
 	session := newTestSessionWithManager(t, &snapshotManager{snapshot: snapshot})
 	response := session.exchange(t, `{"jsonrpc":"2.0","id":"1","method":"manager.snapshot"}`)
-	want := `{"jsonrpc":"2.0","id":"1","result":{"snapshot":{"revision":9,"host":{"alias":"development","connection":"connected","discovery":{"state":"degraded","capability":{"remote_listeners":"full","socket_identity":"full","process_metadata":"partial"},"baseline_established":true,"scanner_version":1,"scanner_checksum":"abc123","diagnostic":"process_metadata_partial"},"listener_observations":[{"family":"ipv4","bind_scope":"loopback","remote_port":8080,"socket_identities":["socket:one"],"process_chains":[{"processes":[{"pid":42,"executable":"/usr/bin/python3","working_directory":"/workspace","arguments":["python3","app.py"]}]}]}],"forwards":[{"id":"managed:ipv4:loopback:8080","remote_port":8080,"remote_family":"ipv4","allocated_local_port":8081,"local_families":["ipv4","ipv6"]}]}}}}`
+	want := `{"jsonrpc":"2.0","id":"1","result":{"snapshot":{"revision":9,"host":{"alias":"development","connection":"connected","discovery":{"state":"degraded","capability":{"remote_listeners":"full","process_metadata":"partial"},"baseline_established":true,"diagnostic":"process_metadata_partial"},"listener_observations":[{"family":"ipv4","bind_scope":"loopback","remote_port":8080,"process_chains":[{"processes":[{"pid":42,"executable":"/usr/bin/python3","working_directory":"/workspace","arguments":["python3","app.py"]}]}]}],"forwards":[{"id":"managed:ipv4:loopback:8080","remote_port":8080,"remote_family":"ipv4","allocated_local_port":8081,"local_families":["ipv4","ipv6"]}]}}}}`
 	assertJSONEqual(t, response, []byte(want))
 }
 

@@ -18,10 +18,6 @@ _Avoid_: Client, Mac
 An eligible TCP listening endpoint identified by its Development Host, address family, bind scope, and remote port. It may bind loopback or a wildcard address and is identified independently of whichever processes currently hold its sockets.
 _Avoid_: Service, remote service, process
 
-**Socket Identity**:
-An opaque equality token for one observed listening socket on a Development Host. It remains comparable across Forwarding Sessions only while the Development Host boot and observed network namespace remain the same.
-_Avoid_: Inode, socket ID, process identity
-
 **Wildcard Listener**:
 A Remote Listener bound to all network interfaces rather than only loopback. It is treated as already exposed on the Development Host and requires an explicit policy before automatic forwarding.
 _Avoid_: Public service, loopback listener
@@ -55,12 +51,8 @@ The current health of Remote Listener observation for one Development Host, inde
 _Avoid_: Connection State, Forwarding Session State
 
 **Discovery Capability**:
-The observation evidence currently available for a Development Host, distinguishing Remote Listener visibility from socket and process attribution.
+The observation evidence currently available for a Development Host, distinguishing Remote Listener visibility from Process Metadata.
 _Avoid_: Discovery State, permission level
-
-**Capability Reason**:
-The explanation of why a Discovery Capability dimension is not full, distinguishing scanner-declared partiality from evidence the scanner saw as missing and from evidence core dropped at retention caps. Core has one Diagnostic table that turns this, observation gaps, and DiscoveryChange reasons into the Discovery Diagnostic shown on the wire.
-_Avoid_: Diagnostic, failure reason, partiality flag
 
 **Connection Diagnostic**:
 The user-visible explanation of a terminal Forwarding Session failure (invalid alias, authentication, or host-key), independent of Discovery Diagnostic. It is empty while the session is connecting, connected, or retrying.
@@ -79,8 +71,8 @@ The first complete set of Listener Observations after connecting to a Developmen
 _Avoid_: Saved state, Forwarding Policy
 
 **Listener Lifetime**:
-The period during which a Remote Listener remains the same endpoint across successful observations, identified by Development Host, address family, bind scope, and remote port. Socket Identity is observation evidence, not that identity.
-_Avoid_: Process lifetime, Forwarding Session, Socket Identity as listener identity
+The period during which a Remote Listener remains the same endpoint across successful observations, identified by Development Host, address family, bind scope, and remote port.
+_Avoid_: Process lifetime, Forwarding Session, Listener Process as listener identity
 
 **Listener Process**:
 Any process observed holding a socket associated with a Remote Listener. A listener may have zero, one, or multiple Listener Processes.

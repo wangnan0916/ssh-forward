@@ -59,31 +59,15 @@ const (
 )
 
 type DiscoveryCapability struct {
-	RemoteListeners CapabilityAvailability
-	SocketIdentity  CapabilityAvailability
-	ProcessMetadata CapabilityAvailability
+	RemoteListeners CapabilityAvailability `json:"remote_listeners"`
+	ProcessMetadata CapabilityAvailability `json:"process_metadata"`
 }
 
-// CapabilityReason explains why a Discovery Capability dimension is not
-// full. Evidence producers attach it to an ObservationSet; discoveryDiagnostic
-// is the single table that turns it (and gaps, and DiscoveryChange reasons)
-// into the wire Diagnostic. Empty means there is no partiality to explain.
-type CapabilityReason string
-
-const (
-	CapabilityReasonNone              CapabilityReason = ""
-	CapabilityReasonScannerReported   CapabilityReason = "scanner_reported"
-	CapabilityReasonEvidenceMissing   CapabilityReason = "evidence_missing"
-	CapabilityReasonEvidenceTruncated CapabilityReason = "evidence_truncated"
-)
-
 type DiscoverySnapshot struct {
-	State               DiscoveryState
-	Capability          DiscoveryCapability
-	BaselineEstablished bool
-	ScannerVersion      int
-	ScannerChecksum     string
-	Diagnostic          string
+	State               DiscoveryState      `json:"state"`
+	Capability          DiscoveryCapability `json:"capability"`
+	BaselineEstablished bool                `json:"baseline_established"`
+	Diagnostic          string              `json:"diagnostic"`
 }
 
 type ListenerBindScope string
@@ -93,53 +77,50 @@ const (
 	BindWildcard ListenerBindScope = "wildcard"
 )
 
-type SocketIdentity string
-
 type ProcessMetadata struct {
-	PID              int
-	Executable       string
-	WorkingDirectory string
-	Arguments        []string
+	PID              int      `json:"pid"`
+	Executable       string   `json:"executable"`
+	WorkingDirectory string   `json:"working_directory"`
+	Arguments        []string `json:"arguments"`
 }
 
 type ProcessChain struct {
-	Processes []ProcessMetadata
+	Processes []ProcessMetadata `json:"processes"`
 }
 
 type ListenerObservation struct {
-	Family           AddressFamily
-	BindScope        ListenerBindScope
-	RemotePort       uint16
-	SocketIdentities []SocketIdentity
-	Processes        []ProcessChain
+	Family     AddressFamily     `json:"family"`
+	BindScope  ListenerBindScope `json:"bind_scope"`
+	RemotePort uint16            `json:"remote_port"`
+	Processes  []ProcessChain    `json:"process_chains"`
 }
 
 type ForwardSnapshot struct {
-	ID                 ForwardID
-	RemotePort         uint16
-	RemoteFamily       AddressFamily
-	AllocatedLocalPort uint16
-	LocalFamilies      []AddressFamily
+	ID                 ForwardID       `json:"id"`
+	RemotePort         uint16          `json:"remote_port"`
+	RemoteFamily       AddressFamily   `json:"remote_family"`
+	AllocatedLocalPort uint16          `json:"allocated_local_port"`
+	LocalFamilies      []AddressFamily `json:"local_families"`
 }
 
 // LocalPortConflict is a Remote Listener whose Local Endpoint could not be
 // allocated under the configured conflict policy.
 type LocalPortConflict struct {
-	RemotePort   uint16
-	RemoteFamily AddressFamily
-	BindScope    ListenerBindScope
+	RemotePort   uint16            `json:"remote_port"`
+	RemoteFamily AddressFamily     `json:"remote_family"`
+	BindScope    ListenerBindScope `json:"bind_scope"`
 }
 
 // HostSnapshot is the composed host view on a Snapshot.
 type HostSnapshot struct {
-	Alias                HostAlias
-	Connection           ConnectionState
-	ConnectionDiagnostic string
-	Discovery            DiscoverySnapshot
-	ListenerObservations []ListenerObservation
-	Forwards             []ForwardSnapshot
-	LocalPortConflicts   []LocalPortConflict
-	PolicyDiagnostic     string
+	Alias                HostAlias             `json:"alias"`
+	Connection           ConnectionState       `json:"connection"`
+	ConnectionDiagnostic string                `json:"connection_diagnostic,omitempty"`
+	Discovery            DiscoverySnapshot     `json:"discovery"`
+	ListenerObservations []ListenerObservation `json:"listener_observations"`
+	Forwards             []ForwardSnapshot     `json:"forwards"`
+	LocalPortConflicts   []LocalPortConflict   `json:"local_port_conflicts,omitempty"`
+	PolicyDiagnostic     string                `json:"policy_diagnostic,omitempty"`
 }
 
 type ErrorKind string
@@ -162,8 +143,8 @@ func (e *DomainError) Error() string {
 // Snapshot is the complete Manager state for its one Development Host.
 // Host is nil while no Development Host is configured.
 type Snapshot struct {
-	Revision Revision
-	Host     *HostSnapshot
+	Revision Revision      `json:"revision"`
+	Host     *HostSnapshot `json:"host,omitempty"`
 }
 type SnapshotStream interface {
 	Next(context.Context) (Snapshot, error)

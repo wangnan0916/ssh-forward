@@ -1,0 +1,2 @@
+{"jsonrpc":"2.0","id":"1","method":"manager.snapshot"}
+{"jsonrpc":"2.0","id":"1","result":{"snapshot":{"revision":9,"host":{"alias":"development","connection":"connected","discovery":{"state":"starting","capability":{"remote_listeners":"unavailable","process_metadata":"unavailable"},"baseline_established":false,"diagnostic":""},"listener_observations":[],"forwards":[{"id":"managed:ipv4:loopback:8080","remote_port":8080,"remote_family":"ipv4","allocated_local_port":8081,"local_families":["ipv4","ipv6"]}]}}}}

@@ -74,7 +74,7 @@ func TestDialWatchBuffersNotificationSentBeforeSubscribeResponse(t *testing.T) {
 		defer close(serverDone)
 		reader := bufio.NewReader(serverConn)
 		versionID := readRequestID(t, reader)
-		writeJSONFrame(t, serverConn, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{"version":1}}`, versionID))
+		writeJSONFrame(t, serverConn, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{"version":2}}`, versionID))
 		watchID := readRequestID(t, reader)
 		writeJSONFrame(t, serverConn, `{"jsonrpc":"2.0","method":"manager.snapshot","params":{"watch_id":"watch-1","snapshot":{"revision":2}}}`)
 		writeJSONFrame(t, serverConn, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{"watch_id":"watch-1","snapshot":{"revision":1}}}`, watchID))
@@ -109,11 +109,11 @@ func TestDialRejectsProtocolVersionMismatch(t *testing.T) {
 		defer close(serverDone)
 		reader := bufio.NewReader(serverConn)
 		versionID := readRequestID(t, reader)
-		writeJSONFrame(t, serverConn, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{"version":2}}`, versionID))
+		writeJSONFrame(t, serverConn, fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{"version":1}}`, versionID))
 	}()
 
 	_, err := jsonrpc.DialConn(t.Context(), clientConn)
-	if err == nil || !strings.Contains(err.Error(), "protocol 2, want 1") {
+	if err == nil || !strings.Contains(err.Error(), "protocol 1, want 2") {
 		t.Fatalf("DialConn error = %v, want protocol mismatch", err)
 	}
 	_ = serverConn.Close()

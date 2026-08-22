@@ -6,13 +6,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
-
-	"github.com/google/go-cmp/cmp"
 )
 
 func TestScannerRequiresCanonicalDecimalIdentities(t *testing.T) {
@@ -24,113 +21,49 @@ func TestScannerRequiresCanonicalDecimalIdentities(t *testing.T) {
 	}
 	for _, value := range []string{"00", "042"} {
 		if identity, err := parseDecimalIdentity(value); err == nil {
-			t.Fatalf("parseDecimalIdentity(%q) = %q, want invalid non-canonical identity", value, identity)
+			t.Fatalf("parseDecimalIdentity(%q) = %q, want invalid", value, identity)
 		}
-	}
-}
-
-func TestScannerAttachesPartialityReason(t *testing.T) {
-	hexText := func(value string) string { return hex.EncodeToString([]byte(value)) }
-	// Scanner-declared partiality: the boot frame itself reports process
-	// capability partial, and the process evidence is complete.
-	var declared strings.Builder
-	fmt.Fprintf(&declared, "SF1\tB\t1\t%s\t%s\tfull\tfull\tpartial\t%d\t%d\t%d\t%d\n", hexText("boot"), hexText("net"), maxObservedListeners, maxObservedSockets, maxProcessRecords, maxObservationMetadataBytes)
-	fmt.Fprintf(&declared, "SF1\tL\t1\tipv4\tloopback\t8080\t42\n")
-	fmt.Fprintf(&declared, "SF1\tP\t1\t42\t7\t0\t7\t%s\t%s\t%s\n", hexText("/bin/server"), hexText("/workspace"), hexText("server\x00"))
-	declared.WriteString("SF1\tE\t1\n")
-	var declaredSet core.ObservationSet
-	scanObservationFrames(strings.NewReader(declared.String()), func(fact core.SessionFact) {
-		if set, ok := fact.(core.ObservationSet); ok {
-			declaredSet = set
-		}
-	})
-	if declaredSet.Capability.ProcessMetadata != core.CapabilityPartial {
-		t.Fatalf("declared capability = %#v, want partial process metadata", declaredSet.Capability)
-	}
-	if declaredSet.CapabilityReason != core.CapabilityReasonScannerReported {
-		t.Fatalf("CapabilityReason = %q, want scanner_reported", declaredSet.CapabilityReason)
-	}
-
-	// Parser-recomputed partiality: the boot frame declares full, but the
-	// chain is missing depth 0, so the parser degrades the capability from
-	// evidence it saw itself.
-	var recomputed strings.Builder
-	fmt.Fprintf(&recomputed, "SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t%d\t%d\t%d\t%d\n", hexText("boot"), hexText("net"), maxObservedListeners, maxObservedSockets, maxProcessRecords, maxObservationMetadataBytes)
-	fmt.Fprintf(&recomputed, "SF1\tL\t1\tipv4\tloopback\t8080\t42\n")
-	fmt.Fprintf(&recomputed, "SF1\tP\t1\t42\t7\t1\t7\t%s\t%s\t%s\n", hexText("/bin/server"), hexText("/workspace"), hexText("server\x00"))
-	recomputed.WriteString("SF1\tE\t1\n")
-	var recomputedSet core.ObservationSet
-	scanObservationFrames(strings.NewReader(recomputed.String()), func(fact core.SessionFact) {
-		if set, ok := fact.(core.ObservationSet); ok {
-			recomputedSet = set
-		}
-	})
-	if recomputedSet.CapabilityReason != core.CapabilityReasonEvidenceMissing {
-		t.Fatalf("CapabilityReason = %q, want evidence_missing", recomputedSet.CapabilityReason)
-	}
-}
-
-func TestScannerRejectsProcessEvidenceExpansionAcrossListenerEndpoints(t *testing.T) {
-	hexText := func(value string) string { return hex.EncodeToString([]byte(value)) }
-	var input strings.Builder
-	fmt.Fprintf(&input, "SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t%d\t%d\t%d\t%d\n", hexText("boot"), hexText("net"), maxObservedListeners, maxObservedSockets, maxProcessRecords, maxObservationMetadataBytes)
-	for index := 0; index < maxObservedListeners; index++ {
-		fmt.Fprintf(&input, "SF1\tL\t1\tipv4\tloopback\t%d\t42\n", 10000+index)
-	}
-	fmt.Fprintf(&input, "SF1\tP\t1\t42\t7\t0\t7\t%s\t%s\t%s\n", hexText("/bin/server"), hexText("/workspace"), hexText("server\x00"))
-	input.WriteString("SF1\tE\t1\n")
-
-	var facts []core.SessionFact
-	scanObservationFrames(strings.NewReader(input.String()), func(fact core.SessionFact) {
-		facts = append(facts, fact)
-	})
-	for _, fact := range facts {
-		if _, ok := fact.(core.ObservationSet); ok {
-			t.Fatalf("scanner accepted one inode for %d distinct endpoints", maxObservedListeners)
-		}
-	}
-	if len(facts) != 1 {
-		t.Fatalf("scanner facts = %#v, want one degraded DiscoveryChange", facts)
-	}
-	change, ok := facts[0].(core.DiscoveryChange)
-	if !ok || change.State != core.DiscoveryDegraded || change.Reason != core.ReasonObservationInvalid {
-		t.Fatalf("scanner fact = %#v, want degraded invalid frame", facts[0])
 	}
 }
 
 func TestScannerDowngradesIncompleteProcessChain(t *testing.T) {
-	hexText := func(value string) string { return hex.EncodeToString([]byte(value)) }
 	input := fmt.Sprintf(
-		"SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t%d\t%d\t%d\t%d\n"+
+		"SF1\tB\t1\tfull\tfull\n"+
 			"SF1\tL\t1\tipv4\tloopback\t8080\t42\n"+
 			"SF1\tP\t1\t42\t7\t1\t6\t%s\t%s\t%s\n"+
 			"SF1\tE\t1\n",
-		hexText("boot"), hexText("net"), maxObservedListeners, maxObservedSockets, maxProcessRecords, maxObservationMetadataBytes, hexText("/bin/parent"), hexText("/workspace"), hexText("parent\x00"),
+		hexText("/bin/parent"), hexText("/workspace"), hexText("parent\x00"),
 	)
-	var set core.ObservationSet
-	scanObservationFrames(strings.NewReader(input), func(fact core.SessionFact) {
-		if observation, ok := fact.(core.ObservationSet); ok {
-			set = observation
-		}
-	})
+	set, _ := parseScannerFacts(input)
 	if set.Capability.ProcessMetadata != core.CapabilityPartial {
 		t.Fatalf("Process Metadata capability = %q, want partial", set.Capability.ProcessMetadata)
 	}
 }
 
-func TestScannerCountsUnsupportedObservationBeginsWhileDiscarding(t *testing.T) {
-	input := strings.Repeat("SF2\tB\t1\tunsupported\n", 3)
-	var changes []core.DiscoveryChange
-	scanObservationFrames(strings.NewReader(input), func(fact core.SessionFact) {
-		if change, ok := fact.(core.DiscoveryChange); ok {
-			changes = append(changes, change)
-		}
-	})
-	if len(changes) != 3 {
-		t.Fatalf("Discovery changes = %#v, want three consecutive invalid observations", changes)
+func TestScannerRejectsReusedInodeAcrossEndpoints(t *testing.T) {
+	input := "SF1\tB\t1\tfull\tfull\n" +
+		"SF1\tL\t1\tipv4\tloopback\t8080\t42\n" +
+		"SF1\tL\t1\tipv4\tloopback\t8081\t42\n" +
+		"SF1\tE\t1\n"
+	_, facts := parseScannerFacts(input)
+	if len(facts) != 1 {
+		t.Fatalf("facts = %#v, want one invalid change", facts)
 	}
-	if changes[0].State != core.DiscoveryDegraded || changes[1].State != core.DiscoveryDegraded || changes[2].State != core.DiscoveryFailed {
-		t.Fatalf("invalid observation states = %#v, want degraded, degraded, failed", changes)
+	change, ok := facts[0].(core.DiscoveryChange)
+	if !ok || change.State != core.DiscoveryDegraded || change.Reason != core.ReasonObservationInvalid {
+		t.Fatalf("fact = %#v, want degraded invalid frame", facts[0])
+	}
+}
+
+func TestScannerCountsUnsupportedObservations(t *testing.T) {
+	_, facts := parseScannerFacts(strings.Repeat("SF2\tB\t1\tunsupported\n", 3))
+	if len(facts) != 3 {
+		t.Fatalf("facts = %#v, want three changes", facts)
+	}
+	for index, state := range []core.DiscoveryState{core.DiscoveryDegraded, core.DiscoveryDegraded, core.DiscoveryFailed} {
+		if change := facts[index].(core.DiscoveryChange); change.State != state {
+			t.Fatalf("change %d = %#v, want %q", index, change, state)
+		}
 	}
 }
 
@@ -144,12 +77,9 @@ func TestScannerFallbackTriesProcThenSSThenLsof(t *testing.T) {
 choose_scanner_source() {
     scanner_source=proc
     base_listener_capability=full
-    base_socket_capability=full
 }
 command() {
-    if [ "$1" = -v ] && { [ "$2" = ss ] || [ "$2" = lsof ]; }; then
-        return 0
-    fi
+    if [ "$1" = -v ] && { [ "$2" = ss ] || [ "$2" = lsof ]; }; then return 0; fi
     return 1
 }
 scan_listeners() {
@@ -164,9 +94,7 @@ choose_scanner_source
 scan_current_listeners
 printf '%%s|%%s|%%s\n' "$scanner_source" "$scan_status" "$current_listeners"
 `, shellQuote(attempts))
-	command := exec.Command("/bin/sh")
-	command.Stdin = strings.NewReader(harness)
-	output, err := command.CombinedOutput()
+	output, err := runShell(harness)
 	if err != nil {
 		t.Fatalf("exercise scanner fallback: %v\n%s", err, output)
 	}
@@ -178,102 +106,29 @@ printf '%%s|%%s|%%s\n' "$scanner_source" "$scan_status" "$current_listeners"
 		t.Fatalf("read fallback attempts: %v", err)
 	}
 	if got := strings.Fields(string(attempted)); fmt.Sprint(got) != "[proc ss lsof]" {
-		t.Fatalf("fallback attempts = %v, want proc, ss, lsof", got)
+		t.Fatalf("fallback attempts = %v", got)
 	}
 }
 
-func TestScannerRejectsDeclaredBudgetBeyondFrameLimits(t *testing.T) {
-	hexText := func(value string) string { return hex.EncodeToString([]byte(value)) }
-	budget := func(listeners, sockets, records, metadata int) string {
-		return strings.Join([]string{strconv.Itoa(listeners), strconv.Itoa(sockets), strconv.Itoa(records), strconv.Itoa(metadata)}, "\t")
-	}
-	for name, frame := range map[string]string{
-		"listeners": budget(maxObservedListeners+1, maxObservedSockets, maxProcessRecords, maxObservationMetadataBytes),
-		"sockets":   budget(maxObservedListeners, maxObservedSockets+1, maxProcessRecords, maxObservationMetadataBytes),
-		"processes": budget(maxObservedListeners, maxObservedSockets, maxProcessRecords+1, maxObservationMetadataBytes),
-		"metadata":  budget(maxObservedListeners, maxObservedSockets, maxProcessRecords, maxObservationMetadataBytes+1),
-		"zero":      budget(0, maxObservedSockets, maxProcessRecords, maxObservationMetadataBytes),
-	} {
-		t.Run(name, func(t *testing.T) {
-			input := fmt.Sprintf("SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t%s\nSF1\tE\t1\n", hexText("boot"), hexText("net"), frame)
-			var facts []core.SessionFact
-			scanObservationFrames(strings.NewReader(input), func(fact core.SessionFact) {
-				facts = append(facts, fact)
-			})
-			if len(facts) != 1 {
-				t.Fatalf("scanner facts = %#v, want one invalid frame change", facts)
-			}
-			change, ok := facts[0].(core.DiscoveryChange)
-			if !ok || change.Reason != core.ReasonObservationInvalid {
-				t.Fatalf("scanner fact = %#v, want invalid frame change", facts[0])
-			}
-		})
-	}
-}
-
-func TestScannerRejectsRecordsBeyondDeclaredBudget(t *testing.T) {
-	hexText := func(value string) string { return hex.EncodeToString([]byte(value)) }
-	input := fmt.Sprintf(
-		"SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t2\t1\t1\t128\n"+
-			"SF1\tL\t1\tipv4\tloopback\t8080\t42\n"+
-			"SF1\tL\t1\tipv6\tloopback\t8080\t43\n"+
-			"SF1\tE\t1\n",
-		hexText("boot"), hexText("net"),
-	)
-	var facts []core.SessionFact
-	scanObservationFrames(strings.NewReader(input), func(fact core.SessionFact) {
-		facts = append(facts, fact)
-	})
-	if len(facts) != 1 {
-		t.Fatalf("scanner facts = %#v, want one invalid frame change", facts)
-	}
-	if change, ok := facts[0].(core.DiscoveryChange); !ok || change.Reason != core.ReasonObservationInvalid {
-		t.Fatalf("scanner fact = %#v, want invalid frame change", facts[0])
-	}
-}
-
-func TestScannerParsesDeclaredBudget(t *testing.T) {
-	hexText := func(value string) string { return hex.EncodeToString([]byte(value)) }
-	input := fmt.Sprintf(
-		"SF1\tB\t1\t%s\t%s\tfull\tfull\tfull\t%d\t%d\t%d\t%d\n"+
-			"SF1\tE\t1\n",
-		hexText("boot"), hexText("net"), maxObservedListeners, maxObservedSockets, maxProcessRecords, maxObservationMetadataBytes,
-	)
-	var set core.ObservationSet
-	scanObservationFrames(strings.NewReader(input), func(fact core.SessionFact) {
-		if observation, ok := fact.(core.ObservationSet); ok {
-			set = observation
-		}
-	})
-	want := core.ObservationBudget{Listeners: maxObservedListeners, Sockets: maxObservedSockets, ProcessRecords: maxProcessRecords, MetadataBytes: maxObservationMetadataBytes}
-	if diff := cmp.Diff(set.Budget, want); diff != "" {
-		t.Fatalf("declared Budget mismatch (-got +want):\n%s", diff)
-	}
-}
-
-func TestScannerListenerRecordLimitDowngradesAvailableEvidence(t *testing.T) {
+func TestScannerListenerLimitDowngradesCapabilities(t *testing.T) {
 	prefix, _, found := strings.Cut(scannerScript, "\nwhile :; do\n")
 	if !found {
 		t.Fatal("scanner main loop marker is missing")
 	}
-	harness := prefix + `
+	output, err := runShell(prefix + `
 listener_count=256
 listener_capability=full
-socket_capability=full
 process_capability=full
 apply_listener_record_limit
-printf '%s|%s|%s\n' "$listener_capability" "$socket_capability" "$process_capability"
+printf '%s|%s\n' "$listener_capability" "$process_capability"
 process_capability=unavailable
 apply_listener_record_limit
 printf '%s\n' "$process_capability"
-`
-	command := exec.Command("/bin/sh")
-	command.Stdin = strings.NewReader(harness)
-	output, err := command.CombinedOutput()
+`)
 	if err != nil {
-		t.Fatalf("apply listener record limit: %v\n%s", err, output)
+		t.Fatalf("apply listener limit: %v\n%s", err, output)
 	}
-	if got := strings.TrimSpace(string(output)); got != "partial|partial|partial\nunavailable" {
+	if got := strings.TrimSpace(string(output)); got != "partial|partial\nunavailable" {
 		t.Fatalf("limited capabilities = %q", got)
 	}
 }
@@ -291,38 +146,38 @@ func TestScannerMarksTruncatedCommandLine(t *testing.T) {
 if read_process_arguments %s; then status=complete; else status=partial; fi
 printf '%%s|%%s\n' "$status" "${#arguments_hex}"
 `, shellQuote(path))
-	command := exec.Command("/bin/sh")
-	command.Stdin = strings.NewReader(harness)
-	output, err := command.CombinedOutput()
+	output, err := runShell(harness)
 	if err != nil {
 		t.Fatalf("read bounded command line: %v\n%s", err, output)
 	}
 	want := fmt.Sprintf("partial|%d", maxProcessTextBytes*2)
 	if got := strings.TrimSpace(string(output)); got != want {
-		t.Fatalf("bounded command line = %q, want %q (script truncation must match the parser's text cap)", got, want)
+		t.Fatalf("bounded command line = %q, want %q", got, want)
 	}
+}
+
+func parseScannerFacts(input string) (core.ObservationSet, []core.SessionFact) {
+	var set core.ObservationSet
+	var facts []core.SessionFact
+	scanObservationFrames(strings.NewReader(input), func(fact core.SessionFact) {
+		facts = append(facts, fact)
+		if observation, ok := fact.(core.ObservationSet); ok {
+			set = observation
+		}
+	})
+	return set, facts
+}
+
+func hexText(value string) string {
+	return hex.EncodeToString([]byte(value))
+}
+
+func runShell(script string) ([]byte, error) {
+	command := exec.Command("/bin/sh")
+	command.Stdin = strings.NewReader(script)
+	return command.CombinedOutput()
 }
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
-}
-
-// Parser caps come from scanner.sh. Core retention is a separate policy:
-// a declared budget must fit inside MaxRetained*, not match the parser cap.
-func TestParserBudgetsFitCoreRetention(t *testing.T) {
-	cases := []struct {
-		name string
-		got  int
-		want int
-	}{
-		{"listeners", maxObservedListeners, core.MaxRetainedListenerObservations},
-		{"sockets", maxObservedSockets, core.MaxRetainedSocketIdentities},
-		{"processes", maxProcessRecords, core.MaxRetainedProcessRecords},
-		{"metadata", maxObservationMetadataBytes, core.MaxRetainedProcessMetadataBytes},
-	}
-	for _, test := range cases {
-		if test.got > test.want {
-			t.Fatalf("parser %s cap %d exceeds core retention %d", test.name, test.got, test.want)
-		}
-	}
 }

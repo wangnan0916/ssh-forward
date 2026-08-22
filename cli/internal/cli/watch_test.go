@@ -45,7 +45,7 @@ func watchSnapshots() []core.Snapshot {
 			Host: &core.HostSnapshot{
 				Alias:      core.HostAlias("development"),
 				Connection: connection,
-				Discovery:  core.DiscoverySnapshot{State: core.DiscoveryHealthy, BaselineEstablished: true, ScannerVersion: 1},
+				Discovery:  core.DiscoverySnapshot{State: core.DiscoveryHealthy, BaselineEstablished: true},
 			},
 		}
 	}

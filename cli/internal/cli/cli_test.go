@@ -61,7 +61,6 @@ func snapshotWithHost() core.Snapshot {
 			Discovery: core.DiscoverySnapshot{
 				State:               core.DiscoveryHealthy,
 				BaselineEstablished: true,
-				ScannerVersion:      1,
 			},
 			ListenerObservations: []core.ListenerObservation{
 				{Family: core.FamilyIPv4, BindScope: core.BindLoopback, RemotePort: 8080},
@@ -420,7 +419,7 @@ func TestStatusConnectingOmitsScannerInternals(t *testing.T) {
 		Host: &core.HostSnapshot{
 			Alias:      core.HostAlias("ubuntu"),
 			Connection: core.ConnectionConnecting,
-			Discovery:  core.DiscoverySnapshot{State: core.DiscoveryStopped, ScannerVersion: 0},
+			Discovery:  core.DiscoverySnapshot{State: core.DiscoveryStopped},
 		},
 	}
 	output, err := runApp(t, &fakeManager{snapshot: snapshot}, "status")

@@ -143,7 +143,6 @@ func (h *reconcileHarness) push(listeners ...ListenerObservation) {
 		Sequence:     h.sequence,
 		Capability:   fullTestCapability,
 		Observations: listeners,
-		Budget:       fullObservationBudget,
 	}
 	// Settle the bubble: the actor consumes the set, the reconciliation
 	// worker drains its wake-up signal, and every goroutine is durably

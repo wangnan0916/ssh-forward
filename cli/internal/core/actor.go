@@ -195,19 +195,12 @@ func (a *hostActor) applyObservationSet(set ObservationSet) {
 	}
 	a.lastObservationSequence = set.Sequence
 	capability := set.Capability
-	reason := set.CapabilityReason
 	observations, truncated := boundListenerObservations(canonicalListenerObservations(set.Observations))
 	degradeTruncatedCapability(&capability, truncated)
-	if truncated.listeners || truncated.sockets || truncated.processes {
-		reason = CapabilityReasonEvidenceTruncated
-	}
 	complete := capability.RemoteListeners == CapabilityFull
 	if !complete {
 		observations, truncated = mergeBoundedListenerObservations(a.state.ListenerObservations, observations)
 		degradeTruncatedCapability(&capability, truncated)
-		if truncated.listeners || truncated.sockets || truncated.processes {
-			reason = CapabilityReasonEvidenceTruncated
-		}
 	}
 	state := discoveryStateForCapability(capability)
 	if gapped {
@@ -217,9 +210,7 @@ func (a *hostActor) applyObservationSet(set ObservationSet) {
 		State:               state,
 		Capability:          capability,
 		BaselineEstablished: complete || a.state.Discovery.BaselineEstablished,
-		Diagnostic:          discoveryDiagnostic(gapped, capability, reason, ""),
-		ScannerVersion:      set.ScannerVersion,
-		ScannerChecksum:     set.ScannerChecksum,
+		Diagnostic:          discoveryDiagnostic(gapped, capability, ""),
 	}
 	a.state.Discovery = discovery
 	a.state.ListenerObservations = observations

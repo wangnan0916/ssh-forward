@@ -3,11 +3,11 @@ package jsonrpc
 import (
 	"github.com/creachadair/jrpc2"
 
-	"github.com/wangnan0916/ssh-forward/cli/internal/snapshot"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 const (
-	protocolVersion = 1
+	protocolVersion = 2
 
 	methodVersion        = "system.version"
 	methodSnapshot       = "manager.snapshot"
@@ -40,12 +40,12 @@ type versionResult struct {
 }
 
 type snapshotResult struct {
-	Snapshot snapshot.Wire `json:"snapshot"`
+	Snapshot core.Snapshot `json:"snapshot"`
 }
 
 type watchResult struct {
 	WatchID  string        `json:"watch_id"`
-	Snapshot snapshot.Wire `json:"snapshot"`
+	Snapshot core.Snapshot `json:"snapshot"`
 }
 
 type unwatchParams struct {
@@ -59,7 +59,7 @@ type unwatchResult struct {
 
 type snapshotNotification struct {
 	WatchID  string        `json:"watch_id"`
-	Snapshot snapshot.Wire `json:"snapshot"`
+	Snapshot core.Snapshot `json:"snapshot"`
 }
 
 type resyncNotification struct {

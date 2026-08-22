@@ -92,8 +92,8 @@ func TestManagedForwardCarriesTrafficAfterHostConnects(t *testing.T) {
 
 	session := newTrafficSession(remote.Addr().String())
 	observation := loopbackListener(port)
-	session.facts <- ObservationSet{Sequence: 1, Capability: fullTestCapability, Budget: fullObservationBudget, Observations: []ListenerObservation{observation}}
-	session.facts <- ObservationSet{Sequence: 2, Capability: fullTestCapability, Budget: fullObservationBudget, Observations: []ListenerObservation{observation}}
+	session.facts <- ObservationSet{Sequence: 1, Capability: fullTestCapability, Observations: []ListenerObservation{observation}}
+	session.facts <- ObservationSet{Sequence: 2, Capability: fullTestCapability, Observations: []ListenerObservation{observation}}
 
 	manager := newManager(managerOptions{
 		host:         HostAlias("development"),

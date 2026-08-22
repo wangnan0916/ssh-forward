@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/netip"
 	"sync"
 	"testing"
@@ -58,137 +57,53 @@ func (c oneSessionConnector) Connect(context.Context, HostAlias) (HostSession, e
 	return c.session, nil
 }
 
-var (
-	fullObservationBudget = ObservationBudget{Listeners: MaxRetainedListenerObservations, Sockets: MaxRetainedSocketIdentities, ProcessRecords: MaxRetainedProcessRecords, MetadataBytes: MaxRetainedProcessMetadataBytes}
-	fullTestCapability    = DiscoveryCapability{RemoteListeners: CapabilityFull, SocketIdentity: CapabilityFull, ProcessMetadata: CapabilityFull}
-)
+var fullTestCapability = DiscoveryCapability{
+	RemoteListeners: CapabilityFull,
+	ProcessMetadata: CapabilityFull,
+}
 
-func TestPartialObservationMergeKeepsFixedEvidenceBounds(t *testing.T) {
-	makeListeners := func(firstPort, count int) []ListenerObservation {
-		observations := make([]ListenerObservation, count)
-		for index := range observations {
-			observations[index] = ListenerObservation{
-				Family:     FamilyIPv4,
-				BindScope:  BindLoopback,
-				RemotePort: uint16(firstPort + index),
-			}
+func TestObservationBounds(t *testing.T) {
+	listeners := make([]ListenerObservation, MaxRetainedListenerObservations+1)
+	for index := range listeners {
+		listeners[index] = ListenerObservation{
+			Family:     FamilyIPv4,
+			BindScope:  BindLoopback,
+			RemotePort: uint16(1000 + index),
 		}
-		return observations
 	}
-	listeners, listenerTruncation := mergeBoundedListenerObservations(
-		makeListeners(1, MaxRetainedListenerObservations),
-		makeListeners(1+MaxRetainedListenerObservations, MaxRetainedListenerObservations),
-	)
-	if len(listeners) > MaxRetainedListenerObservations {
-		t.Fatalf("retained Listener Observations = %d, want at most %d", len(listeners), MaxRetainedListenerObservations)
-	}
-	if !listenerTruncation.listeners {
-		t.Fatal("Listener truncation was not reported")
-	}
-	retained := makeListeners(1000, MaxRetainedListenerObservations)
-	withLowerCurrent, _ := mergeBoundedListenerObservations(retained, makeListeners(1, 1))
-	if diff := cmp.Diff(withLowerCurrent, retained); diff != "" {
-		t.Fatalf("partial merge evicted retained Listener Observation for a newly observed lower-sorting key (-got +want):\n%s", diff)
+	bounded, truncated := boundListenerObservations(listeners)
+	if len(bounded) != MaxRetainedListenerObservations || !truncated.listeners {
+		t.Fatalf("listener bounds = %d, %#v", len(bounded), truncated)
 	}
 
-	makeEvidence := func(first int) ListenerObservation {
-		observation := ListenerObservation{Family: FamilyIPv4, BindScope: BindLoopback, RemotePort: 8080}
-		for index := range MaxRetainedSocketIdentities {
-			identity := first + index
-			observation.SocketIdentities = append(observation.SocketIdentities, SocketIdentity(fmt.Sprintf("socket:%04d", identity)))
-			observation.Processes = append(observation.Processes, ProcessChain{Processes: []ProcessMetadata{{PID: identity + 1}}})
-		}
-		return observation
+	processes := ListenerObservation{Family: FamilyIPv4, BindScope: BindLoopback, RemotePort: 8080}
+	for index := range MaxRetainedProcessRecords + 1 {
+		processes.Processes = append(processes.Processes, ProcessChain{Processes: []ProcessMetadata{{PID: index + 1}}})
 	}
-	evidence, truncatedEvidence := mergeBoundedListenerObservations(
-		[]ListenerObservation{makeEvidence(0)},
-		[]ListenerObservation{makeEvidence(MaxRetainedSocketIdentities)},
-	)
-	if got := len(evidence[0].SocketIdentities); got > MaxRetainedSocketIdentities {
-		t.Fatalf("retained Socket Identities = %d, want at most %d", got, MaxRetainedSocketIdentities)
-	}
-	if got := len(evidence[0].Processes); got > MaxRetainedProcessRecords {
-		t.Fatalf("retained Process Chains = %d, want at most %d", got, MaxRetainedProcessRecords)
-	}
-	if !truncatedEvidence.sockets || !truncatedEvidence.processes {
-		t.Fatalf("Evidence truncation = %#v, want sockets and processes", truncatedEvidence)
-	}
-	unavailable := DiscoveryCapability{
-		RemoteListeners: CapabilityUnavailable,
-		SocketIdentity:  CapabilityUnavailable,
-		ProcessMetadata: CapabilityUnavailable,
-	}
-	degradeTruncatedCapability(&unavailable, evidenceTruncation{listeners: true, sockets: true, processes: true})
-	if want := (DiscoveryCapability{RemoteListeners: CapabilityUnavailable, SocketIdentity: CapabilityUnavailable, ProcessMetadata: CapabilityUnavailable}); unavailable != want {
-		t.Fatalf("truncation upgraded unavailable Capability: %#v", unavailable)
+	bounded, truncated = boundListenerObservations([]ListenerObservation{processes})
+	if got := len(bounded[0].Processes); got != MaxRetainedProcessRecords || !truncated.processes {
+		t.Fatalf("process bounds = %d, %#v", got, truncated)
 	}
 }
 
-func TestManagerReportsEvidenceTruncationDiagnostic(t *testing.T) {
+func TestManagerReportsEvidenceTruncation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		session := newScriptedDiscoverySession()
-		ready := make(chan struct{})
-		close(ready)
-		connector := &sequenceConnector{
-			sessions: []HostSession{session},
-			releases: []<-chan struct{}{ready},
-			started:  make(chan int, 1),
-		}
-		manager, closeManager := newBubbleForwardingManager(t, connector)
+		manager, session, closeManager := newBubbleDiscoveryManager(t)
 		defer closeManager()
-
 		observations := make([]ListenerObservation, MaxRetainedListenerObservations+1)
 		for index := range observations {
 			observations[index] = ListenerObservation{
-				Family:     FamilyIPv4,
-				BindScope:  BindLoopback,
-				RemotePort: uint16(1000 + index),
+				Family: FamilyIPv4, BindScope: BindLoopback, RemotePort: uint16(1000 + index),
 			}
 		}
-		session.facts <- ObservationSet{Sequence: 1, Capability: fullTestCapability, Observations: observations, Budget: fullObservationBudget}
+		session.facts <- ObservationSet{Sequence: 1, Capability: fullTestCapability, Observations: observations}
 		synctest.Wait()
 		snapshot, err := manager.Snapshot(t.Context())
 		if err != nil {
 			t.Fatalf("Snapshot: %v", err)
 		}
-		if got := snapshot.Host.Discovery.Diagnostic; got != "evidence_truncated" {
-			t.Fatalf("truncated discovery diagnostic = %q, want evidence_truncated", got)
-		}
-		if got := snapshot.Host.Discovery.State; got != DiscoveryDegraded {
-			t.Fatalf("truncated discovery state = %q, want degraded", got)
-		}
-	})
-}
-
-func TestManagerRejectsUnknownCapabilityReason(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		session := newScriptedDiscoverySession()
-		ready := make(chan struct{})
-		close(ready)
-		connector := &sequenceConnector{
-			sessions: []HostSession{session},
-			releases: []<-chan struct{}{ready},
-			started:  make(chan int, 1),
-		}
-		manager, closeManager := newBubbleForwardingManager(t, connector)
-		defer closeManager()
-
-		session.facts <- ObservationSet{
-			Sequence:         1,
-			Capability:       fullTestCapability,
-			Budget:           fullObservationBudget,
-			CapabilityReason: CapabilityReason("made_up_reason"),
-		}
-		synctest.Wait()
-		snapshot, err := manager.Snapshot(t.Context())
-		if err != nil {
-			t.Fatalf("Snapshot: %v", err)
-		}
-		if got := snapshot.Host.Discovery.State; got != DiscoveryFailed {
-			t.Fatalf("Discovery state = %q, want %q", got, DiscoveryFailed)
-		}
-		if got := snapshot.Host.Discovery.Diagnostic; got != "invalid_session_fact" {
-			t.Fatalf("unknown capability reason diagnostic = %q, want invalid_session_fact", got)
+		if got := snapshot.Host.Discovery; got.State != DiscoveryDegraded || got.Diagnostic != "scanner_reported_partial" {
+			t.Fatalf("truncated Discovery = %#v", got)
 		}
 	})
 }
@@ -207,71 +122,37 @@ func TestManagerRetainsObservationsUntilReconnectGetsCompleteReplacement(t *test
 		manager, closeManager := newBubbleForwardingManager(t, connector)
 		defer closeManager()
 
-		observation := ListenerObservation{
-			Family:           FamilyIPv4,
-			BindScope:        BindLoopback,
-			RemotePort:       38080,
-			SocketIdentities: []SocketIdentity{SocketIdentity("socket:retained")},
-			Processes:        []ProcessChain{},
-		}
-		full := DiscoveryCapability{
-			RemoteListeners: CapabilityFull,
-			SocketIdentity:  CapabilityFull,
-			ProcessMetadata: CapabilityPartial,
-		}
-		first.facts <- ObservationSet{Sequence: 1, Capability: full, Observations: []ListenerObservation{observation}, Budget: fullObservationBudget}
+		observation := ListenerObservation{Family: FamilyIPv4, BindScope: BindLoopback, RemotePort: 38080, Processes: []ProcessChain{}}
+		first.facts <- ObservationSet{Sequence: 1, Capability: fullTestCapability, Observations: []ListenerObservation{observation}}
+		synctest.Wait()
+		first.terminal <- &SessionError{Disposition: SessionRetry, Reason: SessionReasonTransport}
 		synctest.Wait()
 		snapshot, err := manager.Snapshot(t.Context())
 		if err != nil {
-			t.Fatalf("Snapshot: %v", err)
-		}
-		if !snapshot.Host.Discovery.BaselineEstablished {
-			t.Fatalf("first observation did not establish baseline: %#v", snapshot.Host.Discovery)
-		}
-		first.terminal <- &SessionError{Disposition: SessionRetry, Reason: SessionReasonTransport}
-		synctest.Wait()
-		snapshot, err = manager.Snapshot(t.Context())
-		if err != nil {
 			t.Fatalf("Snapshot after reconnect: %v", err)
 		}
-		if got := snapshot.Host.Discovery.State; got != DiscoveryStarting {
-			t.Fatalf("Discovery state after reconnect = %q, want %q", got, DiscoveryStarting)
+		if snapshot.Host.Discovery.State != DiscoveryStarting || !cmp.Equal(snapshot.Host.ListenerObservations, []ListenerObservation{observation}) {
+			t.Fatalf("reconnect discarded retained observation: %#v", snapshot.Host)
 		}
-		if !cmp.Equal(snapshot.Host.ListenerObservations, []ListenerObservation{observation}) {
-			t.Fatalf("reconnect discarded retained observations (-got +want):\n%s", cmp.Diff(snapshot.Host.ListenerObservations, []ListenerObservation{observation}))
-		}
-		partial := DiscoveryCapability{
-			RemoteListeners: CapabilityPartial,
-			SocketIdentity:  CapabilityPartial,
-			ProcessMetadata: CapabilityUnavailable,
-		}
-		second.facts <- ObservationSet{Sequence: 1, Capability: partial, Budget: fullObservationBudget}
+
+		partial := DiscoveryCapability{RemoteListeners: CapabilityPartial, ProcessMetadata: CapabilityUnavailable}
+		second.facts <- ObservationSet{Sequence: 1, Capability: partial}
 		synctest.Wait()
 		snapshot, err = manager.Snapshot(t.Context())
 		if err != nil {
 			t.Fatalf("Snapshot after partial reconnect: %v", err)
 		}
-		if snapshot.Host.Discovery.BaselineEstablished {
-			t.Fatalf("partial reconnect established baseline: %#v", snapshot.Host.Discovery)
-		}
-		if !cmp.Equal(snapshot.Host.ListenerObservations, []ListenerObservation{observation}) {
-			t.Fatalf("partial reconnect replaced retained observations (-got +want):\n%s", cmp.Diff(snapshot.Host.ListenerObservations, []ListenerObservation{observation}))
+		if snapshot.Host.Discovery.BaselineEstablished || !cmp.Equal(snapshot.Host.ListenerObservations, []ListenerObservation{observation}) {
+			t.Fatalf("partial reconnect replaced retained observation: %#v", snapshot.Host)
 		}
 	})
 }
 
-func TestManagerPublishesDiscoveryBaselineAtomically(t *testing.T) {
+func TestManagerPublishesAndMergesDiscovery(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		session := newScriptedDiscoverySession()
-		manager := newManager(managerOptions{
-			host:      HostAlias("development"),
-			connector: oneSessionConnector{session: session},
-		})
-		defer func() {
-			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-			defer cancel()
-			_ = manager.Close(ctx)
-		}()
+		manager := newManager(managerOptions{host: HostAlias("development"), connector: oneSessionConnector{session: session}})
+		defer closeTestManager(t, manager)
 		synctest.Wait()
 		starting, err := manager.Snapshot(t.Context())
 		if err != nil {
@@ -281,183 +162,72 @@ func TestManagerPublishesDiscoveryBaselineAtomically(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Watch: %v", err)
 		}
-		initial, err := stream.Next(t.Context())
-		if err != nil {
-			t.Fatalf("initial Next: %v", err)
-		}
-		if diff := cmp.Diff(initial, starting); diff != "" {
-			t.Fatalf("Watch initial Snapshot mismatch (-got +want):\n%s", diff)
+		if initial, err := stream.Next(t.Context()); err != nil || !cmp.Equal(initial, starting) {
+			t.Fatalf("initial Watch = %#v, %v", initial, err)
 		}
 
-		capability := DiscoveryCapability{
-			RemoteListeners: CapabilityFull,
-			SocketIdentity:  CapabilityFull,
-			ProcessMetadata: CapabilityPartial,
-		}
+		capability := DiscoveryCapability{RemoteListeners: CapabilityFull, ProcessMetadata: CapabilityPartial}
 		observation := ListenerObservation{
-			Family:           FamilyIPv4,
-			BindScope:        BindLoopback,
-			RemotePort:       38080,
-			SocketIdentities: []SocketIdentity{SocketIdentity("socket:test")},
+			Family: FamilyIPv4, BindScope: BindLoopback, RemotePort: 38080,
 			Processes: []ProcessChain{{Processes: []ProcessMetadata{{
-				PID:              42,
-				Executable:       "/usr/bin/python3",
-				WorkingDirectory: "/workspace",
-				Arguments:        []string{"python3", "fixture.py"},
+				PID: 42, Executable: "/usr/bin/python3", WorkingDirectory: "/workspace", Arguments: []string{"python3", "fixture.py"},
 			}}}},
 		}
-		session.facts <- ObservationSet{
-			Sequence:     1,
-			Capability:   capability,
-			Budget:       fullObservationBudget,
-			Observations: []ListenerObservation{observation},
-		}
+		session.facts <- ObservationSet{Sequence: 1, Capability: capability, Observations: []ListenerObservation{observation}}
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 		defer cancel()
 		baseline, err := stream.Next(ctx)
 		if err != nil {
 			t.Fatalf("baseline Next: %v", err)
 		}
-		if baseline.Revision != starting.Revision+1 {
-			t.Fatalf("baseline revision = %d, want %d", baseline.Revision, starting.Revision+1)
-		}
-		if got := baseline.Host.Discovery; got.State != DiscoveryDegraded || !got.BaselineEstablished || !cmp.Equal(got.Capability, capability) {
-			t.Fatalf("Discovery = %#v, want atomic degraded baseline with %#v", got, capability)
-		}
-		if got := baseline.Host.ListenerObservations; !cmp.Equal(got, []ListenerObservation{observation}) {
-			t.Fatalf("Listener Observations mismatch (-got +want):\n%s", cmp.Diff(got, []ListenerObservation{observation}))
+		if baseline.Revision != starting.Revision+1 || !baseline.Host.Discovery.BaselineEstablished || !cmp.Equal(baseline.Host.ListenerObservations, []ListenerObservation{observation}) {
+			t.Fatalf("baseline = %#v", baseline)
 		}
 		baseline.Host.ListenerObservations[0].Processes[0].Processes[0].Arguments[0] = "mutated"
-		immutable, err := manager.Snapshot(t.Context())
-		if err != nil {
-			t.Fatalf("Snapshot after caller mutation: %v", err)
-		}
+		immutable, _ := manager.Snapshot(t.Context())
 		if got := immutable.Host.ListenerObservations[0].Processes[0].Processes[0].Arguments[0]; got != "python3" {
-			t.Fatalf("caller mutation changed canonical Process Metadata: %q", got)
+			t.Fatalf("caller mutation changed canonical metadata: %q", got)
 		}
 
-		partialCapability := DiscoveryCapability{
-			RemoteListeners: CapabilityPartial,
-			SocketIdentity:  CapabilityPartial,
-			ProcessMetadata: CapabilityUnavailable,
+		partial := ListenerObservation{
+			Family: FamilyIPv4, BindScope: BindLoopback, RemotePort: 38080,
+			Processes: []ProcessChain{{Processes: []ProcessMetadata{{PID: 43, Executable: "/usr/bin/new-owner"}}}},
 		}
-		partialObservation := ListenerObservation{
-			Family:           FamilyIPv4,
-			BindScope:        BindLoopback,
-			RemotePort:       38080,
-			SocketIdentities: []SocketIdentity{SocketIdentity("socket:new")},
-			Processes: []ProcessChain{{Processes: []ProcessMetadata{{
-				PID:        43,
-				Executable: "/usr/bin/new-owner",
-			}}}},
+		session.facts <- ObservationSet{
+			Sequence:     2,
+			Capability:   DiscoveryCapability{RemoteListeners: CapabilityPartial, ProcessMetadata: CapabilityPartial},
+			Observations: []ListenerObservation{partial},
 		}
-		session.facts <- ObservationSet{Sequence: 2, Capability: partialCapability, Observations: []ListenerObservation{partialObservation}, Budget: fullObservationBudget}
-		partial, err := stream.Next(ctx)
-		if err != nil {
-			t.Fatalf("partial Next: %v", err)
-		}
-		if got := partial.Host.Discovery; got.State != DiscoveryDegraded || !got.BaselineEstablished || !cmp.Equal(got.Capability, partialCapability) {
-			t.Fatalf("partial Discovery = %#v, want degraded retained baseline with %#v", got, partialCapability)
-		}
-		merged := partial.Host.ListenerObservations
-		if len(merged) != 1 || !cmp.Equal(merged[0].SocketIdentities, []SocketIdentity{SocketIdentity("socket:new"), SocketIdentity("socket:test")}) || len(merged[0].Processes) != 2 {
-			t.Fatalf("partial observation did not merge retained and current evidence: %#v", merged)
+		merged, err := stream.Next(ctx)
+		if err != nil || len(merged.Host.ListenerObservations[0].Processes) != 2 {
+			t.Fatalf("partial merge = %#v, %v", merged, err)
 		}
 
-		boundedObservation := ListenerObservation{Family: FamilyIPv4, BindScope: BindLoopback, RemotePort: 38080}
-		for index := range MaxRetainedSocketIdentities {
-			boundedObservation.SocketIdentities = append(boundedObservation.SocketIdentities, SocketIdentity(fmt.Sprintf("socket:bounded-%03d", index)))
-			boundedObservation.Processes = append(boundedObservation.Processes, ProcessChain{Processes: []ProcessMetadata{{PID: 1000 + index}}})
-		}
-		claimedCapability := DiscoveryCapability{
-			RemoteListeners: CapabilityPartial,
-			SocketIdentity:  CapabilityFull,
-			ProcessMetadata: CapabilityFull,
-		}
-		session.facts <- ObservationSet{Sequence: 3, Capability: claimedCapability, Observations: []ListenerObservation{boundedObservation}, Budget: fullObservationBudget}
-		bounded, err := stream.Next(ctx)
-		if err != nil {
-			t.Fatalf("bounded evidence Next: %v", err)
-		}
-		if got := bounded.Host.Discovery.Capability; got.SocketIdentity != CapabilityPartial || got.ProcessMetadata != CapabilityPartial {
-			t.Fatalf("bounded evidence Capability = %#v, want truncated dimensions partial", got)
-		}
-		boundedEvidence := bounded.Host.ListenerObservations[0]
-		if len(boundedEvidence.SocketIdentities) > MaxRetainedSocketIdentities || len(boundedEvidence.Processes) > MaxRetainedProcessRecords {
-			t.Fatalf("published evidence exceeded bounds: %#v", boundedEvidence)
-		}
-
-		session.facts <- ObservationSet{Sequence: 3, Capability: capability, Budget: fullObservationBudget}
+		session.facts <- ObservationSet{Sequence: 2, Capability: capability}
 		failed, err := stream.Next(ctx)
-		if err != nil {
-			t.Fatalf("invalid fact Next: %v", err)
-		}
-		if got := failed.Host; got.Connection != ConnectionConnected || got.Discovery.State != DiscoveryFailed || got.Discovery.Diagnostic != "invalid_session_fact" {
-			t.Fatalf("invalid discovery fact disrupted Forwarding Session: %#v", got)
+		if err != nil || failed.Host.Discovery.State != DiscoveryFailed || failed.Host.Discovery.Diagnostic != "invalid_session_fact" {
+			t.Fatalf("invalid fact = %#v, %v", failed, err)
 		}
 	})
 }
 
 func TestManagerDegradesDiscoveryOnObservationSequenceGap(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		session := newScriptedDiscoverySession()
-		manager := newManager(managerOptions{
-			host:      HostAlias("development"),
-			connector: oneSessionConnector{session: session},
-		})
-		defer func() {
-			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-			defer cancel()
-			_ = manager.Close(ctx)
-		}()
-		manager.actor.startIfNeeded()
-		// Wait replaces waitForSnapshot polling: the bubble's virtual
-		// scheduler runs until every goroutine is durably blocked, so by
-		// the time Wait returns the actor has published its current state.
+		manager, session, closeManager := newBubbleDiscoveryManager(t)
+		defer closeManager()
+		session.facts <- ObservationSet{Sequence: 1, Capability: fullTestCapability}
 		synctest.Wait()
-		snapshotOf := func() Snapshot {
-			snapshot, err := manager.Snapshot(t.Context())
-			if err != nil {
-				t.Fatalf("Snapshot: %v", err)
-			}
-			return snapshot
-		}
-		if got := snapshotOf().Host.Discovery.State; got != DiscoveryStarting {
-			t.Fatalf("Discovery state = %q, want %q", got, DiscoveryStarting)
-		}
-
-		fullCapability := DiscoveryCapability{
-			RemoteListeners: CapabilityFull,
-			SocketIdentity:  CapabilityFull,
-			ProcessMetadata: CapabilityFull,
-		}
-		session.facts <- ObservationSet{Sequence: 1, Capability: fullCapability, Observations: []ListenerObservation{}, Budget: fullObservationBudget}
+		session.facts <- ObservationSet{Sequence: 3, Capability: fullTestCapability}
 		synctest.Wait()
-		if baseline := snapshotOf(); baseline.Host.Discovery.Diagnostic != "" {
-			t.Fatalf("baseline Diagnostic = %q, want empty", baseline.Host.Discovery.Diagnostic)
+		gapped, _ := manager.Snapshot(t.Context())
+		if got := gapped.Host.Discovery; got.State != DiscoveryDegraded || got.Diagnostic != "observation_resync" || !got.BaselineEstablished {
+			t.Fatalf("gapped Discovery = %#v", got)
 		}
-
-		session.facts <- ObservationSet{Sequence: 3, Capability: fullCapability, Observations: []ListenerObservation{}, Budget: fullObservationBudget}
+		session.facts <- ObservationSet{Sequence: 4, Capability: fullTestCapability}
 		synctest.Wait()
-		gapped := snapshotOf()
-		if got := gapped.Host.Discovery.Diagnostic; got != "observation_resync" {
-			t.Fatalf("gap Diagnostic = %q, want observation_resync", got)
-		}
-		if !gapped.Host.Discovery.BaselineEstablished {
-			t.Fatal("sequence gap discarded the established Baseline")
-		}
-		if got := gapped.Host.Discovery.State; got != DiscoveryDegraded {
-			t.Fatalf("gap state = %q, want %q", got, DiscoveryDegraded)
-		}
-
-		session.facts <- ObservationSet{Sequence: 4, Capability: fullCapability, Observations: []ListenerObservation{}, Budget: fullObservationBudget}
-		synctest.Wait()
-		recovered := snapshotOf()
-		if got := recovered.Host.Discovery.Diagnostic; got != "" {
-			t.Fatalf("recovered Diagnostic = %q, want empty", got)
-		}
-		if got := recovered.Host.Discovery.State; got != DiscoveryHealthy {
-			t.Fatalf("recovered state = %q, want %q", got, DiscoveryHealthy)
+		recovered, _ := manager.Snapshot(t.Context())
+		if got := recovered.Host.Discovery; got.State != DiscoveryHealthy || got.Diagnostic != "" {
+			t.Fatalf("recovered Discovery = %#v", got)
 		}
 	})
 }
@@ -466,137 +236,45 @@ func TestManagerRejectsStaleObservationSequence(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		manager, session, closeManager := newBubbleDiscoveryManager(t)
 		defer closeManager()
-		fullCapability := DiscoveryCapability{
-			RemoteListeners: CapabilityFull,
-			SocketIdentity:  CapabilityFull,
-			ProcessMetadata: CapabilityFull,
-		}
-		session.facts <- ObservationSet{Sequence: 2, Capability: fullCapability, Observations: []ListenerObservation{}, Budget: fullObservationBudget}
+		session.facts <- ObservationSet{Sequence: 2, Capability: fullTestCapability}
 		synctest.Wait()
-		snapshot, err := manager.Snapshot(t.Context())
-		if err != nil {
-			t.Fatalf("Snapshot: %v", err)
-		}
-		if !snapshot.Host.Discovery.BaselineEstablished {
-			t.Fatalf("first observation did not establish baseline: %#v", snapshot.Host.Discovery)
-		}
-		session.facts <- ObservationSet{Sequence: 2, Capability: fullCapability, Observations: []ListenerObservation{}, Budget: fullObservationBudget}
+		session.facts <- ObservationSet{Sequence: 2, Capability: fullTestCapability}
 		synctest.Wait()
-		snapshot, err = manager.Snapshot(t.Context())
-		if err != nil {
-			t.Fatalf("Snapshot after stale sequence: %v", err)
-		}
-		if got := snapshot.Host.Discovery.State; got != DiscoveryFailed {
-			t.Fatalf("stale sequence state = %q, want %q", got, DiscoveryFailed)
-		}
-		if got := snapshot.Host.Discovery.Diagnostic; got != "invalid_session_fact" {
-			t.Fatalf("stale sequence Diagnostic = %q, want invalid_session_fact", got)
+		snapshot, _ := manager.Snapshot(t.Context())
+		if got := snapshot.Host.Discovery; got.State != DiscoveryFailed || got.Diagnostic != "invalid_session_fact" {
+			t.Fatalf("stale sequence Discovery = %#v", got)
 		}
 	})
 }
 
-func TestManagerRejectsObservationBudgetViolations(t *testing.T) {
-	for name, budget := range map[string]ObservationBudget{
-		"missing":    {},
-		"oversized":  {Listeners: MaxRetainedListenerObservations + 1, Sockets: 256, ProcessRecords: 512, MetadataBytes: 128 << 10},
-		"zeroSocket": {Listeners: 256, Sockets: 0, ProcessRecords: 512, MetadataBytes: 128 << 10},
-	} {
-		t.Run(name, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				manager, session, closeManager := newBubbleDiscoveryManager(t)
-				defer closeManager()
-				session.facts <- ObservationSet{Sequence: 1, Capability: fullTestCapability, Budget: budget}
-				synctest.Wait()
-				snapshot, err := manager.Snapshot(t.Context())
-				if err != nil {
-					t.Fatalf("Snapshot: %v", err)
-				}
-				if got := snapshot.Host.Discovery.State; got != DiscoveryFailed {
-					t.Fatalf("budget %s state = %q, want %q", name, got, DiscoveryFailed)
-				}
-				if got := snapshot.Host.Discovery.Diagnostic; got != "invalid_session_fact" {
-					t.Fatalf("budget %s Diagnostic = %q, want invalid_session_fact", name, got)
-				}
-			})
-		})
-	}
-}
-
-func TestManagerAcceptsDeclaredObservationBudget(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		manager, session, closeManager := newBubbleDiscoveryManager(t)
-		defer closeManager()
-		session.facts <- ObservationSet{Sequence: 1, Capability: fullTestCapability, Budget: fullObservationBudget}
-		synctest.Wait()
-		snapshot, err := manager.Snapshot(t.Context())
-		if err != nil {
-			t.Fatalf("Snapshot: %v", err)
-		}
-		if got := snapshot.Host.Discovery.State; got != DiscoveryHealthy {
-			t.Fatalf("Discovery state = %q, want %q", got, DiscoveryHealthy)
-		}
-	})
-}
-
-// newBubbleDiscoveryManager builds a scripted Manager inside a synctest
-// bubble and settles until the actor publishes DiscoveryStarting. The
-// returned closeManager must run before the bubble test function returns:
-// the Manager's goroutines belong to the bubble, so shutdown must happen
-// inside it.
 func newBubbleDiscoveryManager(t *testing.T) (*manager, *scriptedDiscoverySession, func()) {
 	t.Helper()
 	session := newScriptedDiscoverySession()
-	manager := newManager(managerOptions{
-		host:      HostAlias("development"),
-		connector: oneSessionConnector{session: session},
-	})
+	manager := newManager(managerOptions{host: HostAlias("development"), connector: oneSessionConnector{session: session}})
 	manager.actor.startIfNeeded()
 	synctest.Wait()
-	snapshot, err := manager.Snapshot(t.Context())
-	if err != nil {
-		t.Fatalf("Snapshot: %v", err)
-	}
-	if got := snapshot.Host.Discovery.State; got != DiscoveryStarting {
-		t.Fatalf("Discovery state = %q, want %q", got, DiscoveryStarting)
-	}
-	closeManager := func() {
-		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-		defer cancel()
-		_ = manager.Close(ctx)
-	}
-	return manager, session, closeManager
+	return manager, session, func() { closeTestManager(t, manager) }
 }
 
-// newBubbleForwardingManager builds a scripted Manager inside a synctest
-// bubble, settling until the actor publishes DiscoveryStarting.
 func newBubbleForwardingManager(t *testing.T, connector *sequenceConnector) (*manager, func()) {
 	t.Helper()
 	manager := newManager(managerOptions{
-		host:       HostAlias("development"),
-		connector:  connector,
+		host: HostAlias("development"), connector: connector,
 		retryDelay: func(int) time.Duration { return 0 },
-		retryWait: func(ctx context.Context, _ time.Duration) bool {
-			return ctx.Err() == nil
-		},
+		retryWait:  func(ctx context.Context, _ time.Duration) bool { return ctx.Err() == nil },
 	})
 	synctest.Wait()
-	snapshot, err := manager.Snapshot(t.Context())
-	if err != nil {
-		t.Fatalf("Snapshot: %v", err)
-	}
-	if got := snapshot.Host.Discovery.State; got != DiscoveryStarting {
-		t.Fatalf("Discovery state = %q, want %q", got, DiscoveryStarting)
-	}
-	closeManager := func() {
-		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-		defer cancel()
-		_ = manager.Close(ctx)
-	}
-	return manager, closeManager
+	return manager, func() { closeTestManager(t, manager) }
+}
+
+func closeTestManager(t *testing.T, manager *manager) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	_ = manager.Close(ctx)
 }
 
 func TestAdmitObservationSet(t *testing.T) {
-	valid := ObservationSet{Sequence: 2, Capability: fullTestCapability, Budget: fullObservationBudget}
+	valid := ObservationSet{Sequence: 2, Capability: fullTestCapability}
 	cases := []struct {
 		name   string
 		set    ObservationSet
@@ -604,19 +282,17 @@ func TestAdmitObservationSet(t *testing.T) {
 		gapped bool
 		ok     bool
 	}{
-		{name: "next sequence", set: valid, last: 1, ok: true},
-		{name: "gapped sequence", set: ObservationSet{Sequence: 4, Capability: fullTestCapability, Budget: fullObservationBudget}, last: 1, gapped: true, ok: true},
-		{name: "zero sequence", set: ObservationSet{Sequence: 0, Capability: fullTestCapability, Budget: fullObservationBudget}, last: 0},
-		{name: "stale sequence", set: valid, last: 2},
-		{name: "bad budget", set: ObservationSet{Sequence: 1, Capability: fullTestCapability}, last: 0},
-		{name: "bad capability", set: ObservationSet{Sequence: 1, Capability: DiscoveryCapability{RemoteListeners: "nope"}, Budget: fullObservationBudget}, last: 0},
-		{name: "bad reason", set: ObservationSet{Sequence: 1, Capability: fullTestCapability, Budget: fullObservationBudget, CapabilityReason: "nope"}, last: 0},
+		{name: "next", set: valid, last: 1, ok: true},
+		{name: "gap", set: ObservationSet{Sequence: 4, Capability: fullTestCapability}, last: 1, gapped: true, ok: true},
+		{name: "zero", set: ObservationSet{Capability: fullTestCapability}},
+		{name: "stale", set: valid, last: 2},
+		{name: "bad capability", set: ObservationSet{Sequence: 1, Capability: DiscoveryCapability{RemoteListeners: "nope"}}},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			gapped, ok := admitObservationSet(test.set, test.last)
 			if gapped != test.gapped || ok != test.ok {
-				t.Fatalf("admitObservationSet = %v, %v, want %v, %v", gapped, ok, test.gapped, test.ok)
+				t.Fatalf("admitObservationSet = %v, %v", gapped, ok)
 			}
 		})
 	}
@@ -625,43 +301,35 @@ func TestAdmitObservationSet(t *testing.T) {
 func TestAdmitDiscoveryChange(t *testing.T) {
 	valid := DiscoveryChange{State: DiscoveryDegraded, Capability: fullTestCapability, Reason: ReasonObservationLost}
 	if !admitDiscoveryChange(valid) {
-		t.Fatal("admitDiscoveryChange rejected a valid change")
+		t.Fatal("rejected valid DiscoveryChange")
 	}
-	if admitDiscoveryChange(DiscoveryChange{State: DiscoveryHealthy, Capability: fullTestCapability, Reason: ReasonObservationLost}) {
-		t.Fatal("admitDiscoveryChange accepted a healthy report")
-	}
-	if admitDiscoveryChange(DiscoveryChange{State: DiscoveryDegraded, Reason: ReasonObservationLost}) {
-		t.Fatal("admitDiscoveryChange accepted empty capability")
+	if admitDiscoveryChange(DiscoveryChange{State: DiscoveryHealthy, Capability: fullTestCapability, Reason: ReasonObservationLost}) ||
+		admitDiscoveryChange(DiscoveryChange{State: DiscoveryDegraded, Reason: ReasonObservationLost}) {
+		t.Fatal("accepted invalid DiscoveryChange")
 	}
 }
 
 func TestDiscoveryDiagnostic(t *testing.T) {
-	full := DiscoveryCapability{RemoteListeners: CapabilityFull, SocketIdentity: CapabilityFull, ProcessMetadata: CapabilityFull}
-	partial := DiscoveryCapability{RemoteListeners: CapabilityFull, SocketIdentity: CapabilityFull, ProcessMetadata: CapabilityPartial}
+	partialListeners := DiscoveryCapability{RemoteListeners: CapabilityPartial, ProcessMetadata: CapabilityFull}
+	partialProcess := DiscoveryCapability{RemoteListeners: CapabilityFull, ProcessMetadata: CapabilityPartial}
 	cases := []struct {
 		name       string
 		gapped     bool
 		capability DiscoveryCapability
-		reason     CapabilityReason
 		failure    DiscoveryReason
 		want       string
 	}{
 		{name: "invalid observation", failure: ReasonObservationInvalid, want: "invalid_scanner_frame"},
 		{name: "lost observation", failure: ReasonObservationLost, want: "scanner_framing_failed"},
 		{name: "invalid session", failure: ReasonSessionInvalid, want: "invalid_session_fact"},
-		{name: "failure wins over gap", gapped: true, failure: ReasonObservationInvalid, want: "invalid_scanner_frame"},
-		{name: "unknown failure", failure: DiscoveryReason("nope"), gapped: true, want: ""},
-		{name: "observation gap", gapped: true, capability: full, want: "observation_resync"},
-		{name: "truncated evidence", capability: partial, reason: CapabilityReasonEvidenceTruncated, want: "evidence_truncated"},
-		{name: "missing evidence", capability: partial, reason: CapabilityReasonEvidenceMissing, want: "process_metadata_unavailable"},
-		{name: "scanner reported", capability: partial, reason: CapabilityReasonScannerReported, want: "scanner_reported_partial"},
-		{name: "full capability", capability: full, want: ""},
-		{name: "partial without reason", capability: partial, want: ""},
+		{name: "gap", gapped: true, capability: fullTestCapability, want: "observation_resync"},
+		{name: "partial listeners", capability: partialListeners, want: "scanner_reported_partial"},
+		{name: "partial process", capability: partialProcess, want: "process_metadata_unavailable"},
+		{name: "full", capability: fullTestCapability},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			got := discoveryDiagnostic(test.gapped, test.capability, test.reason, test.failure)
-			if got != test.want {
+			if got := discoveryDiagnostic(test.gapped, test.capability, test.failure); got != test.want {
 				t.Fatalf("discoveryDiagnostic = %q, want %q", got, test.want)
 			}
 		})

@@ -1,23 +1,14 @@
 # Individual discovery failures must not end the shared SSH/SOCKS process.
 # Every expansion below has a default and fallible probes degrade their output.
 # Wire frames on stdout, one per line, tab-separated (field 0 is the literal
-# "SF1", field 1 the frame type). "SF1" is the protocol version on the wire;
-# it is the same version as scannerVersion in scanner_script.go, which the
-# parser stamps into every ObservationSet — bump both together when the
-# layout changes. This header is the single schema statement for the frame
-# layout; the parser in scanner.go ((*scannerParser).accept) consumes exactly
-# this, so extend both sides together. The boot frame's checksum is computed
-# over this file at embed time, so a layout change here is always visible
-# there.
-#   B  boot frame, 12 fields:
-#       2 sequence, 3 boot_hex, 4 network_hex (hex, up to
-#       identity_text_hex_limit chars each), 5 listener_capability,
-#       6 socket_capability, 7 process_capability, 8 listener_limit,
-#       9 socket_record_limit, 10 process_record_limit, 11 metadata_bytes_limit
+# "SF1", field 1 the frame type). The parser in scanner.go consumes exactly
+# this layout.
+#   B  begin frame, 5 fields: 2 sequence, 3 listener_capability,
+#      4 process_capability
 #   L  listener record, 7 fields: 2 sequence, then the listener record's
 #      4 fields tab-embedded:
 #       3 family (ipv4|ipv6), 4 bind_scope (loopback|wildcard),
-#       5 remote_port (hex, nonzero), 6 inode (decimal, "0" when
+#       5 remote_port (decimal, nonzero), 6 inode (decimal, "0" when
 #       unattributed)
 #   P  process record, 10 fields: 2 sequence, then the process record's
 #      7 fields tab-embedded:
@@ -26,10 +17,8 @@
 #       6 pid (decimal), 7 executable_hex, 8 working_directory_hex,
 #       9 arguments_hex (hex, up to process_text_hex_limit chars each, i.e.
 #       process_text_bytes bytes; arguments_hex splits on NUL; the sum is
-#       bounded by the boot frame's metadata_bytes_limit)
-#   E  end frame, 2 fields: 2 sequence
-# Every cap above is declared in this file and derived by the parser from
-# the declaration, so the two sides cannot drift.
+#       bounded by metadata_bytes_limit)
+#   E  end frame, 3 fields: 2 sequence
 interval=2
 # scan cadence in seconds. Core applies two-generation hysteresis on the
 # observation path (create and disappearance), so a listener appearing or
@@ -53,24 +42,15 @@ process_capability=unavailable
 attribution_interval=30
 scans_since_attribution=$attribution_interval
 listener_limit=256
-# One listener line per observed socket, so the per-scan socket budget is
-# the same cap applied to listener records.
-socket_record_limit=$listener_limit
 process_record_limit=512
 metadata_bytes_limit=131072
 metadata_hex_limit=$((metadata_bytes_limit * 2))
 process_depth_limit=16
 process_text_bytes=4096
 process_text_hex_limit=$((process_text_bytes * 2))
-identity_text_bytes=256
-identity_text_hex_limit=$((identity_text_bytes * 2))
 
 hex_stream() {
     od -An -v -tx1 | tr -d ' \n'
-}
-
-hex_text() {
-    printf '%s' "$1" | hex_stream
 }
 
 read_process_arguments() {
@@ -83,23 +63,12 @@ read_process_arguments() {
     return 1
 }
 
-boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || printf unavailable)
-network_namespace=$(readlink /proc/self/ns/net 2>/dev/null || printf unavailable)
-boot_hex=$(hex_text "$boot_id" | cut -c1-"$identity_text_hex_limit")
-network_hex=$(hex_text "$network_namespace" | cut -c1-"$identity_text_hex_limit")
-socket_capability=full
-if [ "$boot_id" = unavailable ] || [ "$network_namespace" = unavailable ]; then
-    socket_capability=partial
-fi
-identity_socket_capability=$socket_capability
 scanner_source=unavailable
 base_listener_capability=unavailable
-base_socket_capability=$identity_socket_capability
 
 choose_scanner_source() {
     scanner_source=unavailable
     base_listener_capability=unavailable
-    base_socket_capability=$identity_socket_capability
     if [ -r /proc/net/tcp ] && [ -r /proc/net/tcp6 ]; then
         scanner_source=proc
         base_listener_capability=full
@@ -109,7 +78,6 @@ choose_scanner_source() {
     elif command -v lsof >/dev/null 2>&1; then
         scanner_source=lsof
         base_listener_capability=partial
-        base_socket_capability=partial
     elif [ -r /proc/net/tcp ] || [ -r /proc/net/tcp6 ]; then
         scanner_source=proc
         base_listener_capability=partial
@@ -118,7 +86,6 @@ choose_scanner_source() {
 
 choose_scanner_source
 listener_capability=$base_listener_capability
-socket_capability=$base_socket_capability
 
 choose_fallback_source() {
     case "$scanner_source" in
@@ -126,7 +93,6 @@ choose_fallback_source() {
             if command -v ss >/dev/null 2>&1; then
                 scanner_source=ss
                 base_listener_capability=full
-                base_socket_capability=$identity_socket_capability
                 return
             fi
             ;;
@@ -134,18 +100,15 @@ choose_fallback_source() {
         *)
             scanner_source=unavailable
             base_listener_capability=unavailable
-            base_socket_capability=partial
             return
             ;;
     esac
     if command -v lsof >/dev/null 2>&1; then
         scanner_source=lsof
         base_listener_capability=partial
-        base_socket_capability=partial
     else
         scanner_source=unavailable
         base_listener_capability=unavailable
-        base_socket_capability=partial
     fi
 }
 
@@ -278,7 +241,6 @@ apply_listener_record_limit() {
         return
     fi
     listener_capability=partial
-    socket_capability=partial
     if [ "$process_capability" != unavailable ]; then
         process_capability=partial
     fi
@@ -396,9 +358,8 @@ EOF_CHAIN
 
 emit_observation() {
     sequence=$((sequence + 1))
-    printf 'SF1\tB\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$sequence" "$boot_hex" "$network_hex" "$listener_capability" "$socket_capability" "$process_capability" \
-        "$listener_limit" "$socket_record_limit" "$process_record_limit" "$metadata_bytes_limit"
+    printf 'SF1\tB\t%s\t%s\t%s\n' \
+        "$sequence" "$listener_capability" "$process_capability"
     while IFS= read -r listener_record; do
         [ -n "$listener_record" ] || continue
         printf 'SF1\tL\t%s\t%b\n' "$sequence" "$listener_record"
@@ -419,16 +380,11 @@ while :; do
     choose_scanner_source
     scan_current_listeners
     listener_capability=$base_listener_capability
-    socket_capability=$base_socket_capability
     if [ "$scan_status" -ne 0 ]; then
         current_listeners=$listener_records
         listener_capability=partial
-        socket_capability=partial
     fi
     listener_count=$(printf '%s\n' "$current_listeners" | awk 'NF { count++ } END { print count + 0 }')
-    if printf '%s\n' "$current_listeners" | awk -F '\t' '$4 == "0" { found = 1 } END { exit !found }'; then
-        socket_capability=partial
-    fi
     fingerprint=$(printf '%s' "$current_listeners" | cksum)
     if [ "$fingerprint" != "$previous_fingerprint" ] || [ "$scans_since_attribution" -ge "$attribution_interval" ]; then
         listener_records=$current_listeners

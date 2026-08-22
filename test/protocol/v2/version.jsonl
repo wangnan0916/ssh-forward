@@ -1,2 +1,2 @@
 {"jsonrpc":"2.0","id":"1","method":"system.version"}
-{"jsonrpc":"2.0","id":"1","result":{"version":1}}
+{"jsonrpc":"2.0","id":"1","result":{"version":2}}

@@ -47,8 +47,8 @@ func TestWatchCoalescesUnreadSnapshotsToLatestRevision(t *testing.T) {
 		if _, err := stream.Next(t.Context()); err != nil {
 			t.Fatalf("initial Next: %v", err)
 		}
-		session.facts <- ObservationSet{Sequence: 1, Capability: fullTestCapability, Budget: fullObservationBudget, Observations: []ListenerObservation{loopbackListener(8080)}}
-		session.facts <- ObservationSet{Sequence: 2, Capability: fullTestCapability, Budget: fullObservationBudget, Observations: []ListenerObservation{loopbackListener(8081)}}
+		session.facts <- ObservationSet{Sequence: 1, Capability: fullTestCapability, Observations: []ListenerObservation{loopbackListener(8080)}}
+		session.facts <- ObservationSet{Sequence: 2, Capability: fullTestCapability, Observations: []ListenerObservation{loopbackListener(8081)}}
 		synctest.Wait()
 		latest, err := stream.Next(t.Context())
 		if err != nil {
@@ -183,7 +183,7 @@ func TestWatchReturnsSubscriptionSnapshotBeforeCoalescedLatest(t *testing.T) {
 		if err != nil {
 			t.Fatalf("initial Next: %v", err)
 		}
-		session.facts <- ObservationSet{Sequence: 1, Capability: fullTestCapability, Budget: fullObservationBudget, Observations: []ListenerObservation{loopbackListener(8080)}}
+		session.facts <- ObservationSet{Sequence: 1, Capability: fullTestCapability, Observations: []ListenerObservation{loopbackListener(8080)}}
 		synctest.Wait()
 		latest, err := stream.Next(t.Context())
 		if err != nil {

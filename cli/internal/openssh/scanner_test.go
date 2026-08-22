@@ -23,9 +23,7 @@ func TestSessionReturnsValidatedListenerObservation(t *testing.T) {
 	executable := filepath.Join(directory, "ssh")
 	hexText := func(value string) string { return hex.EncodeToString([]byte(value)) }
 	bootFrame := func(sequence int) string {
-		return fmt.Sprintf("SF1\tB\t%d\t%s\t%s\tfull\tfull\tpartial\t%d\t%d\t%d\t%d\n",
-			sequence, hexText("boot-1"), hexText("net:[42]"),
-			maxObservedListeners, maxObservedSockets, maxProcessRecords, maxObservationMetadataBytes)
+		return fmt.Sprintf("SF1\tB\t%d\tfull\tpartial\n", sequence)
 	}
 	var queued strings.Builder
 	for sequence := 2; sequence <= 12; sequence++ {
@@ -85,7 +83,7 @@ while running:
 listener.close()
 `,
 		strconv.Quote(scannerPath),
-		strconv.Quote(strings.Join([]string{"SF1", "B", "1", hexText("boot-1"), hexText("net:[42]"), "full", "full", "partial", "256", "256", "512", "131072"}, "\t")),
+		strconv.Quote(strings.Join([]string{"SF1", "B", "1", "full", "partial"}, "\t")),
 		strconv.Quote(strings.Join([]string{"SF1", "L", "1", "ipv4", "loopback", "38080", "12345"}, "\t")),
 		strconv.Quote(strings.Join([]string{"SF1", "P", "1", "12345", "42", "0", "42", hexText("/usr/bin/python3"), hexText("/workspace"), hexText("python3\x00fixture.py\x00")}, "\t")),
 		strconv.Quote(strings.Join([]string{"SF1", "E", "1"}, "\t")),
@@ -127,14 +125,10 @@ listener.close()
 	}
 	wantCapability := core.DiscoveryCapability{
 		RemoteListeners: core.CapabilityFull,
-		SocketIdentity:  core.CapabilityFull,
 		ProcessMetadata: core.CapabilityPartial,
 	}
 	if observationSet.Sequence != 1 || !cmp.Equal(observationSet.Capability, wantCapability) {
 		t.Fatalf("ObservationSet mismatch (-got +want):\n%s", cmp.Diff(observationSet.Capability, wantCapability))
-	}
-	if observationSet.ScannerVersion != 1 || len(observationSet.ScannerChecksum) != 64 {
-		t.Fatalf("scanner identity = version %d checksum %q", observationSet.ScannerVersion, observationSet.ScannerChecksum)
 	}
 	if len(observationSet.Observations) != 1 {
 		t.Fatalf("Listener Observations = %#v, want one", observationSet.Observations)
@@ -142,9 +136,6 @@ listener.close()
 	observation := observationSet.Observations[0]
 	if observation.Family != core.FamilyIPv4 || observation.BindScope != core.BindLoopback || observation.RemotePort != 38080 {
 		t.Fatalf("Listener Observation = %#v", observation)
-	}
-	if len(observation.SocketIdentities) != 1 || !strings.HasPrefix(string(observation.SocketIdentities[0]), "socket:") {
-		t.Fatalf("Socket Identities = %#v, want one opaque identity", observation.SocketIdentities)
 	}
 	wantProcesses := []core.ProcessChain{{Processes: []core.ProcessMetadata{{
 		PID:              42,
@@ -159,11 +150,10 @@ listener.close()
 	if err != nil {
 		t.Fatalf("read streamed scanner: %v", err)
 	}
-	// The streamed script must be the fixed v1 /proc scanner: the SF1 frame
-	// emission (the wire version, see scanner.sh header) and the /proc
+	// The streamed script must contain the SF1 frame emission and /proc
 	// listener path.
 	if !strings.Contains(string(scanner), `printf 'SF1\tB\t`) || !strings.Contains(string(scanner), "/proc/net/tcp") {
-		t.Fatalf("streamed scanner is not the fixed v1 /proc scanner: %q", scanner)
+		t.Fatalf("streamed scanner is not the embedded /proc scanner: %q", scanner)
 	}
 
 	foundFailed := false
