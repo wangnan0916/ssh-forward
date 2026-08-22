@@ -16,7 +16,7 @@ CLI
                          │
                       Manager
                ┌─────────┴─────────┐
-        observe listeners      one worker per port
+        observe listeners      one worker per remembered port
                │                    │
       ssh HOST sh -s       ssh -N -L local:remote
 ```
@@ -27,6 +27,8 @@ CLI
   readiness checks, and bounded SSH error classification.
 - `internal/app` owns the single config file, SSH alias selection, and the thin
   adapters that compose HTTP/Unix Socket and the user's OS service manager.
+  A Manager loads its immutable port set at startup; `Connect` restarts it when
+  the selected host or configured ports differ from its current status.
 - `internal/cli` formats status and edits remembered ports.
 
 Mechanisms are delegated to deep external modules: system OpenSSH handles SSH,
@@ -45,16 +47,16 @@ Volatile state is rebuilt after restart:
 
 - current remote listeners;
 - discovery health;
-- each forward's waiting, starting, active, or failed state.
+- each forward's starting, active, or failed state.
 
-The manager keeps the last valid remembered-port set if `config.jsonc` is
-temporarily invalid. It retries discovery and failed forwards. A port worker
-exists only while that port is both remembered and observed listening.
+The manager retries discovery and failed forwards. A port worker exists for
+every Remembered Port; OpenSSH keeps the local listener useful across remote
+process restarts. Invalid configuration prevents a new Manager from starting.
 
 ## Deliberate omissions
 
 There is no generic policy language, process or directory attribution,
 wildcard-listener handling, port fallback, custom TCP proxy, SOCKS data plane,
-revision log, server-side watch stream, or multi-host runtime. New behavior
-should not introduce one of those concepts without first changing the product
-contract above.
+revision log, server-side watch stream, runtime config reload, or multi-host
+runtime. New behavior should not introduce one of those concepts without first
+changing the product contract above.

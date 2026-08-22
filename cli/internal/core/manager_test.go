@@ -2,9 +2,6 @@ package core
 
 import (
 	"context"
-	"errors"
-	"slices"
-	"sync"
 	"testing"
 	"time"
 )
@@ -42,65 +39,28 @@ func (b *fakeBackend) Forward(ctx context.Context, _ HostAlias, port uint16, rea
 	return ctx.Err()
 }
 
-type mutablePorts struct {
-	mu    sync.Mutex
-	ports []uint16
-	err   error
-}
-
-func (s *mutablePorts) read() ([]uint16, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return slices.Clone(s.ports), s.err
-}
-
-func (s *mutablePorts) set(ports []uint16, err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.ports, s.err = slices.Clone(ports), err
-}
-
-func TestManagerStartsAndStopsRememberedListener(t *testing.T) {
+func TestManagerForwardsRememberedPortWithoutRemoteListener(t *testing.T) {
 	backend := newFakeBackend()
-	ports := &mutablePorts{ports: []uint16{5173}}
 	manager := newManager(managerOptions{
-		host: "dev", backend: backend, ports: ports.read,
-		configPoll: 5 * time.Millisecond, retryDelay: 5 * time.Millisecond,
+		host: "dev", backend: backend, ports: []uint16{0, 5173, 5173},
+		retryDelay: 5 * time.Millisecond,
 	})
-	t.Cleanup(func() { _ = manager.Close(context.Background()) })
-
-	status := managerStatus(t, manager)
-	if len(status.Forwards) != 1 || status.Forwards[0].State != ForwardWaiting {
-		t.Fatalf("initial forwards = %#v", status.Forwards)
-	}
-	backend.listeners <- []uint16{8080, 5173}
 	wantEvent(t, backend.started, 5173)
 	eventually(t, func() bool {
 		status := managerStatus(t, manager)
-		return status.Discovery.State == DiscoveryActive &&
-			len(status.Forwards) == 1 && status.Forwards[0].State == ForwardActive
+		return len(status.Forwards) == 1 && status.Forwards[0].State == ForwardActive
 	})
 
-	ports.set(nil, nil)
-	wantEvent(t, backend.stopped, 5173)
-	eventually(t, func() bool { return len(managerStatus(t, manager).Forwards) == 0 })
-}
-
-func TestManagerKeepsLastValidPortsOnConfigError(t *testing.T) {
-	backend := newFakeBackend()
-	ports := &mutablePorts{ports: []uint16{3000}}
-	manager := newManager(managerOptions{
-		host: "dev", backend: backend, ports: ports.read,
-		configPoll: 5 * time.Millisecond, retryDelay: 5 * time.Millisecond,
-	})
-	t.Cleanup(func() { _ = manager.Close(context.Background()) })
-
-	ports.set(nil, errors.New("bad JSON"))
+	backend.listeners <- []uint16{8080}
 	eventually(t, func() bool {
 		status := managerStatus(t, manager)
-		return status.ConfigDiagnostic == "config_file_invalid" &&
-			len(status.Forwards) == 1 && status.Forwards[0].Port == 3000
+		return status.Discovery.State == DiscoveryActive && len(status.Listeners) == 1 && status.Listeners[0] == 8080
 	})
+
+	if err := manager.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	wantEvent(t, backend.stopped, 5173)
 }
 
 func managerStatus(t *testing.T, manager Manager) Status {

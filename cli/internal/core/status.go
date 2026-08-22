@@ -20,7 +20,6 @@ const (
 type ForwardState string
 
 const (
-	ForwardWaiting  ForwardState = "waiting"
 	ForwardStarting ForwardState = "starting"
 	ForwardActive   ForwardState = "active"
 	ForwardFailed   ForwardState = "failed"
@@ -38,11 +37,10 @@ type ForwardStatus struct {
 }
 
 type Status struct {
-	Host             HostAlias       `json:"host"`
-	Discovery        DiscoveryStatus `json:"discovery"`
-	Listeners        []uint16        `json:"listeners"`
-	Forwards         []ForwardStatus `json:"forwards"`
-	ConfigDiagnostic string          `json:"config_diagnostic,omitempty"`
+	Host      HostAlias       `json:"host"`
+	Discovery DiscoveryStatus `json:"discovery"`
+	Listeners []uint16        `json:"listeners"`
+	Forwards  []ForwardStatus `json:"forwards"`
 }
 
 var ErrManagerClosed = errors.New("manager is closed")
@@ -54,10 +52,6 @@ type Backend interface {
 	Observe(context.Context, HostAlias, func([]uint16)) error
 	Forward(context.Context, HostAlias, uint16, func()) error
 }
-
-// PortSource reads the remembered ports for the Manager's host. On error the
-// Manager retains the last valid set and reports a configuration diagnostic.
-type PortSource func() ([]uint16, error)
 
 // BackendError carries a small user-facing diagnostic without exposing raw
 // SSH stderr through Status.

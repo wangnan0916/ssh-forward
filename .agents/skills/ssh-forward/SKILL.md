@@ -3,7 +3,7 @@ name: ssh-forward
 description: >-
   Operates ssh-forward for a Linux SSH host: list remote loopback listeners,
   remember or forget a port, select the default SSH alias, inspect forwarding
-  status, or recover the background manager. Use when a remote development
+  status, or trigger automatic manager recovery. Use when a remote development
   port should be reachable on localhost or an ssh-forward port is unavailable.
 ---
 
@@ -49,10 +49,9 @@ The command starts the per-user background manager when necessary. In its
 result:
 
 - `listeners` contains remote ports currently listening;
-- `forwards[].state` is `waiting`, `starting`, `active`, or `failed`;
+- `forwards[].state` is `starting`, `active`, or `failed`;
 - an `active` port is reachable at `127.0.0.1:PORT`;
-- `discovery.diagnostic`, `forwards[].diagnostic`, and `config_diagnostic`
-  explain failures.
+- `discovery.diagnostic` and `forwards[].diagnostic` explain failures.
 
 Remember or forget exactly the port requested:
 
@@ -63,15 +62,15 @@ ssh-forward remove PORT --json
 
 `add` is idempotent. `remove` reports an error when the port was not
 remembered. After a change, poll `status --json` until the relevant forward
-reaches `active`, `waiting`, or `failed`. Report that state and, when active,
-the URL or endpoint using the same port.
+reaches `active` or `failed`. Report that state and, when active, the URL or
+endpoint using the same port.
 
 ## 3. Recover only when needed
 
-Use `ssh-forward manager restart` for an incompatible or stuck background
-manager. It interrupts current forwards. Use `manager serve` only for an
-explicit foreground-debugging request, and `watch` only for an explicit
-continuous-monitoring request.
+Run `ssh-forward status --json` again. The command installs, starts, repairs,
+or switches the background manager automatically. For an explicit continuous
+view, use `ssh-forward status --watch --json`. If automatic recovery fails,
+report the command error instead of editing service-manager state directly.
 
 Persistent intent lives in one `config.jsonc`. Runtime process IDs and listener
 observations are rebuilt rather than persisted.

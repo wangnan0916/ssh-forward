@@ -37,7 +37,7 @@ func versionString() string {
 }
 
 func main() {
-	// The context is cancellable so watch (and other long-running
+	// The context is cancellable so status --watch (and other long-running
 	// surfaces) end on Ctrl-C; the shell convention reports an interrupt
 	// as 128+SIGINT instead of a silent success.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

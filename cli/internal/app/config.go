@@ -8,8 +8,8 @@ import (
 
 const configSchemaVersion = 1
 
-// configFile is the whole persistent product model. A host alias selects a
-// list of remote ports that should be forwarded whenever they are listening.
+// configFile is the whole persistent product model. A host alias selects the
+// remote ports that should stay forwarded.
 type configFile struct {
 	SchemaVersion int                 `json:"schema_version"`
 	DefaultHost   string              `json:"default_host,omitempty"`
@@ -48,7 +48,7 @@ func saveConfig(path string, config configFile) error {
 	if len(config.Forwards) == 0 {
 		config.Forwards = nil
 	}
-	return writeJSONC(path, ".config-*.tmp", config)
+	return writeJSONC(path, config)
 }
 
 func SetDefaultHost(path, host string) error {

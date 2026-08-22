@@ -41,9 +41,7 @@ func TestDiscoversAndForwardsRemoteLoopbackPort(t *testing.T) {
 		}
 		port = uint16(parsed)
 	}
-	manager := core.NewManager(core.HostAlias(host), adapter, func() ([]uint16, error) {
-		return []uint16{port}, nil
-	})
+	manager := core.NewManager(core.HostAlias(host), adapter, []uint16{port})
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 
 	deadline := time.Now().Add(15 * time.Second)

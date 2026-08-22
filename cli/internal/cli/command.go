@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -15,7 +14,6 @@ import (
 const (
 	groupDaily = "daily"
 	groupHost  = "host"
-	groupMore  = "more"
 )
 
 func grouped(id string, command *cobra.Command) *cobra.Command {
@@ -38,7 +36,6 @@ Name the host with --host ALIAS (-h is help). Pin one with: ssh-forward default 
 	root.AddGroup(
 		&cobra.Group{ID: groupDaily, Title: "Daily:"},
 		&cobra.Group{ID: groupHost, Title: "Host:"},
-		&cobra.Group{ID: groupMore, Title: "More:"},
 	)
 	root.PersistentFlags().String("host", "", "SSH Host alias (default: the pinned host)")
 	root.PersistentFlags().String("ssh-config", "", "SSH client config file (default: ~/.ssh/config)")
@@ -48,10 +45,9 @@ Name the host with --host ALIAS (-h is help). Pin one with: ssh-forward default 
 		root.PersistentFlags().Bool("version", false, "print the version and exit")
 	}
 	root.AddCommand(
-		a.rememberCommand(true), a.rememberCommand(false), a.statusCommand(), a.watchCommand(),
+		a.rememberCommand(true), a.rememberCommand(false), a.statusCommand(),
 		a.hostCommand(), a.defaultCommand(), a.managerCommand(),
 	)
-	root.SetHelpCommandGroupID(groupMore)
 	root.InitDefaultHelpCmd()
 	for _, command := range root.Commands() {
 		if command.Name() == "help" {
@@ -98,6 +94,17 @@ func (a *App) rememberPort(ctx context.Context, port uint16, adding, jsonOutput 
 	}
 	if !adding && !changed {
 		return fmt.Errorf("port %d is not remembered for %s", port, host)
+	}
+	if a.sessionOwned {
+		_ = a.Manager.Close(context.Background())
+		a.Manager = nil
+		opts := a.Options
+		opts.HostFlag = host
+		manager, err := app.Connect(ctx, opts)
+		if err != nil {
+			return err
+		}
+		a.Manager = manager
 	}
 	return a.writeRemember(jsonOutput, adding, changed, host, port)
 }
@@ -157,15 +164,6 @@ func (a *App) waitForSettledStatus(ctx context.Context, initial core.Status) (co
 	return latest, nil
 }
 
-func (a *App) watchCommand() *cobra.Command {
-	command := &cobra.Command{
-		Use: "watch", Short: "refresh live state until interrupted", Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error { return a.runWatch(cmd.Context(), jsonFlag(cmd)) },
-	}
-	command.Flags().Bool("json", false, "emit one JSON status per change")
-	return grouped(groupMore, command)
-}
-
 func (a *App) hostCommand() *cobra.Command {
 	run := func(cmd *cobra.Command, _ []string) error { return a.runHostList(jsonFlag(cmd)) }
 	command := &cobra.Command{Use: "host", Short: "list Host aliases from ~/.ssh/config", Args: cobra.NoArgs, RunE: run}
@@ -188,34 +186,10 @@ func (a *App) defaultCommand() *cobra.Command {
 }
 
 func (a *App) managerCommand() *cobra.Command {
-	command := &cobra.Command{Use: "manager", Short: "run or recover the background manager", RunE: func(*cobra.Command, []string) error {
-		return UsageError(errors.New("manager needs a subcommand (serve, stop, restart)"))
-	}}
-	command.AddCommand(
-		&cobra.Command{Use: "serve", Hidden: true, Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return a.serveManager(cmd.Context()) }},
-		&cobra.Command{Use: "stop", Short: "stop the background manager", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error { return a.runManagerStop() }},
-		&cobra.Command{Use: "restart", Short: "restart the background manager", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return a.runManagerRestart(cmd.Context()) }},
-	)
-	return grouped(groupMore, annotateSkipManager(command))
-}
-
-func (a *App) runManagerStop() error {
-	if err := app.Stop(a.Options.Layout); err != nil {
-		return err
-	}
-	fmt.Fprintln(a.Options.Stdout, "Stopped the manager. Forwards will return on the next command.")
-	return nil
-}
-
-func (a *App) runManagerRestart(ctx context.Context) error {
-	manager, err := app.Restart(ctx, a.connectOptions())
-	if err != nil {
-		if app.IsResolution(err) {
-			return UsageError(err)
-		}
-		return err
-	}
-	_ = manager.Close(context.Background())
-	fmt.Fprintln(a.Options.Stdout, "Restarted the manager.")
-	return nil
+	command := annotateSkipManager(&cobra.Command{Use: "manager", Hidden: true})
+	command.AddCommand(&cobra.Command{
+		Use: "serve", Hidden: true, Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error { return a.serveManager(cmd.Context()) },
+	})
+	return command
 }

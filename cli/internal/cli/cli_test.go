@@ -72,4 +72,13 @@ func TestRootHasNoPolicyOrDirectorySurface(t *testing.T) {
 	if add.Flags().Lookup("dir") != nil {
 		t.Fatal("add --dir still exists")
 	}
+	status, _, err := root.Find([]string{"status"})
+	if err != nil || status.Flags().Lookup("watch") == nil {
+		t.Fatal("status --watch is missing")
+	}
+	for _, command := range root.Commands() {
+		if command.Name() == "watch" || command.Name() == "manager" && !command.Hidden {
+			t.Fatalf("obsolete public command %q is still visible", command.Name())
+		}
+	}
 }

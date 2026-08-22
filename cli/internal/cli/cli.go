@@ -88,12 +88,8 @@ func withInteractive(opts app.Options) app.Options {
 	return opts
 }
 
-func (a *App) connectOptions() app.Options {
-	return withInteractive(a.Options)
-}
-
 func (a *App) serveManager(ctx context.Context) error {
-	err := app.Serve(ctx, a.connectOptions())
+	err := app.Serve(ctx, a.Options)
 	if app.IsResolution(err) {
 		return UsageError(err)
 	}
@@ -136,7 +132,7 @@ func (a *App) ensureSession(ctx context.Context) error {
 	if a.Manager != nil {
 		return nil
 	}
-	manager, err := app.Connect(ctx, a.connectOptions())
+	manager, err := app.Connect(ctx, a.Options)
 	if err != nil {
 		if app.IsResolution(err) {
 			return UsageError(err)
@@ -164,7 +160,7 @@ Host
   host            aliases from ~/.ssh/config
   default ALIAS   pin the default host
 
-More: watch, manager (recovery)
+Use status --watch for live updates.
 
 ssh-forward COMMAND --help for details.
 `

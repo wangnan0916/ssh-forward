@@ -18,14 +18,11 @@ func (a *App) writeStatusHuman(status core.Status) error {
 	if status.Discovery.Diagnostic != "" {
 		fmt.Fprintf(a.Options.Stdout, "Discovery: %s\n", diagnosticText(status.Discovery.Diagnostic))
 	}
-	if status.ConfigDiagnostic != "" {
-		fmt.Fprintln(a.Options.Stdout, "Config: config.jsonc is invalid; the last valid ports remain active.")
-	}
 	remembered := make(map[uint16]struct{}, len(status.Forwards))
 	for _, forward := range status.Forwards {
 		remembered[forward.Port] = struct{}{}
 	}
-	for _, state := range []core.ForwardState{core.ForwardActive, core.ForwardStarting, core.ForwardWaiting, core.ForwardFailed} {
+	for _, state := range []core.ForwardState{core.ForwardActive, core.ForwardStarting, core.ForwardFailed} {
 		var rows []core.ForwardStatus
 		for _, forward := range status.Forwards {
 			if forward.State == state {
@@ -37,15 +34,13 @@ func (a *App) writeStatusHuman(status core.Status) error {
 		}
 		heading := map[core.ForwardState]string{
 			core.ForwardActive: "Forwards:", core.ForwardStarting: "Starting:",
-			core.ForwardWaiting: "Waiting:", core.ForwardFailed: "Needs attention:",
+			core.ForwardFailed: "Needs attention:",
 		}[state]
 		fmt.Fprintln(a.Options.Stdout, heading)
 		for _, row := range rows {
 			switch state {
 			case core.ForwardActive:
 				fmt.Fprintf(a.Options.Stdout, "  %d → 127.0.0.1:%d\n", row.Port, row.Port)
-			case core.ForwardWaiting:
-				fmt.Fprintf(a.Options.Stdout, "  %d  (nothing listening yet)\n", row.Port)
 			case core.ForwardFailed:
 				fmt.Fprintf(a.Options.Stdout, "  %d  %s\n", row.Port, diagnosticText(row.Diagnostic))
 			default:

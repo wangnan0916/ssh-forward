@@ -45,10 +45,8 @@ go build -o ssh-forward ./cmd/ssh-forward
 ssh-forward add PORT
 ssh-forward remove PORT
 ssh-forward status [--json] [--watch]
-ssh-forward watch [--json]
 ssh-forward host [--json]
 ssh-forward default [ALIAS]
-ssh-forward manager stop|restart
 ```
 
 Global options are `--host ALIAS` and `--ssh-config PATH`. Set
@@ -60,11 +58,13 @@ Global options are `--host ALIAS` and `--ssh-config PATH`. Set
    `/proc/net/tcp` on the Linux host.
 2. It reports at most 256 IPv4 loopback listeners. No remote agent is
    installed and no process metadata is collected.
-3. For each remembered port that is currently listening, the manager
-   supervises one `ssh -N -L 127.0.0.1:PORT:127.0.0.1:PORT HOST` process.
+3. For each remembered port, the manager supervises one
+   `ssh -N -L 127.0.0.1:PORT:127.0.0.1:PORT HOST` process. The local port stays
+   available while the remote process restarts; individual connections fail
+   until the remote listener returns.
 4. HTTP over a user-only Unix socket lets later CLI calls read manager status.
-   `watch` polls that status; the server does not implement a streaming state
-   platform.
+   `status --watch` polls that status; the server does not implement a
+   streaming state platform.
 
 The OS user service manager (launchd on macOS, the detected init system on
 Linux) owns process startup, restart, and logs. Installation and startup happen
@@ -87,8 +87,9 @@ All persistent intent is in one `config.jsonc`:
 }
 ```
 
-The manager reloads this file while running. Runtime observations and process
-IDs are not persisted.
+Commands compare this file with the running Manager and restart it when the
+selected host or remembered ports change. Runtime observations and process IDs
+are not persisted.
 
 Default directories:
 

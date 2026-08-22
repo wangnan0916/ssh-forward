@@ -57,3 +57,22 @@ func TestManagerStatusRoundTrip(t *testing.T) {
 		t.Fatalf("status = %#v, want %#v", got, want)
 	}
 }
+
+func TestManagerMatchesSelectedHostAndConfiguredPorts(t *testing.T) {
+	status := core.Status{
+		Host: "dev",
+		Forwards: []core.ForwardStatus{
+			{Port: 3000, State: core.ForwardActive},
+			{Port: 5173, State: core.ForwardFailed},
+		},
+	}
+	if !managerMatches(status, "dev", []uint16{3000, 5173}) {
+		t.Fatal("matching manager was rejected")
+	}
+	if managerMatches(status, "other", []uint16{3000, 5173}) {
+		t.Fatal("manager with another host was accepted")
+	}
+	if managerMatches(status, "dev", []uint16{3000}) {
+		t.Fatal("manager with stale ports was accepted")
+	}
+}
