@@ -32,7 +32,8 @@ CLI
   from the current process. `Uninstall` removes only the background service;
   persistent intent remains user-owned configuration.
 - `internal/statusview` owns human status grouping, terminal-width fitting,
-  missing-value presentation, and optional ANSI styling. JSON bypasses it.
+  missing-value presentation, and optional ANSI styling and hyperlinks. JSON
+  bypasses it.
 - `internal/cli` owns command orchestration and edits remembered ports; it
   delegates human status rendering through the `statusview.Render` seam.
 

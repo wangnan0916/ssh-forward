@@ -56,11 +56,7 @@ func TestRenderFitsWorkingDirectoryToWidth(t *testing.T) {
 		}},
 	}
 	output := renderStatus(t, status, Options{Width: 48})
-	for _, line := range strings.Split(strings.TrimSuffix(output, "\n"), "\n") {
-		if width := lipgloss.Width(line); width > 48 {
-			t.Fatalf("line width = %d, want <= 48: %q", width, line)
-		}
-	}
+	requireMaxWidth(t, output, 48)
 	if !strings.Contains(output, "…") || !strings.Contains(output, "console.cli.im") {
 		t.Fatalf("output does not preserve the final path segment: %q", output)
 	}
@@ -139,6 +135,29 @@ func TestRenderColorIsExplicit(t *testing.T) {
 	}
 }
 
+func TestRenderHyperlinksActiveForwardTargets(t *testing.T) {
+	status := core.Status{
+		Host:      "dev",
+		Discovery: core.DiscoveryStatus{State: core.DiscoveryActive},
+		Forwards: []core.ForwardStatus{
+			{Port: 3000, State: core.ForwardActive},
+			{Port: 4000, State: core.ForwardStarting},
+			{Port: 5000, State: core.ForwardFailed, Diagnostic: "local_port_conflict"},
+		},
+	}
+	output := renderStatus(t, status, Options{Width: 80, Color: true, Hyperlinks: true})
+	link := "\x1b]8;;http://127.0.0.1:3000\x1b\\127.0.0.1:3000\x1b]8;;\x1b\\"
+	if !strings.Contains(output, link) {
+		t.Fatalf("output = %q, missing active forward hyperlink %q", output, link)
+	}
+	for _, port := range []string{"4000", "5000"} {
+		if strings.Contains(output, "http://127.0.0.1:"+port) {
+			t.Fatalf("output unexpectedly links inactive forward %s: %q", port, output)
+		}
+	}
+	requireMaxWidth(t, output, 80)
+}
+
 func TestRenderEmptyActiveDiscovery(t *testing.T) {
 	status := core.Status{Host: "dev", Discovery: core.DiscoveryStatus{State: core.DiscoveryActive}}
 	output := renderStatus(t, status, Options{})
@@ -154,4 +173,13 @@ func renderStatus(t *testing.T, status core.Status, options Options) string {
 		t.Fatal(err)
 	}
 	return output.String()
+}
+
+func requireMaxWidth(t *testing.T, output string, maxWidth int) {
+	t.Helper()
+	for _, line := range strings.Split(strings.TrimSuffix(output, "\n"), "\n") {
+		if width := lipgloss.Width(line); width > maxWidth {
+			t.Fatalf("line width = %d, want <= %d: %q", width, maxWidth, line)
+		}
+	}
 }

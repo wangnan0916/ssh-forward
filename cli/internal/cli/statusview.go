@@ -19,5 +19,6 @@ func statusViewOptions(writer io.Writer) statusview.Options {
 		return statusview.Options{}
 	}
 	_, noColor := os.LookupEnv("NO_COLOR")
-	return statusview.Options{Width: width, Color: !noColor}
+	ansiEnabled := !noColor
+	return statusview.Options{Width: width, Color: ansiEnabled, Hyperlinks: ansiEnabled}
 }

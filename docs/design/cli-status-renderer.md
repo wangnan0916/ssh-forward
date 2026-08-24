@@ -40,8 +40,9 @@ Add a deep `internal/statusview` module with one interface:
 func Render(w io.Writer, status core.Status, options Options) error
 
 type Options struct {
-    Width int
-    Color bool
+    Width      int
+    Color      bool
+    Hyperlinks bool
 }
 ```
 
@@ -54,11 +55,12 @@ The module owns all human status presentation:
 - missing-value placeholders;
 - working-directory truncation;
 - optional ANSI styling.
+- terminal hyperlinks for active local targets.
 
 The CLI adapter derives `Options` from stdout. It detects TTY state and width
-with `golang.org/x/term`; color is enabled only for a TTY when `NO_COLOR` is
-unset. A non-file writer, failed size probe, or redirected stdout produces
-plain, unbounded text.
+with `golang.org/x/term`; color and hyperlinks are enabled only for a TTY when
+`NO_COLOR` is unset. A non-file writer, failed size probe, or redirected stdout
+produces plain, unbounded text.
 
 `core` does not import or refer to the renderer. JSON encoding bypasses it and
 continues to serialize `core.Status` directly.
@@ -87,6 +89,9 @@ continues to serialize `core.Status` directly.
    the terminal or become a full-screen TUI.
 9. `Connecting to HOST...` remains a stderr progress message and is outside
    the table.
+10. In an ANSI-enabled TTY, active forward targets use OSC 8 hyperlinks to
+    `http://127.0.0.1:PORT`. Starting and failed targets remain plain text, as
+    does all piped or redirected output.
 
 ## Compatibility
 
