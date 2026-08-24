@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -43,7 +44,7 @@ func TestLoadConfigRejectsUnknownFields(t *testing.T) {
 }
 
 func TestLoadConfigRejectsUnsupportedSchema(t *testing.T) {
-	path := writeConfigFile(t, `{"schema_version": 4, "default_host": "development"}`)
+	path := writeConfigFile(t, `{"schema_version": 5, "default_host": "development"}`)
 	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "schema_version") {
 		t.Fatalf("LoadConfig err = %v, want a schema rejection", err)
 	}
@@ -66,7 +67,7 @@ func TestWorkingDirectoryRuleMutationsPreserveHostAndUpgradeSchema(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.SchemaVersion != 3 || config.DefaultHost != "dev" ||
+	if config.SchemaVersion != 4 || config.DefaultHost != "dev" ||
 		len(config.WorkingDirectoryRules["dev"]) != 1 || config.WorkingDirectoryRules["dev"][0] != "/workspace/**" ||
 		config.WorkingDirectoryRules["other"][0] != "/srv/**" {
 		t.Fatalf("config = %#v", config)
@@ -155,8 +156,8 @@ func TestLoadConfigMigratesLegacyPortsToSamePortForwards(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []core.RememberedForward{
-		{RemotePort: 3000, LocalPort: 3000},
-		{RemotePort: 5173, LocalPort: 5173},
+		{RemotePort: 3000, LocalPort: 3000, AllowFallback: true},
+		{RemotePort: 5173, LocalPort: 5173, AllowFallback: true},
 	}
 	if config.LegacyForwards != nil || len(config.RememberedForwards["dev"]) != len(want) {
 		t.Fatalf("config = %#v", config)
@@ -165,6 +166,65 @@ func TestLoadConfigMigratesLegacyPortsToSamePortForwards(t *testing.T) {
 		if config.RememberedForwards["dev"][index] != want[index] {
 			t.Fatalf("forwards = %#v, want %#v", config.RememberedForwards["dev"], want)
 		}
+	}
+}
+
+func TestLoadConfigMigratesSchemaThreePortPolicies(t *testing.T) {
+	path := writeConfigFile(t, `{
+		"schema_version": 3,
+		"remembered_forwards": {"dev": [
+			{"remote_port": 3000, "local_port": 3000},
+			{"remote_port": 5173, "local_port": 15173, "allow_fallback": true}
+		]}
+	}`)
+	config, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []core.RememberedForward{
+		{RemotePort: 3000, LocalPort: 3000, AllowFallback: true},
+		{RemotePort: 5173, LocalPort: 15173},
+	}
+	if got := config.RememberedForwards["dev"]; !slices.Equal(got, want) {
+		t.Fatalf("forwards = %#v, want %#v", got, want)
+	}
+}
+
+func TestLoadConfigDefaultsOmittedLocalPortToFallback(t *testing.T) {
+	path := writeConfigFile(t, `{
+		"schema_version": 4,
+		"remembered_forwards": {"dev": [{"remote_port": 3000}]}
+	}`)
+	config, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := core.RememberedForward{
+		RemotePort: 3000, LocalPort: 3000, AllowFallback: true,
+	}
+	if got := config.RememberedForwards["dev"]; !slices.Equal(got, []core.RememberedForward{want}) {
+		t.Fatalf("forwards = %#v, want %#v", got, want)
+	}
+}
+
+func TestLoadConfigPreservesSchemaFourFallbackPolicy(t *testing.T) {
+	path := writeConfigFile(t, `{
+		"schema_version": 4,
+		"remembered_forwards": {"dev": [
+			{"remote_port": 3000, "local_port": 13000, "allow_fallback": true},
+			{"remote_port": 5173, "local_port": 15173}
+		]}
+	}`)
+	config, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []core.RememberedForward{
+		{RemotePort: 3000, LocalPort: 13000, AllowFallback: true},
+		{RemotePort: 5173, LocalPort: 15173},
+	}
+	if got := config.RememberedForwards["dev"]; !slices.Equal(got, want) {
+		t.Fatalf("forwards = %#v, want %#v", got, want)
 	}
 }
 

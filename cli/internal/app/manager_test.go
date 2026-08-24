@@ -47,7 +47,8 @@ func TestManagerIPCRoundTrip(t *testing.T) {
 		Discovery: core.DiscoveryStatus{State: core.DiscoveryActive},
 		Listeners: []core.Listener{{Port: 5173, App: "node", WorkingDirectory: "/workspace/app"}},
 		Forwards: []core.ForwardStatus{{
-			RemotePort: 5173, LocalPort: 5173, State: core.ForwardActive, Automatic: true,
+			RemotePort: 5173, PreferredLocalPort: 5173, LocalPort: 5173,
+			State: core.ForwardActive, Automatic: true, AllowFallback: true,
 		}},
 		WorkingDirectoryRules: []string{"/workspace/**"},
 	}
@@ -91,14 +92,14 @@ func TestManagerMatchesSelectedHostAndForwardingIntent(t *testing.T) {
 		Host:                  "dev",
 		WorkingDirectoryRules: []string{"/workspace/**"},
 		Forwards: []core.ForwardStatus{
-			{RemotePort: 3000, LocalPort: 13000, State: core.ForwardActive},
-			{RemotePort: 5173, LocalPort: 5173, State: core.ForwardFailed},
-			{RemotePort: 12000, LocalPort: 12000, State: core.ForwardActive, Automatic: true},
+			{RemotePort: 3000, PreferredLocalPort: 13000, LocalPort: 13001, State: core.ForwardActive, AllowFallback: true},
+			{RemotePort: 5173, PreferredLocalPort: 5173, LocalPort: 5173, State: core.ForwardFailed},
+			{RemotePort: 12000, PreferredLocalPort: 12000, LocalPort: 12000, State: core.ForwardActive, Automatic: true, AllowFallback: true},
 		},
 	}
 	intent := core.ForwardingIntent{
 		RememberedForwards: []core.RememberedForward{
-			{RemotePort: 3000, LocalPort: 13000},
+			{RemotePort: 3000, LocalPort: 13000, AllowFallback: true},
 			{RemotePort: 5173, LocalPort: 5173},
 		},
 		WorkingDirectoryRules: []string{"/workspace/**"},

@@ -3,7 +3,8 @@
 Discover services reachable through IPv4 loopback on a Linux SSH host and keep
 selected ports—or ports whose process working directory matches a configured
 glob—available at `localhost` through system OpenSSH. Remembered forwards may
-use a different local port; automatic forwards use the remote port.
+use a different preferred local port and choose whether to fall back when it
+is busy. Automatic forwards always allow temporary fallback.
 
 [![CI](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml/badge.svg)](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -33,9 +34,10 @@ ssh-forward add --pwd '/home/me/Workspace/**'
 ```
 
 When a matching remote process starts listening, its port becomes available on
-the same port at `localhost`. When the listener stops, the automatic SSH
-forward disappears. This works well for development servers, preview tools,
-notebooks, and OAuth callback servers that use temporary ports.
+the same port at `localhost`, or the next available port if that port is busy.
+When the listener stops, the automatic SSH forward disappears. This works well
+for development servers, preview tools, notebooks, and OAuth callback servers
+that use temporary ports.
 
 ## Lightweight
 
@@ -103,8 +105,8 @@ Then choose the host and remember the ports you want locally:
 ```bash
 ssh-forward default my-dev
 ssh-forward status              # see remote loopback listeners
-ssh-forward add 5173            # keep remote 5173 on localhost:5173
-ssh-forward add 8443 --local 18443  # map remote 8443 to localhost:18443
+ssh-forward add 5173            # prefer localhost:5173; temporarily fall back if busy
+ssh-forward add 8443 --local 18443  # require remote 8443 on localhost:18443
 ssh-forward add --pwd '/home/me/Workspace/**'  # forward matching live services
 ssh-forward status --watch      # follow changes
 ssh-forward remove 5173
@@ -151,17 +153,21 @@ Global options are `--host ALIAS` and `--ssh-config PATH`. Set
    Remote Listeners. `*` matches within one path segment and `**` crosses path
    segments. When a listener disappears or stops matching, its Automatic
    Forward stops. Quote globs so the local shell does not expand them.
-5. HTTP over a user-only Unix socket lets later CLI calls read Manager status.
+5. Remembered Forwards created without `--local` and Automatic Forwards try up
+   to 20 higher local ports when the preferred port is busy. The actual port
+   appears in status but is temporary and is never written to configuration.
+   Explicit `--local` mappings are strict by default.
+6. HTTP over a user-only Unix socket lets later CLI calls read Manager status.
    `status --watch` polls that status.
 
 The OS user service manager (launchd on macOS, the detected init system on
 Linux) owns process startup, restart, and logs. Installation and startup happen
 automatically when a command first needs the Manager.
 
-Use `add REMOTE --local LOCAL` when the same-numbered local port is unavailable
-or when a stable local address is preferable. Remembered forwards for one Host
-must use distinct local ports. If another local process owns the selected port,
-status reports the conflict and retries later.
+Use `add REMOTE --local LOCAL` when a stable local address is required. The
+command creates a strict mapping: if another process owns that port, status
+reports the conflict and retries later. Remembered preferred ports for one
+Host must be distinct.
 
 ## Configuration
 
@@ -169,11 +175,11 @@ All persistent intent is in one `config.jsonc`:
 
 ```jsonc
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "default_host": "my-dev",
   "remembered_forwards": {
     "my-dev": [
-      {"remote_port": 5173, "local_port": 5173},
+      {"remote_port": 5173, "local_port": 5173, "allow_fallback": true},
       {"remote_port": 8443, "local_port": 18443}
     ]
   },
@@ -183,13 +189,18 @@ All persistent intent is in one `config.jsonc`:
 }
 ```
 
+`allow_fallback` is authoritative whether or not the remote and local ports
+differ. `add REMOTE` enables it, while `add REMOTE --local LOCAL` leaves it
+disabled. A manually edited schema-4 entry may explicitly choose either
+policy.
+
 Commands send remembered-forward and working-directory-rule changes to the
 running Manager, which reconciles only the affected forwards. Unchanged
 forwards stay connected. A selected-host, protocol, or binary-version change
-still replaces the Manager. Schema 1 and 2 files remain readable; their port
-lists become same-port mappings and upgrade to schema 3 on the next write.
-Runtime observations, automatically selected ports, and process IDs are not
-persisted.
+still replaces the Manager. Schema 1–3 files remain readable; during migration,
+legacy same-port mappings gain temporary fallback and legacy custom mappings
+remain strict. The file upgrades to schema 4 on the next write. Runtime
+observations, temporary actual ports, and process IDs are not persisted.
 
 Default directories:
 

@@ -84,7 +84,7 @@ func newManager(options managerOptions) *manager {
 
 	m.mu.Lock()
 	for _, forward := range m.remembered {
-		m.startForwardLocked(ForwardTarget(forward))
+		m.startForwardLocked(forwardTarget(forward))
 	}
 	m.mu.Unlock()
 	m.tasks.Go(m.observe)
@@ -110,9 +110,7 @@ func normalizedManagerForwards(forwards []RememberedForward) []RememberedForward
 		if forward.RemotePort == 0 {
 			continue
 		}
-		if forward.LocalPort == 0 {
-			forward.LocalPort = forward.RemotePort
-		}
+		forward = forward.WithDefaults()
 		byRemotePort[forward.RemotePort] = forward
 	}
 	normalized := make([]RememberedForward, 0, len(byRemotePort))
@@ -176,7 +174,11 @@ func (m *manager) UpdateIntent(ctx context.Context, intent ForwardingIntent) err
 	m.workingDirectoryRules = intent.WorkingDirectoryRules
 	m.reconcileForwardsLocked()
 	for remotePort, status := range m.states {
-		m.states[remotePort] = m.forwardStatus(remotePort, status.State, status.Diagnostic)
+		updated := m.forwardStatus(remotePort, status.State, status.Diagnostic)
+		if status.State == ForwardActive {
+			updated.LocalPort = status.LocalPort
+		}
+		m.states[remotePort] = updated
 	}
 	return nil
 }
@@ -233,22 +235,22 @@ func (m *manager) reconcileForwardsLocked() {
 		}
 	}
 	for _, forward := range m.remembered {
-		m.ensureForwardLocked(ForwardTarget(forward))
+		m.ensureForwardLocked(forwardTarget(forward))
 	}
 	for remotePort, listener := range m.listeners {
 		if !m.isRemembered(remotePort) && matchesWorkingDirectory(m.workingDirectoryRules, listener.WorkingDirectory) {
-			m.ensureForwardLocked(ForwardTarget{RemotePort: remotePort, LocalPort: remotePort})
+			m.ensureForwardLocked(automaticForwardTarget(remotePort))
 		}
 	}
 }
 
 func (m *manager) desiredForward(remotePort uint16) (ForwardTarget, bool) {
 	if remembered, found := m.rememberedForward(remotePort); found {
-		return ForwardTarget(remembered), true
+		return forwardTarget(remembered), true
 	}
 	listener, found := m.listeners[remotePort]
 	if found && matchesWorkingDirectory(m.workingDirectoryRules, listener.WorkingDirectory) {
-		return ForwardTarget{RemotePort: remotePort, LocalPort: remotePort}, true
+		return automaticForwardTarget(remotePort), true
 	}
 	return ForwardTarget{}, false
 }
@@ -287,14 +289,14 @@ func (m *manager) runForward(worker *forwardWorker) {
 	remotePort := worker.target.RemotePort
 	defer m.forwardStopped(remotePort, worker)
 	for {
-		m.setForwardState(remotePort, worker, ForwardStarting, "")
-		err := m.backend.Forward(worker.ctx, m.host, worker.target, func() {
-			m.setForwardState(remotePort, worker, ForwardActive, "")
+		m.setForwardState(remotePort, worker, ForwardStarting, "", 0)
+		err := m.backend.Forward(worker.ctx, m.host, worker.target, func(localPort uint16) {
+			m.setForwardState(remotePort, worker, ForwardActive, "", localPort)
 		})
 		if worker.ctx.Err() != nil {
 			return
 		}
-		m.setForwardState(remotePort, worker, ForwardFailed, ErrorDiagnostic(err))
+		m.setForwardState(remotePort, worker, ForwardFailed, ErrorDiagnostic(err), 0)
 		if !wait(worker.ctx, m.retryDelay) {
 			return
 		}
@@ -323,29 +325,46 @@ func (m *manager) setForwardState(
 	worker *forwardWorker,
 	state ForwardState,
 	diagnostic string,
+	actualLocalPort uint16,
 ) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !m.closed && worker.ctx.Err() == nil && m.forwardWorkers[remotePort] == worker {
-		m.states[remotePort] = m.forwardStatus(remotePort, state, diagnostic)
+		status := m.forwardStatus(remotePort, state, diagnostic)
+		if state == ForwardActive {
+			status.LocalPort = actualLocalPort
+		}
+		m.states[remotePort] = status
 	}
 }
 
 func (m *manager) forwardStatus(remotePort uint16, state ForwardState, diagnostic string) ForwardStatus {
+	target := automaticForwardTarget(remotePort)
+	automatic := true
 	if remembered, found := m.rememberedForward(remotePort); found {
-		return ForwardStatus{
-			RemotePort: remembered.RemotePort,
-			LocalPort:  remembered.LocalPort,
-			State:      state,
-			Diagnostic: diagnostic,
-		}
+		target = forwardTarget(remembered)
+		automatic = false
 	}
 	return ForwardStatus{
-		RemotePort: remotePort,
-		LocalPort:  remotePort,
-		State:      state,
-		Diagnostic: diagnostic,
-		Automatic:  true,
+		RemotePort:         target.RemotePort,
+		PreferredLocalPort: target.LocalPort,
+		LocalPort:          target.LocalPort,
+		State:              state,
+		Diagnostic:         diagnostic,
+		Automatic:          automatic,
+		AllowFallback:      target.AllowFallback,
+	}
+}
+
+func automaticForwardTarget(port uint16) ForwardTarget {
+	return ForwardTarget{RemotePort: port, LocalPort: port, AllowFallback: true}
+}
+
+func forwardTarget(forward RememberedForward) ForwardTarget {
+	return ForwardTarget{
+		RemotePort:    forward.RemotePort,
+		LocalPort:     forward.LocalPort,
+		AllowFallback: forward.AllowFallback,
 	}
 }
 

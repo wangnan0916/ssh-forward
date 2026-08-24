@@ -126,8 +126,9 @@ func managerMatches(status core.Status, host string, intent core.ForwardingInten
 	for _, forward := range status.Forwards {
 		if !forward.Automatic {
 			rememberedForwards = append(rememberedForwards, core.RememberedForward{
-				RemotePort: forward.RemotePort,
-				LocalPort:  forward.LocalPort,
+				RemotePort:    forward.RemotePort,
+				LocalPort:     forward.PreferredLocalPort,
+				AllowFallback: forward.AllowFallback,
 			})
 		}
 	}

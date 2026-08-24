@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -46,6 +47,32 @@ func TestAddWritesRemoteToLocalForward(t *testing.T) {
 		t.Fatalf("manager intent = %#v", manager.intent)
 	}
 	if !strings.Contains(stdout.String(), "Remembered remote 5173 at 127.0.0.1:15173 for dev") {
+		t.Fatalf("output = %q", stdout.String())
+	}
+}
+
+func TestAddWithoutLocalPortAllowsTemporaryFallback(t *testing.T) {
+	configPath := t.TempDir() + "/config.jsonc"
+	var stdout bytes.Buffer
+	manager := &fakeManager{status: core.Status{Host: "dev"}}
+	surface := &App{
+		Manager: manager,
+		Options: app.Options{ConfigPath: configPath, Stdout: &stdout},
+	}
+	if err := surface.Run(context.Background(), []string{"add", "5173"}); err != nil {
+		t.Fatal(err)
+	}
+	want := core.RememberedForward{
+		RemotePort: 5173, LocalPort: 5173, AllowFallback: true,
+	}
+	intent, err := app.HostIntent(configPath, "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(intent.RememberedForwards, []core.RememberedForward{want}) {
+		t.Fatalf("intent = %#v", intent)
+	}
+	if !strings.Contains(stdout.String(), "prefers 127.0.0.1:5173; falls back if busy") {
 		t.Fatalf("output = %q", stdout.String())
 	}
 }
@@ -136,7 +163,8 @@ func TestStatusSeparatesForwardedAndAvailablePorts(t *testing.T) {
 
 func TestStatusJSONPreservesLegacyForwardShape(t *testing.T) {
 	got := renderForwardStatusJSON(t, core.ForwardStatus{
-		RemotePort: 8443, LocalPort: 8443, State: core.ForwardActive,
+		RemotePort: 8443, PreferredLocalPort: 8443, LocalPort: 8443,
+		State: core.ForwardActive, AllowFallback: true,
 	})
 	want := "{\"host\":\"dev\",\"discovery\":{\"state\":\"active\"},\"listeners\":[{\"port\":631}],\"forwards\":[{\"port\":8443,\"state\":\"active\"}]}\n"
 	if got != want {
@@ -144,11 +172,12 @@ func TestStatusJSONPreservesLegacyForwardShape(t *testing.T) {
 	}
 }
 
-func TestStatusJSONIncludesCustomMapping(t *testing.T) {
+func TestStatusJSONIncludesFallbackMapping(t *testing.T) {
 	got := renderForwardStatusJSON(t, core.ForwardStatus{
-		RemotePort: 8443, LocalPort: 18443, State: core.ForwardActive,
+		RemotePort: 8443, PreferredLocalPort: 8443, LocalPort: 8444,
+		State: core.ForwardActive, AllowFallback: true,
 	})
-	want := "{\"host\":\"dev\",\"discovery\":{\"state\":\"active\"},\"listeners\":[{\"port\":631}],\"forwards\":[{\"remote_port\":8443,\"local_port\":18443,\"state\":\"active\"}]}\n"
+	want := "{\"host\":\"dev\",\"discovery\":{\"state\":\"active\"},\"listeners\":[{\"port\":631}],\"forwards\":[{\"remote_port\":8443,\"preferred_local_port\":8443,\"local_port\":8444,\"state\":\"active\",\"allow_fallback\":true}]}\n"
 	if got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}

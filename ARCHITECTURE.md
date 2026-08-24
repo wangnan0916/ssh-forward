@@ -53,7 +53,8 @@ renders human status tables, while `x/term` detects stdout capabilities.
 Persistent state is only:
 
 - one optional default SSH alias;
-- a sorted remembered remote-to-local mapping list per alias;
+- a sorted remembered remote-to-preferred-local mapping list, including its
+  fallback policy, per alias;
 - a sorted absolute working-directory glob list per alias.
 
 Volatile state is rebuilt after restart:
@@ -61,6 +62,8 @@ Volatile state is rebuilt after restart:
 - current remote listeners;
 - best-effort listener executable names and working directories;
 - ports currently selected by working-directory rules;
+- each active Forward's actual local port, which may temporarily differ from
+  its preferred port;
 - discovery health;
 - each forward's starting, active, or failed state.
 
@@ -69,5 +72,8 @@ every Remembered Forward. It creates a worker for a listener whose observed
 working directory matches a configured glob, and cancels that Automatic
 Forward when a later complete listener snapshot no longer matches. Remembered
 intent wins when both sources select the same Remote Port, so only one worker
-exists. Changing a Remembered Forward's Local Port restarts only that worker.
-Invalid configuration prevents a new Manager from starting.
+exists. Changing a Remembered Forward's preferred Local Port or fallback policy
+restarts only that worker. Any Forward with fallback enabled may try up to 20
+higher ports after a local conflict; implicit same-port and Automatic Forwards
+enable that policy by default. The selected port remains volatile. Invalid
+configuration prevents a new Manager from starting.

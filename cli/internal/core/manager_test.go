@@ -8,12 +8,13 @@ import (
 )
 
 type fakeBackend struct {
-	listeners  chan []Listener
-	started    chan ForwardTarget
-	stopped    chan ForwardTarget
-	closed     chan struct{}
-	closeErr   error
-	closeCalls int
+	listeners       chan []Listener
+	started         chan ForwardTarget
+	stopped         chan ForwardTarget
+	closed          chan struct{}
+	actualLocalPort uint16
+	closeErr        error
+	closeCalls      int
 }
 
 func newFakeBackend() *fakeBackend {
@@ -36,9 +37,18 @@ func (b *fakeBackend) Observe(ctx context.Context, _ HostAlias, emit func([]List
 	}
 }
 
-func (b *fakeBackend) Forward(ctx context.Context, _ HostAlias, target ForwardTarget, ready func()) error {
+func (b *fakeBackend) Forward(
+	ctx context.Context,
+	_ HostAlias,
+	target ForwardTarget,
+	ready func(uint16),
+) error {
 	b.started <- target
-	ready()
+	localPort := target.LocalPort
+	if b.actualLocalPort != 0 {
+		localPort = b.actualLocalPort
+	}
+	ready(localPort)
 	<-ctx.Done()
 	b.stopped <- target
 	return ctx.Err()
@@ -59,7 +69,9 @@ func TestManagerForwardsRememberedPortWithoutRemoteListener(t *testing.T) {
 		}},
 		retryDelay: 5 * time.Millisecond,
 	})
-	wantEvent(t, backend.started, 5173)
+	wantTarget(t, backend.started, ForwardTarget{
+		RemotePort: 5173, LocalPort: 5173, AllowFallback: true,
+	})
 	eventually(t, func() bool {
 		status := managerStatus(t, manager)
 		return len(status.Forwards) == 1 && status.Forwards[0].State == ForwardActive
@@ -76,7 +88,9 @@ func TestManagerForwardsRememberedPortWithoutRemoteListener(t *testing.T) {
 	if err := manager.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	wantEvent(t, backend.stopped, 5173)
+	wantTarget(t, backend.stopped, ForwardTarget{
+		RemotePort: 5173, LocalPort: 5173, AllowFallback: true,
+	})
 }
 
 func TestManagerCloseClosesBackendOnceAndReturnsItsError(t *testing.T) {
@@ -273,10 +287,46 @@ func TestManagerRestartsForwardWhenLocalPortChanges(t *testing.T) {
 	})
 }
 
+func TestManagerReportsActualFallbackPortWithoutChangingIntent(t *testing.T) {
+	backend := newFakeBackend()
+	backend.actualLocalPort = 13001
+	forward := RememberedForward{
+		RemotePort: 3000, LocalPort: 13000, AllowFallback: true,
+	}
+	manager := newManager(managerOptions{
+		host: "dev", backend: backend,
+		intent:     ForwardingIntent{RememberedForwards: []RememberedForward{forward}},
+		retryDelay: 5 * time.Millisecond,
+	})
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	wantTarget(t, backend.started, forwardTarget(forward))
+	eventually(t, func() bool {
+		status := managerStatus(t, manager)
+		return len(status.Forwards) == 1 &&
+			status.Forwards[0].PreferredLocalPort == 13000 &&
+			status.Forwards[0].LocalPort == 13001 &&
+			status.Forwards[0].AllowFallback
+	})
+	if err := manager.UpdateIntent(context.Background(), ForwardingIntent{
+		RememberedForwards: []RememberedForward{forward},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	status := managerStatus(t, manager).Forwards[0]
+	if status.LocalPort != 13001 || status.PreferredLocalPort != 13000 {
+		t.Fatalf("status after equivalent update = %#v", status)
+	}
+	wantNoEvent(t, backend.started)
+	wantNoEvent(t, backend.stopped)
+}
+
 func samePortForwards(ports ...uint16) []RememberedForward {
 	forwards := make([]RememberedForward, 0, len(ports))
 	for _, port := range ports {
-		forwards = append(forwards, RememberedForward{RemotePort: port, LocalPort: port})
+		forwards = append(forwards, RememberedForward{
+			RemotePort: port, LocalPort: port, AllowFallback: true,
+		})
 	}
 	return forwards
 }

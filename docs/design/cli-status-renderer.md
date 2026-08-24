@@ -67,9 +67,9 @@ produces plain, unbounded text.
 `core` does not import or refer to the renderer. Manager IPC serializes the
 complete `core.Status` model. Public `status --json` output bypasses the
 renderer and uses a CLI-owned compatibility projection: same-port Forwards
-retain the legacy `port` field, while mappings whose Local Port differs from
-the Remote Port expose the complete port model. The compatibility projection
-does not affect Manager IPC.
+retain the legacy `port` field, while mappings whose Preferred Local Port or
+actual Local Port differs from the Remote Port expose the complete port model.
+The compatibility projection does not affect Manager IPC.
 
 ## Rendering rules
 

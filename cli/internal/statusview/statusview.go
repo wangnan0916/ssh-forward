@@ -118,7 +118,7 @@ func renderForwards(
 		for _, forward := range forwards {
 			rows = append(rows, []string{
 				strconv.Itoa(int(forward.RemotePort)),
-				localTarget(forward.LocalPort, false),
+				forwardTarget(forward, false),
 				forwardKind(forward),
 				diagnosticText(forward.Diagnostic),
 			})
@@ -137,7 +137,7 @@ func renderForwards(
 		listener := listeners[forward.RemotePort]
 		rows = append(rows, []string{
 			strconv.Itoa(int(forward.RemotePort)),
-			localTarget(forward.LocalPort, options.Hyperlinks && state == core.ForwardActive),
+			forwardTarget(forward, options.Hyperlinks && state == core.ForwardActive),
 			forwardKind(forward),
 			valueOrMissing(listener.App),
 			valueOrMissing(listener.WorkingDirectory),
@@ -329,6 +329,14 @@ func localTarget(port uint16, hyperlink bool) string {
 		return target
 	}
 	return "\x1b]8;;http://" + target + "\x1b\\" + target + "\x1b]8;;\x1b\\"
+}
+
+func forwardTarget(forward core.ForwardStatus, hyperlink bool) string {
+	target := localTarget(forward.LocalPort, hyperlink)
+	if preferred := forward.PreferredLocalPort; preferred != 0 && preferred != forward.LocalPort {
+		target += " (preferred " + strconv.Itoa(int(preferred)) + ")"
+	}
+	return target
 }
 
 func valueOrMissing(value string) string {

@@ -22,9 +22,11 @@ import (
 var ErrInvalidAlias = errors.New("invalid Development Host alias")
 
 const (
-	maxStderrTailBytes   = 64 << 10
-	forwardProbeInterval = 25 * time.Millisecond
-	forwardDialTimeout   = 50 * time.Millisecond
+	maxStderrTailBytes     = 64 << 10
+	maxTemporaryPortOffset = 20
+	forwardProbeInterval   = 25 * time.Millisecond
+	forwardDialTimeout     = 50 * time.Millisecond
+	maximumTCPPort         = 1<<16 - 1
 )
 
 type Options struct {
@@ -144,7 +146,12 @@ func (a *Adapter) Observe(ctx context.Context, host core.HostAlias, emit func([]
 	return classifyError(waitErr, stderr.String())
 }
 
-func (a *Adapter) Forward(ctx context.Context, host core.HostAlias, target core.ForwardTarget, ready func()) error {
+func (a *Adapter) Forward(
+	ctx context.Context,
+	host core.HostAlias,
+	target core.ForwardTarget,
+	ready func(localPort uint16),
+) error {
 	alias := string(host)
 	if !validAlias(alias) {
 		return backendError("invalid_alias")
@@ -153,20 +160,48 @@ func (a *Adapter) Forward(ctx context.Context, host core.HostAlias, target core.
 	if err != nil {
 		return err
 	}
-	forward := fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", target.LocalPort, target.RemotePort)
+	localPort, forward, err := a.startForward(ctx, host, target)
+	if err != nil {
+		return err
+	}
 	defer a.cancelForward(host, forward)
-	if err := a.runControl(ctx, host, "forward", forward); err != nil {
+	if err := a.waitForForward(ctx, master, localPort); err != nil {
 		return err
 	}
-	if err := a.waitForForward(ctx, master, target.LocalPort); err != nil {
-		return err
-	}
-	ready()
+	ready(localPort)
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-master.done:
 		return master.failure()
+	}
+}
+
+func (a *Adapter) startForward(
+	ctx context.Context,
+	host core.HostAlias,
+	target core.ForwardTarget,
+) (uint16, string, error) {
+	for offset := 0; ; offset++ {
+		localPort := target.LocalPort + uint16(offset)
+		forward := fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", localPort, target.RemotePort)
+		err := a.runControl(ctx, host, "forward", forward)
+		if err == nil {
+			return localPort, forward, nil
+		}
+		// The mux client reports only a generic failure for local bind errors;
+		// OpenSSH writes the useful detail to the long-lived master process.
+		if core.ErrorDiagnostic(err) == "transport_unavailable" {
+			if checkErr := a.runControl(ctx, host, "check", ""); checkErr == nil {
+				err = backendError("local_port_conflict")
+			}
+		}
+		a.cancelForward(host, forward)
+		if !target.AllowFallback ||
+			core.ErrorDiagnostic(err) != "local_port_conflict" ||
+			offset == maxTemporaryPortOffset || localPort == maximumTCPPort {
+			return 0, "", err
+		}
 	}
 }
 

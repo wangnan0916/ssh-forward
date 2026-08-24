@@ -109,6 +109,21 @@ func TestRenderForwardStatesAndDiagnostics(t *testing.T) {
 	}
 }
 
+func TestRenderShowsActualAndPreferredFallbackPorts(t *testing.T) {
+	status := core.Status{
+		Host:      "dev",
+		Discovery: core.DiscoveryStatus{State: core.DiscoveryActive},
+		Forwards: []core.ForwardStatus{{
+			RemotePort: 3000, PreferredLocalPort: 3000, LocalPort: 3001,
+			State: core.ForwardActive, AllowFallback: true,
+		}},
+	}
+	output := renderStatus(t, status, Options{})
+	if !strings.Contains(output, "127.0.0.1:3001 (preferred 3000)") {
+		t.Fatalf("output = %q", output)
+	}
+}
+
 func TestRenderColorIsExplicit(t *testing.T) {
 	status := core.Status{
 		Host:      "dev",

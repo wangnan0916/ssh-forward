@@ -44,10 +44,10 @@ func TestForwardsShareMasterAndCancelIndependently(t *testing.T) {
 	firstDone := make(chan error, 1)
 	secondDone := make(chan error, 1)
 	go func() {
-		firstDone <- adapter.Forward(firstCtx, "dev", firstTarget, func() { close(firstReady) })
+		firstDone <- adapter.Forward(firstCtx, "dev", firstTarget, func(uint16) { close(firstReady) })
 	}()
 	go func() {
-		secondDone <- adapter.Forward(secondCtx, "dev", secondTarget, func() { close(secondReady) })
+		secondDone <- adapter.Forward(secondCtx, "dev", secondTarget, func(uint16) { close(secondReady) })
 	}()
 	waitClosed(t, firstReady)
 	waitClosed(t, secondReady)
@@ -85,6 +85,66 @@ func TestForwardsShareMasterAndCancelIndependently(t *testing.T) {
 	}
 }
 
+func TestForwardFallsBackToNextLocalPortWhenAllowed(t *testing.T) {
+	controlDirectory := t.TempDir()
+	adapter := newTestAdapter(t, controlDirectory)
+	actualPort, releasePort := reservedPort(t)
+	defer releasePort()
+	preferredPort := actualPort - 1
+	failNextForward(t, controlDirectory)
+	target := core.ForwardTarget{
+		RemotePort: 38080, LocalPort: preferredPort, AllowFallback: true,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ready := make(chan uint16, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- adapter.Forward(ctx, "dev", target, func(localPort uint16) { ready <- localPort })
+	}()
+	select {
+	case got := <-ready:
+		if got != actualPort {
+			t.Fatalf("actual local port = %d, want %d", got, actualPort)
+		}
+	case err := <-done:
+		t.Fatalf("forward failed before fallback: %v", err)
+	case <-time.After(15 * time.Second):
+		t.Fatal("forward did not become ready")
+	}
+	cancel()
+	if err := waitError(t, done); !errors.Is(err, context.Canceled) {
+		t.Fatalf("forward error = %v", err)
+	}
+
+	events := readEvents(t, controlDirectory)
+	wantForwardLifecycle(t, events, preferredPort, target.RemotePort)
+	wantForwardLifecycle(t, events, actualPort, target.RemotePort)
+}
+
+func TestForwardDoesNotFallBackWhenLocalPortIsExplicit(t *testing.T) {
+	controlDirectory := t.TempDir()
+	adapter := newTestAdapter(t, controlDirectory)
+	fallbackPort, releasePort := reservedPort(t)
+	defer releasePort()
+	preferredPort := fallbackPort - 1
+	failNextForward(t, controlDirectory)
+	target := core.ForwardTarget{RemotePort: 38080, LocalPort: preferredPort}
+
+	err := adapter.Forward(context.Background(), "dev", target, func(uint16) {
+		t.Fatal("strict forward unexpectedly became ready")
+	})
+	if got := core.ErrorDiagnostic(err); got != "local_port_conflict" {
+		t.Fatalf("diagnostic = %q, want local_port_conflict", got)
+	}
+	events := readEvents(t, controlDirectory)
+	wantForwardLifecycle(t, events, preferredPort, target.RemotePort)
+	fallback := fmt.Sprintf("forward=127.0.0.1:%d:127.0.0.1:%d", fallbackPort, target.RemotePort)
+	if countEvent(events, fallback) != 0 {
+		t.Fatalf("events = %v, strict target tried fallback port", events)
+	}
+}
+
 func TestNewRejectsSharedWritableControlDirectory(t *testing.T) {
 	directory := t.TempDir()
 	if err := os.Chmod(directory, 0o770); err != nil {
@@ -114,6 +174,10 @@ func TestOpenSSHHelperProcess(t *testing.T) {
 		event += "=" + forward
 	}
 	appendEvent(event)
+	if operation == "forward" && os.Remove("fail-next-forward") == nil {
+		_, _ = fmt.Fprintln(os.Stderr, "muxclient: master forward request failed")
+		os.Exit(1)
+	}
 	switch operation {
 	case "master":
 		if err := os.WriteFile("master.ready", nil, 0o600); err != nil {
@@ -132,6 +196,27 @@ func TestOpenSSHHelperProcess(t *testing.T) {
 		os.Exit(1)
 	default:
 		os.Exit(0)
+	}
+}
+
+func newTestAdapter(t *testing.T, controlDirectory string) *Adapter {
+	t.Helper()
+	adapter, err := New(Options{
+		Executable: fakeSSHExecutable(t, controlDirectory), ControlDirectory: controlDirectory,
+		ReadyTimeout: 10 * time.Second, WaitDelay: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = adapter.Close(context.Background()) })
+	return adapter
+}
+
+func failNextForward(t *testing.T, directory string) {
+	t.Helper()
+	path := filepath.Join(directory, "fail-next-forward")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -233,4 +318,13 @@ func countEvent(events []string, want string) int {
 		}
 	}
 	return count
+}
+
+func wantForwardLifecycle(t *testing.T, events []string, localPort, remotePort uint16) {
+	t.Helper()
+	specification := fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", localPort, remotePort)
+	if countEvent(events, "forward="+specification) != 1 ||
+		countEvent(events, "cancel="+specification) != 1 {
+		t.Fatalf("events = %v, want forward and cancel for %s", events, specification)
+	}
 }

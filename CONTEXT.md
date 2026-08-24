@@ -7,15 +7,18 @@
   and dual-stack IPv6 wildcard sockets, but not IPv6-only sockets.
 - **Remote Port**: the port number of a Remote Listener or remembered endpoint
   on the Development Host.
-- **Local Port**: the port bound on local loopback by a Forward. It may differ
-  from the Remote Port.
-- **Remembered Forward**: persistent intent to map one Remote Port to one Local
-  Port.
+- **Preferred Local Port**: the persistent first-choice local loopback port for
+  a Forward.
+- **Local Port**: the port actually bound on local loopback by a Forward. It may
+  temporarily differ from both the Remote Port and Preferred Local Port.
+- **Remembered Forward**: persistent intent to map one Remote Port to a
+  Preferred Local Port, with or without temporary fallback.
 - **Working Directory Rule**: persistent, host-scoped absolute glob pattern
   matched against a Remote Listener's observed working directory. `**`
   matches across directory levels.
 - **Automatic Forward**: a Forward that exists only while a Remote Listener
-  matches a Working Directory Rule. Its Local Port equals its Remote Port.
+  matches a Working Directory Rule. Its Preferred Local Port equals its Remote
+  Port and it allows temporary fallback.
 - **Forward**: one live mapping from a Local Port to a Development Host Remote
   Port, implemented through the shared OpenSSH connection.
 - **Available Port**: an observed Remote Listener that has no Forward.

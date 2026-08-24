@@ -49,11 +49,15 @@ func (a *App) writeStatusJSON(status core.Status) error {
 }
 
 func forwardJSONStatus(forward core.ForwardStatus) any {
+	preferredLocalPort := forward.PreferredLocalPort
+	if preferredLocalPort == 0 {
+		preferredLocalPort = forward.RemotePort
+	}
 	localPort := forward.LocalPort
 	if localPort == 0 {
-		localPort = forward.RemotePort
+		localPort = preferredLocalPort
 	}
-	if localPort != forward.RemotePort {
+	if preferredLocalPort != forward.RemotePort || localPort != forward.RemotePort {
 		return forward
 	}
 	return legacyForwardJSONOutput{
@@ -83,10 +87,17 @@ func (a *App) writeRemember(
 		}
 		if adding {
 			output["local_port"] = forward.LocalPort
+			output["allow_fallback"] = forward.AllowFallback
 		}
 		return a.writeJSON(output)
 	}
 	switch {
+	case adding && changed && forward.AllowFallback:
+		fmt.Fprintf(
+			a.Options.Stdout,
+			"Remembered remote %d for %s (prefers 127.0.0.1:%d; falls back if busy).\n",
+			forward.RemotePort, host, forward.LocalPort,
+		)
 	case adding && changed:
 		fmt.Fprintf(
 			a.Options.Stdout,

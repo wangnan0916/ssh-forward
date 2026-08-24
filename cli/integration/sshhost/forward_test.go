@@ -52,6 +52,28 @@ func TestDiscoversReachableListenersAndForwardsRemotePort(t *testing.T) {
 	wantForwardedEcho(t, localPort, "hello")
 }
 
+func TestFallsBackToTemporaryLocalPortWhenPreferredPortIsBusy(t *testing.T) {
+	environment := loadTestEnvironment(t)
+	remotePort := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_V4", 38080)
+	preferredPort, blocker := occupiedLocalPort(t)
+	t.Cleanup(func() { _ = blocker.Close() })
+	manager := core.NewManager(core.HostAlias(environment.host), environment.adapter, core.ForwardingIntent{
+		RememberedForwards: []core.RememberedForward{{
+			RemotePort: remotePort, LocalPort: preferredPort, AllowFallback: true,
+		}},
+	})
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	status := waitForStatus(t, manager, func(status core.Status) bool {
+		return len(status.Forwards) == 1 && status.Forwards[0].State == core.ForwardActive
+	})
+	forward := status.Forwards[0]
+	if forward.PreferredLocalPort != preferredPort || forward.LocalPort <= preferredPort {
+		t.Fatalf("forward status = %#v", forward)
+	}
+	wantForwardedEcho(t, forward.LocalPort, "fallback")
+}
+
 func TestAutomaticallyForwardsMatchingWorkingDirectoryWhileListenerExists(t *testing.T) {
 	environment := loadTestEnvironment(t)
 	user := os.Getenv("SSH_FORWARD_TEST_USER")
@@ -253,6 +275,23 @@ func availableLocalPort(t *testing.T) uint16 {
 		t.Fatal(err)
 	}
 	return port
+}
+
+func occupiedLocalPort(t *testing.T) (uint16, net.Listener) {
+	t.Helper()
+	for range 100 {
+		blocker, err := net.Listen("tcp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := blocker.Addr().(*net.TCPAddr).Port
+		if port < 65535 {
+			return uint16(port), blocker
+		}
+		_ = blocker.Close()
+	}
+	t.Fatal("could not reserve an occupied port below 65535")
+	return 0, nil
 }
 
 func listenersByPort(listeners []core.Listener) map[uint16]core.Listener {

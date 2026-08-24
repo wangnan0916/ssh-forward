@@ -12,7 +12,7 @@ import (
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
-const configSchemaVersion = 3
+const configSchemaVersion = 4
 
 var ErrInvalidWorkingDirectoryRule = errors.New("invalid working-directory glob")
 
@@ -51,7 +51,7 @@ func LoadConfig(path string) (configFile, error) {
 		for _, port := range normalizedLegacyPorts(ports) {
 			config.RememberedForwards[host] = append(
 				config.RememberedForwards[host],
-				core.RememberedForward{RemotePort: port, LocalPort: port},
+				core.RememberedForward{RemotePort: port, LocalPort: port, AllowFallback: true},
 			)
 		}
 	}
@@ -59,6 +59,12 @@ func LoadConfig(path string) (configFile, error) {
 	for host, forwards := range config.RememberedForwards {
 		if host == "" {
 			return configFile{}, errors.New("config.jsonc: empty host alias")
+		}
+		if config.SchemaVersion < 4 {
+			for index := range forwards {
+				forward := &forwards[index]
+				forward.AllowFallback = forward.LocalPort == 0 || forward.LocalPort == forward.RemotePort
+			}
 		}
 		normalized, err := normalizedRememberedForwards(forwards)
 		if err != nil {
@@ -238,10 +244,7 @@ func normalizedRememberedForward(forward core.RememberedForward) (core.Remembere
 	if forward.RemotePort == 0 {
 		return core.RememberedForward{}, errors.New("config.jsonc: remote port must be between 1 and 65535")
 	}
-	if forward.LocalPort == 0 {
-		forward.LocalPort = forward.RemotePort
-	}
-	return forward, nil
+	return forward.WithDefaults(), nil
 }
 
 func updateWorkingDirectoryRule(configPath, host, pattern string, adding bool) (bool, error) {

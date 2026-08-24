@@ -83,13 +83,16 @@ func (a *App) rememberCommand(adding bool) *cobra.Command {
 			if err != nil {
 				return UsageError(err)
 			}
-			forward := core.RememberedForward{RemotePort: remotePort, LocalPort: remotePort}
+			forward := core.RememberedForward{
+				RemotePort: remotePort, LocalPort: remotePort, AllowFallback: true,
+			}
 			if adding && cmd.Flags().Changed("local") {
 				localPort, _ := cmd.Flags().GetUint16("local")
 				if localPort == 0 {
 					return UsageError(errors.New("add --local requires a port 1..65535"))
 				}
 				forward.LocalPort = localPort
+				forward.AllowFallback = false
 			}
 			return a.rememberForward(cmd.Context(), forward, adding, jsonFlag(cmd))
 		},

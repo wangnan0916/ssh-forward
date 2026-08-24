@@ -31,11 +31,13 @@ type DiscoveryStatus struct {
 }
 
 type ForwardStatus struct {
-	RemotePort uint16       `json:"remote_port"`
-	LocalPort  uint16       `json:"local_port"`
-	State      ForwardState `json:"state"`
-	Diagnostic string       `json:"diagnostic,omitempty"`
-	Automatic  bool         `json:"automatic,omitempty"`
+	RemotePort         uint16       `json:"remote_port"`
+	PreferredLocalPort uint16       `json:"preferred_local_port"`
+	LocalPort          uint16       `json:"local_port"`
+	State              ForwardState `json:"state"`
+	Diagnostic         string       `json:"diagnostic,omitempty"`
+	Automatic          bool         `json:"automatic,omitempty"`
+	AllowFallback      bool         `json:"allow_fallback,omitempty"`
 }
 
 // Listener is a remote TCP listener reachable through the IPv4 loopback
@@ -56,13 +58,25 @@ type Status struct {
 }
 
 type RememberedForward struct {
-	RemotePort uint16 `json:"remote_port"`
-	LocalPort  uint16 `json:"local_port"`
+	RemotePort    uint16 `json:"remote_port"`
+	LocalPort     uint16 `json:"local_port"`
+	AllowFallback bool   `json:"allow_fallback,omitempty"`
+}
+
+// WithDefaults applies the implicit same-port fallback policy used when the
+// local port is omitted.
+func (forward RememberedForward) WithDefaults() RememberedForward {
+	if forward.LocalPort == 0 {
+		forward.LocalPort = forward.RemotePort
+		forward.AllowFallback = true
+	}
+	return forward
 }
 
 type ForwardTarget struct {
-	RemotePort uint16
-	LocalPort  uint16
+	RemotePort    uint16
+	LocalPort     uint16
+	AllowFallback bool
 }
 
 // ForwardingIntent is the persistent intent a Manager reconciles. Remembered
@@ -77,12 +91,12 @@ var ErrManagerClosed = errors.New("manager is closed")
 
 // Backend is the true-external OpenSSH seam. Observe blocks while a fixed
 // remote scanner is alive and emits complete listener sets. Forward blocks
-// while one logical local forward exists and calls ready after the local port
-// binds. Close releases the shared transport after observation and forwards
-// have stopped.
+// while one logical local forward exists and calls ready with the actual local
+// port after it binds. Close releases the shared transport after observation
+// and forwards have stopped.
 type Backend interface {
 	Observe(context.Context, HostAlias, func([]Listener)) error
-	Forward(context.Context, HostAlias, ForwardTarget, func()) error
+	Forward(context.Context, HostAlias, ForwardTarget, func(localPort uint16)) error
 	Close(context.Context) error
 }
 
