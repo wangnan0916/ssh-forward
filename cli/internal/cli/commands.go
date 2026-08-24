@@ -11,98 +11,11 @@ import (
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/app"
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/statusview"
 )
 
 func (a *App) writeStatusHuman(status core.Status) error {
-	fmt.Fprintf(a.Options.Stdout, "Host: %s — discovery %s\n", status.Host, status.Discovery.State)
-	if status.Discovery.Diagnostic != "" {
-		fmt.Fprintf(a.Options.Stdout, "Discovery: %s\n", diagnosticText(status.Discovery.Diagnostic))
-	}
-	remembered := make(map[uint16]struct{}, len(status.Forwards))
-	listenersByPort := make(map[uint16]core.Listener, len(status.Listeners))
-	for _, listener := range status.Listeners {
-		listenersByPort[listener.Port] = listener
-	}
-	for _, forward := range status.Forwards {
-		remembered[forward.Port] = struct{}{}
-	}
-	for _, state := range []core.ForwardState{core.ForwardActive, core.ForwardStarting, core.ForwardFailed} {
-		var rows []core.ForwardStatus
-		for _, forward := range status.Forwards {
-			if forward.State == state {
-				rows = append(rows, forward)
-			}
-		}
-		if len(rows) == 0 {
-			continue
-		}
-		heading := map[core.ForwardState]string{
-			core.ForwardActive: "Forwards:", core.ForwardStarting: "Starting:",
-			core.ForwardFailed: "Needs attention:",
-		}[state]
-		fmt.Fprintln(a.Options.Stdout, heading)
-		for _, row := range rows {
-			listener := listenersByPort[row.Port]
-			switch state {
-			case core.ForwardActive:
-				fmt.Fprintf(a.Options.Stdout, "  %5d → 127.0.0.1:%d%s\n", row.Port, row.Port, listenerMetadata(listener))
-			case core.ForwardFailed:
-				fmt.Fprintf(a.Options.Stdout, "  %5d  %s\n", row.Port, diagnosticText(row.Diagnostic))
-			default:
-				fmt.Fprintf(a.Options.Stdout, "  %5d\n", row.Port)
-			}
-		}
-	}
-	var available []core.Listener
-	for _, listener := range status.Listeners {
-		if _, found := remembered[listener.Port]; !found {
-			available = append(available, listener)
-		}
-	}
-	if len(available) != 0 {
-		fmt.Fprintln(a.Options.Stdout, "Available:")
-		for _, listener := range available {
-			fmt.Fprintf(a.Options.Stdout, "  %5d%s\n", listener.Port, listenerMetadata(listener))
-		}
-	}
-	if len(status.Forwards) == 0 && len(available) == 0 && status.Discovery.State == core.DiscoveryActive {
-		fmt.Fprintln(a.Options.Stdout, "No loopback TCP listeners found.")
-	}
-	return nil
-}
-
-func listenerMetadata(listener core.Listener) string {
-	switch {
-	case listener.App == "" && listener.WorkingDirectory == "":
-		return ""
-	case listener.App == "":
-		return "  " + listener.WorkingDirectory
-	case listener.WorkingDirectory == "":
-		return "  " + listener.App
-	default:
-		return "  " + listener.App + "  " + listener.WorkingDirectory
-	}
-}
-
-func diagnosticText(diagnostic string) string {
-	switch diagnostic {
-	case "invalid_alias":
-		return "SSH does not know this host alias."
-	case "authentication_failed":
-		return "SSH authentication failed."
-	case "host_key_failed":
-		return "SSH host key verification failed."
-	case "local_port_conflict":
-		return "the same local port is already in use"
-	case "transport_unavailable":
-		return "SSH connection unavailable"
-	case "discovery_invalid":
-		return "the remote listener scan returned invalid data"
-	case "forward_start_timeout":
-		return "OpenSSH did not open the local port in time"
-	default:
-		return diagnostic
-	}
+	return statusview.Render(a.Options.Stdout, status, statusViewOptions(a.Options.Stdout))
 }
 
 func (a *App) writeJSON(value any) error {

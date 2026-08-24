@@ -31,12 +31,16 @@ CLI
   the selected host, configured ports, protocol, or binary version differs
   from the current process. `Uninstall` removes only the background service;
   persistent intent remains user-owned configuration.
-- `internal/cli` formats status and edits remembered ports.
+- `internal/statusview` owns human status grouping, terminal-width fitting,
+  missing-value presentation, and optional ANSI styling. JSON bypasses it.
+- `internal/cli` owns command orchestration and edits remembered ports; it
+  delegates human status rendering through the `statusview.Render` seam.
 
 Mechanisms are delegated to deep external modules: system OpenSSH handles SSH,
 `kardianos/service` handles resident process lifecycle, `net/http` handles local
 IPC, `ssh_config` parses Host declarations, and `hujson` parses JSONC. Product
-code keeps only their composition and the forwarding state machine.
+code keeps only their composition and the forwarding state machine. Lip Gloss
+renders human status tables, while `x/term` detects stdout capabilities.
 
 ## State
 

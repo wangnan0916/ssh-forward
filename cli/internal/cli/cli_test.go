@@ -62,11 +62,11 @@ func TestStatusSeparatesForwardedAndAvailablePorts(t *testing.T) {
 	}
 	output := stdout.String()
 	for _, text := range []string{
-		"Host: dev",
-		"   5173 → 127.0.0.1:5173  node  /workspace/app",
-		"  12000 → 127.0.0.1:12000  node  /workspace/api",
-		"    631\n",
-		"   3000  vite  /workspace/web",
+		"Host  dev    Discovery  active",
+		" 5173  127.0.0.1:5173   node  /workspace/app",
+		"12000  127.0.0.1:12000  node  /workspace/api",
+		"  631  —     —",
+		" 3000  vite  /workspace/web",
 	} {
 		if !strings.Contains(output, text) {
 			t.Fatalf("output = %q, missing %q", output, text)
@@ -77,23 +77,23 @@ func TestStatusSeparatesForwardedAndAvailablePorts(t *testing.T) {
 	}
 }
 
-func TestListenerMetadata(t *testing.T) {
-	tests := []struct {
-		name     string
-		listener core.Listener
-		want     string
-	}{
-		{name: "empty"},
-		{name: "app", listener: core.Listener{App: "node"}, want: "  node"},
-		{name: "directory", listener: core.Listener{WorkingDirectory: "/workspace"}, want: "  /workspace"},
-		{name: "both", listener: core.Listener{App: "node", WorkingDirectory: "/workspace"}, want: "  node  /workspace"},
+func TestStatusJSONRemainsWireShaped(t *testing.T) {
+	var stdout bytes.Buffer
+	surface := &App{
+		Manager: &fakeManager{status: core.Status{
+			Host:      "dev",
+			Discovery: core.DiscoveryStatus{State: core.DiscoveryActive},
+			Listeners: []core.Listener{{Port: 631}},
+			Forwards:  []core.ForwardStatus{},
+		}},
+		Options: app.Options{ConfigPath: t.TempDir() + "/config.jsonc", Stdout: &stdout},
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := listenerMetadata(test.listener); got != test.want {
-				t.Fatalf("listenerMetadata() = %q, want %q", got, test.want)
-			}
-		})
+	if err := surface.Run(context.Background(), []string{"status", "--json"}); err != nil {
+		t.Fatal(err)
+	}
+	want := "{\"host\":\"dev\",\"discovery\":{\"state\":\"active\"},\"listeners\":[{\"port\":631}],\"forwards\":[]}\n"
+	if stdout.String() != want {
+		t.Fatalf("output = %q, want %q", stdout.String(), want)
 	}
 }
 
