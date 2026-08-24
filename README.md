@@ -49,11 +49,13 @@ Measured with `v0.1.0` on an Apple M1 Pro running macOS 26.6.2:
 | Idle CPU, ten one-second samples | 0.0% |
 | Warm `ssh-forward --version` startup | 7.4 ms average |
 
-The runtime totals include the Manager and its system OpenSSH children: one
-`ssh` process for discovery and one more per active forward. RSS can count
-shared pages more than once. At the 256-port observation limit, a complete
-Manager status snapshot takes about 28–30 µs with two allocations, and parsing
-a complete scanner frame takes about 44–49 µs.
+The v0.1.0 runtime totals include the Manager and the system OpenSSH process
+layout used by that release. Current Managers use one product-owned OpenSSH
+master connection and add or cancel forwards through its control socket, so
+the number of SSH transports no longer grows with the number of ports. RSS can
+count shared pages more than once. At the 256-port observation limit, a
+complete Manager status snapshot takes about 28–30 µs with two allocations,
+and parsing a complete scanner frame takes about 44–49 µs.
 
 These numbers are a reproducible baseline rather than a performance guarantee.
 Run the benchmarks with:
@@ -138,10 +140,11 @@ Global options are `--host ALIAS` and `--ssh-config PATH`. Set
    because the forwarding target cannot reach them. Executable names and
    working directories are collected on a best-effort basis when `ss` and the
    relevant procfs links are available. No remote agent is installed.
-3. For each remembered port, the Manager supervises one
-   `ssh -N -L 127.0.0.1:PORT:127.0.0.1:PORT HOST` process. The local port stays
-   available while the remote process restarts; individual connections fail
-   until the remote listener returns.
+3. The Manager owns one product-private OpenSSH master connection and uses
+   OpenSSH control commands to add and cancel each desired local forward. The
+   local port stays available while the remote process restarts; individual
+   connections fail until the remote listener returns. Stopping one Forward
+   does not disturb the shared connection or other ports.
 4. Absolute working-directory globs create Automatic Forwards for matching
    Remote Listeners. `*` matches within one path segment and `**` crosses path
    segments. When a listener disappears or stops matching, its Automatic

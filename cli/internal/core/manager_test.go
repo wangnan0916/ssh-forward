@@ -2,14 +2,18 @@ package core
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
 
 type fakeBackend struct {
-	listeners chan []Listener
-	started   chan uint16
-	stopped   chan uint16
+	listeners  chan []Listener
+	started    chan uint16
+	stopped    chan uint16
+	closed     chan struct{}
+	closeErr   error
+	closeCalls int
 }
 
 func newFakeBackend() *fakeBackend {
@@ -17,6 +21,7 @@ func newFakeBackend() *fakeBackend {
 		listeners: make(chan []Listener, 4),
 		started:   make(chan uint16, 4),
 		stopped:   make(chan uint16, 4),
+		closed:    make(chan struct{}),
 	}
 }
 
@@ -37,6 +42,12 @@ func (b *fakeBackend) Forward(ctx context.Context, _ HostAlias, port uint16, rea
 	<-ctx.Done()
 	b.stopped <- port
 	return ctx.Err()
+}
+
+func (b *fakeBackend) Close(context.Context) error {
+	b.closeCalls++
+	close(b.closed)
+	return b.closeErr
 }
 
 func TestManagerForwardsRememberedPortWithoutRemoteListener(t *testing.T) {
@@ -64,6 +75,27 @@ func TestManagerForwardsRememberedPortWithoutRemoteListener(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantEvent(t, backend.stopped, 5173)
+}
+
+func TestManagerCloseClosesBackendOnceAndReturnsItsError(t *testing.T) {
+	want := errors.New("close backend")
+	backend := newFakeBackend()
+	backend.closeErr = want
+	manager := newManager(managerOptions{host: "dev", backend: backend})
+	if err := manager.Close(context.Background()); !errors.Is(err, want) {
+		t.Fatalf("close error = %v, want %v", err, want)
+	}
+	select {
+	case <-backend.closed:
+	default:
+		t.Fatal("backend was not closed")
+	}
+	if err := manager.Close(context.Background()); !errors.Is(err, want) {
+		t.Fatalf("second close error = %v, want %v", err, want)
+	}
+	if backend.closeCalls != 1 {
+		t.Fatalf("backend close calls = %d, want 1", backend.closeCalls)
+	}
 }
 
 func TestManagerReconcilesAutomaticForwardForWorkingDirectoryGlob(t *testing.T) {

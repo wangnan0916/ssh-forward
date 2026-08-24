@@ -374,6 +374,8 @@ func diagnosticText(diagnostic string) string {
 		return "the remote listener scan returned invalid data"
 	case "forward_start_timeout":
 		return "OpenSSH did not open the local port in time"
+	case "master_start_timeout":
+		return "the shared OpenSSH connection did not become ready in time"
 	default:
 		return diagnostic
 	}

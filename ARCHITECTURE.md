@@ -19,12 +19,15 @@ CLI
                ┌─────────┴─────────┐
         observe listeners      one worker per desired port
                │                    │
-      ssh HOST sh -s       ssh -N -L local:remote
+      ssh HOST sh -s       OpenSSH -O forward/cancel
+               └──────── shared OpenSSH master ────────┘
 ```
 
 - `internal/core` owns the small state machine. Its external interface is
-  `Status` and `Close`; its true-external backend has `Observe` and `Forward`.
-- `internal/openssh` owns process invocation, the fixed remote scanner,
+  `Status`, `UpdateIntent`, and `Close`; its true-external backend has
+  `Observe`, `Forward`, and `Close`.
+- `internal/openssh` owns the product-private multiplexed OpenSSH connection,
+  dynamic forwarding commands, process invocation, the fixed remote scanner,
   readiness checks, and bounded SSH error classification.
 - `internal/app` owns the single config file, SSH alias selection, and the thin
   adapters that compose HTTP/Unix Socket and the user's OS service manager.

@@ -176,7 +176,7 @@ func (p *managerProgram) Start(service.Service) error {
 	if err != nil {
 		return err
 	}
-	manager, err := inProcess(p.host, p.opts.SSHConfigPath, p.opts.ConfigPath)
+	manager, err := inProcess(p.host, p.opts.SSHConfigPath, p.opts.ConfigPath, p.opts.Layout.Dir)
 	if err != nil {
 		_ = listener.Close()
 		_ = os.Remove(p.opts.Layout.Socket)

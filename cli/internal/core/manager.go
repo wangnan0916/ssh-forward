@@ -41,6 +41,9 @@ type manager struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	tasks      sync.WaitGroup
+	closeOnce  sync.Once
+	closeDone  chan struct{}
+	closeErr   error
 }
 
 // NewManager observes host and reconciles remembered and automatic forwards.
@@ -66,6 +69,7 @@ func newManager(options managerOptions) *manager {
 		retryDelay:            options.retryDelay,
 		ctx:                   ctx,
 		cancel:                cancel,
+		closeDone:             make(chan struct{}),
 	}
 	if m.backend == nil || m.host == "" {
 		m.discovery = DiscoveryStatus{State: DiscoveryFailed, Diagnostic: "not_configured"}
@@ -321,20 +325,22 @@ func wait(ctx context.Context, delay time.Duration) bool {
 }
 
 func (m *manager) Close(ctx context.Context) error {
-	m.mu.Lock()
-	if !m.closed {
+	m.closeOnce.Do(func() {
+		m.mu.Lock()
 		m.closed = true
 		m.cancel()
-	}
-	m.mu.Unlock()
-	done := make(chan struct{})
-	go func() {
-		m.tasks.Wait()
-		close(done)
-	}()
+		m.mu.Unlock()
+		go func() {
+			m.tasks.Wait()
+			if m.backend != nil {
+				m.closeErr = m.backend.Close(context.Background())
+			}
+			close(m.closeDone)
+		}()
+	})
 	select {
-	case <-done:
-		return nil
+	case <-m.closeDone:
+		return m.closeErr
 	case <-ctx.Done():
 		return ctx.Err()
 	}

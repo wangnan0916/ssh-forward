@@ -66,10 +66,13 @@ var ErrManagerClosed = errors.New("manager is closed")
 
 // Backend is the true-external OpenSSH seam. Observe blocks while a fixed
 // remote scanner is alive and emits complete listener sets. Forward blocks
-// while one ssh -L process is alive and calls ready after the local port binds.
+// while one logical local forward exists and calls ready after the local port
+// binds. Close releases the shared transport after observation and forwards
+// have stopped.
 type Backend interface {
 	Observe(context.Context, HostAlias, func([]Listener)) error
 	Forward(context.Context, HostAlias, uint16, func()) error
+	Close(context.Context) error
 }
 
 // BackendError carries a small user-facing diagnostic without exposing raw

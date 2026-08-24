@@ -101,6 +101,43 @@ printf '%%s\n' "$!"
 	})
 }
 
+func TestCancelingOneForwardKeepsAnotherForwardOnSharedConnection(t *testing.T) {
+	environment := loadTestEnvironment(t)
+	first := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_V4", 38080)
+	second := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_DUAL_STACK", 38082)
+	manager := core.NewManager(core.HostAlias(environment.host), environment.adapter, core.ForwardingIntent{
+		RememberedPorts: []uint16{first, second},
+	})
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	waitForStatus(t, manager, func(status core.Status) bool {
+		return len(status.Forwards) == 2 &&
+			status.Forwards[0].State == core.ForwardActive &&
+			status.Forwards[1].State == core.ForwardActive
+	})
+	wantForwardedEcho(t, first, "first")
+	wantForwardedEcho(t, second, "second")
+
+	if err := manager.UpdateIntent(context.Background(), core.ForwardingIntent{
+		RememberedPorts: []uint16{second},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitForStatus(t, manager, func(status core.Status) bool {
+		if len(status.Forwards) != 1 || status.Forwards[0].Port != second ||
+			status.Forwards[0].State != core.ForwardActive {
+			return false
+		}
+		connection, err := net.DialTimeout("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(first))), 50*time.Millisecond)
+		if err != nil {
+			return true
+		}
+		_ = connection.Close()
+		return false
+	})
+	wantForwardedEcho(t, second, "still-active")
+}
+
 type testEnvironment struct {
 	ssh     string
 	config  string
@@ -118,7 +155,9 @@ func loadTestEnvironment(t *testing.T) testEnvironment {
 	if err != nil {
 		t.Fatal(err)
 	}
-	adapter, err := openssh.New(openssh.Options{Executable: ssh, ConfigFile: config})
+	adapter, err := openssh.New(openssh.Options{
+		Executable: ssh, ConfigFile: config, ControlDirectory: t.TempDir(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
