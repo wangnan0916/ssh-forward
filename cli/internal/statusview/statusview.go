@@ -27,10 +27,11 @@ const (
 )
 
 // Options describe terminal capabilities. A zero Width keeps all content,
-// and Color controls every ANSI style emitted by Render.
+// Color controls ANSI styling, and Hyperlinks controls terminal hyperlinks.
 type Options struct {
-	Width int
-	Color bool
+	Width      int
+	Color      bool
+	Hyperlinks bool
 }
 
 // Render writes one complete human-readable status snapshot.
@@ -115,7 +116,7 @@ func renderForwards(
 		for _, forward := range forwards {
 			rows = append(rows, []string{
 				strconv.Itoa(int(forward.Port)),
-				localTarget(forward.Port),
+				localTarget(forward.Port, false),
 				diagnosticText(forward.Diagnostic),
 			})
 		}
@@ -133,7 +134,7 @@ func renderForwards(
 		listener := listeners[forward.Port]
 		rows = append(rows, []string{
 			strconv.Itoa(int(forward.Port)),
-			localTarget(forward.Port),
+			localTarget(forward.Port, options.Hyperlinks && state == core.ForwardActive),
 			valueOrMissing(listener.App),
 			valueOrMissing(listener.WorkingDirectory),
 		})
@@ -310,8 +311,12 @@ func shortenTail(value string, width int) string {
 	return "…"
 }
 
-func localTarget(port uint16) string {
-	return "127.0.0.1:" + strconv.Itoa(int(port))
+func localTarget(port uint16, hyperlink bool) string {
+	target := "127.0.0.1:" + strconv.Itoa(int(port))
+	if !hyperlink {
+		return target
+	}
+	return "\x1b]8;;http://" + target + "\x1b\\" + target + "\x1b]8;;\x1b\\"
 }
 
 func valueOrMissing(value string) string {
