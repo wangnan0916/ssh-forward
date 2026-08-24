@@ -16,7 +16,7 @@ import (
 
 const (
 	managerStatusPath      = "/v1/status"
-	managerProtocolVersion = 1
+	managerProtocolVersion = 2
 )
 
 var ErrIncompatibleManager = errors.New("the running manager is incompatible")

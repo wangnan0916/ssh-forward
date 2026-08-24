@@ -39,6 +39,7 @@ func TestManagerStatusRoundTrip(t *testing.T) {
 	want := core.Status{
 		Host:      "dev",
 		Discovery: core.DiscoveryStatus{State: core.DiscoveryActive},
+		Listeners: []core.Listener{{Port: 5173, App: "node", WorkingDirectory: "/workspace/app"}},
 		Forwards:  []core.ForwardStatus{{Port: 5173, State: core.ForwardActive}},
 	}
 	server := &http.Server{Handler: managerHandler(fixedManager{status: want}, "test-version")}
@@ -54,7 +55,8 @@ func TestManagerStatusRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Host != want.Host || len(got.Forwards) != 1 || got.Forwards[0] != want.Forwards[0] {
+	if got.Host != want.Host || len(got.Listeners) != 1 || got.Listeners[0] != want.Listeners[0] ||
+		len(got.Forwards) != 1 || got.Forwards[0] != want.Forwards[0] {
 		t.Fatalf("status = %#v, want %#v", got, want)
 	}
 	if _, err := dialManager(context.Background(), path, "other-version"); !errors.Is(err, ErrIncompatibleManager) {

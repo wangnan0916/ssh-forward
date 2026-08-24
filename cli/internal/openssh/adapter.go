@@ -58,7 +58,7 @@ func New(options Options) (*Adapter, error) {
 	}, nil
 }
 
-func (a *Adapter) Observe(ctx context.Context, host core.HostAlias, emit func([]uint16)) error {
+func (a *Adapter) Observe(ctx context.Context, host core.HostAlias, emit func([]core.Listener)) error {
 	alias := string(host)
 	if err := a.validateAlias(ctx, alias); err != nil {
 		if ctx.Err() != nil {
@@ -85,7 +85,7 @@ func (a *Adapter) Observe(ctx context.Context, host core.HostAlias, emit func([]
 		return err
 	}
 	stop := context.AfterFunc(ctx, func() { _ = terminateProcess(command) })
-	scanErr := scanPortFrames(stdout, emit)
+	scanErr := scanListenerFrames(stdout, emit)
 	if scanErr != nil {
 		_ = terminateProcess(command)
 	}

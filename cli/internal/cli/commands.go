@@ -19,6 +19,10 @@ func (a *App) writeStatusHuman(status core.Status) error {
 		fmt.Fprintf(a.Options.Stdout, "Discovery: %s\n", diagnosticText(status.Discovery.Diagnostic))
 	}
 	remembered := make(map[uint16]struct{}, len(status.Forwards))
+	listenersByPort := make(map[uint16]core.Listener, len(status.Listeners))
+	for _, listener := range status.Listeners {
+		listenersByPort[listener.Port] = listener
+	}
 	for _, forward := range status.Forwards {
 		remembered[forward.Port] = struct{}{}
 	}
@@ -38,32 +42,46 @@ func (a *App) writeStatusHuman(status core.Status) error {
 		}[state]
 		fmt.Fprintln(a.Options.Stdout, heading)
 		for _, row := range rows {
+			listener := listenersByPort[row.Port]
 			switch state {
 			case core.ForwardActive:
-				fmt.Fprintf(a.Options.Stdout, "  %d → 127.0.0.1:%d\n", row.Port, row.Port)
+				fmt.Fprintf(a.Options.Stdout, "  %5d → 127.0.0.1:%d%s\n", row.Port, row.Port, listenerMetadata(listener))
 			case core.ForwardFailed:
-				fmt.Fprintf(a.Options.Stdout, "  %d  %s\n", row.Port, diagnosticText(row.Diagnostic))
+				fmt.Fprintf(a.Options.Stdout, "  %5d  %s\n", row.Port, diagnosticText(row.Diagnostic))
 			default:
-				fmt.Fprintf(a.Options.Stdout, "  %d\n", row.Port)
+				fmt.Fprintf(a.Options.Stdout, "  %5d\n", row.Port)
 			}
 		}
 	}
-	var available []uint16
-	for _, port := range status.Listeners {
-		if _, found := remembered[port]; !found {
-			available = append(available, port)
+	var available []core.Listener
+	for _, listener := range status.Listeners {
+		if _, found := remembered[listener.Port]; !found {
+			available = append(available, listener)
 		}
 	}
 	if len(available) != 0 {
 		fmt.Fprintln(a.Options.Stdout, "Available:")
-		for _, port := range available {
-			fmt.Fprintf(a.Options.Stdout, "  %d  ssh-forward add %d\n", port, port)
+		for _, listener := range available {
+			fmt.Fprintf(a.Options.Stdout, "  %5d%s\n", listener.Port, listenerMetadata(listener))
 		}
 	}
 	if len(status.Forwards) == 0 && len(available) == 0 && status.Discovery.State == core.DiscoveryActive {
 		fmt.Fprintln(a.Options.Stdout, "No loopback TCP listeners found.")
 	}
 	return nil
+}
+
+func listenerMetadata(listener core.Listener) string {
+	switch {
+	case listener.App == "" && listener.WorkingDirectory == "":
+		return ""
+	case listener.App == "":
+		return "  " + listener.WorkingDirectory
+	case listener.WorkingDirectory == "":
+		return "  " + listener.App
+	default:
+		return "  " + listener.App + "  " + listener.WorkingDirectory
+	}
 }
 
 func diagnosticText(diagnostic string) string {

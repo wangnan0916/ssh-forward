@@ -2,8 +2,8 @@
 
 The product contract is:
 
-> Select one SSH alias, see its IPv4 loopback TCP listeners, and remember a
-> port so it stays mapped to the same port on localhost.
+> Select one SSH alias, see TCP listeners reachable through its IPv4 loopback,
+> and remember a port so it stays mapped to the same port on localhost.
 
 Anything that does not serve this sentence is outside the current design.
 
@@ -48,6 +48,7 @@ Persistent state is only:
 Volatile state is rebuilt after restart:
 
 - current remote listeners;
+- best-effort listener executable names and working directories;
 - discovery health;
 - each forward's starting, active, or failed state.
 

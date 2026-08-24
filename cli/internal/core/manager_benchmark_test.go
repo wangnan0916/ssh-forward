@@ -20,12 +20,12 @@ func BenchmarkManagerStatus(b *testing.B) {
 		subject := &manager{
 			host:      "dev",
 			discovery: DiscoveryStatus{State: DiscoveryActive},
-			listeners: make(map[uint16]struct{}, test.ports),
+			listeners: make(map[uint16]Listener, test.ports),
 			states:    make(map[uint16]ForwardStatus, test.ports),
 		}
 		for index := range test.ports {
 			port := uint16(10_000 + index)
-			subject.listeners[port] = struct{}{}
+			subject.listeners[port] = Listener{Port: port, App: "node", WorkingDirectory: "/workspace/app"}
 			subject.states[port] = ForwardStatus{Port: port, State: ForwardActive}
 		}
 		b.Run(test.name, func(b *testing.B) {

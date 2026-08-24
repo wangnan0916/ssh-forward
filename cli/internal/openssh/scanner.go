@@ -2,16 +2,23 @@ package openssh
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/base64"
 	"errors"
 	"io"
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 const (
-	maxScannerFrameBytes = 1024
-	maxObservedPorts     = 256
+	maxScannerFrameBytes      = 2048
+	maxObservedPorts          = 256
+	maxObservedAppBytes       = 255
+	maxObservedDirectoryBytes = 768
 )
 
 var errInvalidScannerFrame = errors.New("invalid scanner frame")
@@ -20,20 +27,20 @@ type scannerParser struct {
 	active       bool
 	sequence     uint64
 	lastSequence uint64
-	ports        map[uint16]struct{}
+	listeners    map[uint16]core.Listener
 }
 
-func scanPortFrames(reader io.Reader, emit func([]uint16)) error {
+func scanListenerFrames(reader io.Reader, emit func([]core.Listener)) error {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 256), maxScannerFrameBytes)
 	parser := &scannerParser{}
 	for scanner.Scan() {
-		ports, complete, err := parser.accept(scanner.Text())
+		listeners, complete, err := parser.accept(scanner.Text())
 		if err != nil {
 			return err
 		}
 		if complete {
-			emit(ports)
+			emit(listeners)
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -45,9 +52,9 @@ func scanPortFrames(reader io.Reader, emit func([]uint16)) error {
 	return nil
 }
 
-func (p *scannerParser) accept(line string) ([]uint16, bool, error) {
+func (p *scannerParser) accept(line string) ([]core.Listener, bool, error) {
 	fields := strings.Split(line, "\t")
-	if len(fields) < 3 || fields[0] != "PF1" {
+	if len(fields) < 3 || fields[0] != "PF2" {
 		return nil, false, errInvalidScannerFrame
 	}
 	sequence, err := strconv.ParseUint(fields[2], 10, 64)
@@ -61,30 +68,62 @@ func (p *scannerParser) accept(line string) ([]uint16, bool, error) {
 		}
 		p.active = true
 		p.sequence = sequence
-		p.ports = make(map[uint16]struct{})
+		p.listeners = make(map[uint16]core.Listener)
 	case "P":
-		if len(fields) != 4 || !p.active || sequence != p.sequence || len(p.ports) >= maxObservedPorts {
+		if len(fields) != 5 || !p.active || sequence != p.sequence || len(p.listeners) >= maxObservedPorts {
 			return nil, false, errInvalidScannerFrame
 		}
 		port, err := strconv.ParseUint(fields[3], 10, 16)
 		if err != nil || port == 0 {
 			return nil, false, errInvalidScannerFrame
 		}
-		p.ports[uint16(port)] = struct{}{}
+		app, directory, err := parseListenerMetadata(fields[4])
+		if err != nil {
+			return nil, false, err
+		}
+		p.listeners[uint16(port)] = core.Listener{
+			Port:             uint16(port),
+			App:              app,
+			WorkingDirectory: directory,
+		}
 	case "E":
 		if len(fields) != 3 || !p.active || sequence != p.sequence {
 			return nil, false, errInvalidScannerFrame
 		}
-		ports := make([]uint16, 0, len(p.ports))
-		for port := range p.ports {
-			ports = append(ports, port)
+		listeners := make([]core.Listener, 0, len(p.listeners))
+		for _, listener := range p.listeners {
+			listeners = append(listeners, listener)
 		}
-		slices.Sort(ports)
+		slices.SortFunc(listeners, func(left, right core.Listener) int {
+			return int(left.Port) - int(right.Port)
+		})
 		p.active = false
 		p.lastSequence = sequence
-		return ports, true, nil
+		return listeners, true, nil
 	default:
 		return nil, false, errInvalidScannerFrame
 	}
 	return nil, false, nil
+}
+
+func parseListenerMetadata(encoded string) (string, string, error) {
+	metadata, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || bytes.Count(metadata, []byte{0}) != 1 {
+		return "", "", errInvalidScannerFrame
+	}
+	app, directory, _ := bytes.Cut(metadata, []byte{0})
+	if len(app) > maxObservedAppBytes || len(directory) > maxObservedDirectoryBytes {
+		return "", "", errInvalidScannerFrame
+	}
+	return safeMetadata(app), safeMetadata(directory), nil
+}
+
+func safeMetadata(value []byte) string {
+	valid := strings.ToValidUTF8(string(value), "�")
+	return strings.Map(func(character rune) rune {
+		if unicode.IsControl(character) {
+			return '�'
+		}
+		return character
+	}, valid)
 }

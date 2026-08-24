@@ -23,7 +23,7 @@ type manager struct {
 	backend Backend
 
 	discovery DiscoveryStatus
-	listeners map[uint16]struct{}
+	listeners map[uint16]Listener
 	states    map[uint16]ForwardStatus
 
 	retryDelay time.Duration
@@ -48,7 +48,7 @@ func newManager(options managerOptions) *manager {
 		host:       options.host,
 		backend:    options.backend,
 		discovery:  DiscoveryStatus{State: DiscoveryConnecting},
-		listeners:  make(map[uint16]struct{}),
+		listeners:  make(map[uint16]Listener),
 		states:     make(map[uint16]ForwardStatus),
 		retryDelay: options.retryDelay,
 		ctx:        ctx,
@@ -93,11 +93,13 @@ func (m *manager) Status(ctx context.Context) (Status, error) {
 	if m.closed {
 		return Status{}, ErrManagerClosed
 	}
-	listeners := make([]uint16, 0, len(m.listeners))
-	for port := range m.listeners {
-		listeners = append(listeners, port)
+	listeners := make([]Listener, 0, len(m.listeners))
+	for _, listener := range m.listeners {
+		listeners = append(listeners, listener)
 	}
-	slices.Sort(listeners)
+	slices.SortFunc(listeners, func(left, right Listener) int {
+		return int(left.Port) - int(right.Port)
+	})
 	forwards := make([]ForwardStatus, 0, len(m.states))
 	for _, status := range m.states {
 		forwards = append(forwards, status)
@@ -136,16 +138,16 @@ func (m *manager) setDiscovery(state DiscoveryState, diagnostic string) {
 	}
 }
 
-func (m *manager) setListeners(ports []uint16) {
+func (m *manager) setListeners(listeners []Listener) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
 		return
 	}
-	m.listeners = make(map[uint16]struct{}, len(ports))
-	for _, port := range ports {
-		if port != 0 {
-			m.listeners[port] = struct{}{}
+	m.listeners = make(map[uint16]Listener, len(listeners))
+	for _, listener := range listeners {
+		if listener.Port != 0 {
+			m.listeners[listener.Port] = listener
 		}
 	}
 	m.discovery = DiscoveryStatus{State: DiscoveryActive}

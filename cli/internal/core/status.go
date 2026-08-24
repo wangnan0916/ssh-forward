@@ -36,20 +36,29 @@ type ForwardStatus struct {
 	Diagnostic string       `json:"diagnostic,omitempty"`
 }
 
+// Listener is a remote TCP listener reachable through the IPv4 loopback
+// address. Process metadata is best-effort because procfs may hide another
+// user's process details.
+type Listener struct {
+	Port             uint16 `json:"port"`
+	App              string `json:"app,omitempty"`
+	WorkingDirectory string `json:"working_directory,omitempty"`
+}
+
 type Status struct {
 	Host      HostAlias       `json:"host"`
 	Discovery DiscoveryStatus `json:"discovery"`
-	Listeners []uint16        `json:"listeners"`
+	Listeners []Listener      `json:"listeners"`
 	Forwards  []ForwardStatus `json:"forwards"`
 }
 
 var ErrManagerClosed = errors.New("manager is closed")
 
 // Backend is the true-external OpenSSH seam. Observe blocks while a fixed
-// remote scanner is alive and emits complete port sets. Forward blocks while
-// one ssh -L process is alive and calls ready after the local port is bound.
+// remote scanner is alive and emits complete listener sets. Forward blocks
+// while one ssh -L process is alive and calls ready after the local port binds.
 type Backend interface {
-	Observe(context.Context, HostAlias, func([]uint16)) error
+	Observe(context.Context, HostAlias, func([]Listener)) error
 	Forward(context.Context, HostAlias, uint16, func()) error
 }
 

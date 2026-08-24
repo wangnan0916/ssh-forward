@@ -7,20 +7,20 @@ import (
 )
 
 type fakeBackend struct {
-	listeners chan []uint16
+	listeners chan []Listener
 	started   chan uint16
 	stopped   chan uint16
 }
 
 func newFakeBackend() *fakeBackend {
 	return &fakeBackend{
-		listeners: make(chan []uint16, 4),
+		listeners: make(chan []Listener, 4),
 		started:   make(chan uint16, 4),
 		stopped:   make(chan uint16, 4),
 	}
 }
 
-func (b *fakeBackend) Observe(ctx context.Context, _ HostAlias, emit func([]uint16)) error {
+func (b *fakeBackend) Observe(ctx context.Context, _ HostAlias, emit func([]Listener)) error {
 	for {
 		select {
 		case ports := <-b.listeners:
@@ -51,10 +51,12 @@ func TestManagerForwardsRememberedPortWithoutRemoteListener(t *testing.T) {
 		return len(status.Forwards) == 1 && status.Forwards[0].State == ForwardActive
 	})
 
-	backend.listeners <- []uint16{8080}
+	wantListener := Listener{Port: 8080, App: "node", WorkingDirectory: "/workspace/app"}
+	backend.listeners <- []Listener{wantListener}
 	eventually(t, func() bool {
 		status := managerStatus(t, manager)
-		return status.Discovery.State == DiscoveryActive && len(status.Listeners) == 1 && status.Listeners[0] == 8080
+		return status.Discovery.State == DiscoveryActive && len(status.Listeners) == 1 &&
+			status.Listeners[0] == wantListener
 	})
 
 	if err := manager.Close(context.Background()); err != nil {

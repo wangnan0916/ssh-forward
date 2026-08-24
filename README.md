@@ -1,7 +1,8 @@
 # ssh-forward — automatic SSH port forwarding for remote development
 
-Discover loopback services on a Linux SSH host and keep selected ports
-available on the same port at `localhost` through system OpenSSH.
+Discover services reachable through IPv4 loopback on a Linux SSH host and keep
+selected ports available on the same port at `localhost` through system
+OpenSSH.
 
 [![CI](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml/badge.svg)](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -16,9 +17,9 @@ Remote development servers often start HTTP applications on unpredictable or
 short-lived ports. A manual `ssh -L` works, but you have to discover the port,
 start the tunnel, and recreate it after the SSH connection changes.
 
-`ssh-forward` shows remote loopback listeners, remembers only the ports you
-choose, and keeps their local SSH port forwards running in the background. It
-does not install a remote agent or store SSH credentials.
+`ssh-forward` shows remote listeners reachable at `127.0.0.1`, remembers only
+the ports you choose, and keeps their local SSH port forwards running in the
+background. It does not install a remote agent or store SSH credentials.
 
 ## Lightweight
 
@@ -109,10 +110,15 @@ Global options are `--host ALIAS` and `--ssh-config PATH`. Set
 
 ## How it works
 
-1. A fixed shell script runs through `ssh HOST sh -s` and reads
-   `/proc/net/tcp` on the Linux host.
-2. It reports at most 256 IPv4 loopback listeners. No remote agent is
-   installed and no process metadata is collected.
+1. A fixed shell script runs through `ssh HOST sh -s` and reads Linux procfs
+   listener state.
+2. It reports at most 256 TCP listeners reachable at `127.0.0.1`, including
+   same-user IPv4 wildcard listeners and dual-stack IPv6 wildcard listeners.
+   Restricting wildcard discovery to the SSH user avoids listing system-wide
+   services such as the SSH daemon itself. IPv6-only listeners stay hidden
+   because the forwarding target cannot reach them. Executable names and
+   working directories are collected on a best-effort basis when `ss` and the
+   relevant procfs links are available. No remote agent is installed.
 3. For each remembered port, the Manager supervises one
    `ssh -N -L 127.0.0.1:PORT:127.0.0.1:PORT HOST` process. The local port stays
    available while the remote process restarts; individual connections fail
@@ -174,7 +180,8 @@ selected Host and ports.
 - Linux Development Hosts only
 - macOS and Linux local clients only
 - one active SSH host per Manager
-- IPv4 loopback TCP listeners only
+- TCP listeners reachable through remote `127.0.0.1`; IPv6-only listeners are
+  excluded
 - same local and remote port only
 
 ## Development

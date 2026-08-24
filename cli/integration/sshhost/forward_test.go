@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 	"github.com/wangnan0916/ssh-forward/cli/internal/openssh"
 )
 
-func TestDiscoversAndForwardsRemoteLoopbackPort(t *testing.T) {
+func TestDiscoversReachableListenersAndForwardsRemotePort(t *testing.T) {
 	config := os.Getenv("SSH_FORWARD_TEST_SSH_CONFIG")
 	if config == "" {
 		t.Fatal("SSH_FORWARD_TEST_SSH_CONFIG is not set; run scripts/test-integration")
@@ -33,14 +34,9 @@ func TestDiscoversAndForwardsRemoteLoopbackPort(t *testing.T) {
 	if host == "" {
 		host = "ssh-forward-test-host"
 	}
-	port := uint16(38080)
-	if value := os.Getenv("SSH_FORWARD_FIXTURE_PORT_V4"); value != "" {
-		parsed, err := strconv.ParseUint(value, 10, 16)
-		if err != nil {
-			t.Fatal(err)
-		}
-		port = uint16(parsed)
-	}
+	port := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_V4", 38080)
+	dualStackPort := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_DUAL_STACK", 38082)
+	ipv6OnlyPort := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_V6", 38081)
 	manager := core.NewManager(core.HostAlias(host), adapter, []uint16{port})
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 
@@ -50,10 +46,30 @@ func TestDiscoversAndForwardsRemoteLoopbackPort(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(status.Forwards) == 1 && status.Forwards[0].State == core.ForwardActive {
+		listeners := listenersByPort(status.Listeners)
+		if len(status.Forwards) == 1 && status.Forwards[0].State == core.ForwardActive &&
+			isSocat(listeners[port]) && listeners[port].WorkingDirectory != "" &&
+			isSocat(listeners[dualStackPort]) {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+	status, err := manager.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	listeners := listenersByPort(status.Listeners)
+	if !isSocat(listeners[port]) || listeners[port].WorkingDirectory == "" {
+		t.Fatalf("IPv4 listener metadata = %#v", listeners[port])
+	}
+	if !isSocat(listeners[dualStackPort]) {
+		t.Fatalf("dual-stack listener was not discovered: %#v", listeners[dualStackPort])
+	}
+	if _, found := listeners[ipv6OnlyPort]; found {
+		t.Fatalf("IPv6-only listener %d should not be reachable at 127.0.0.1", ipv6OnlyPort)
+	}
+	if _, found := listeners[22]; found {
+		t.Fatal("the root-owned wildcard SSH listener should not be discovered")
 	}
 
 	connection, err := net.DialTimeout("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(port))), time.Second)
@@ -75,4 +91,29 @@ func TestDiscoversAndForwardsRemoteLoopbackPort(t *testing.T) {
 	if string(reply) != "hello" {
 		t.Fatalf("reply = %q", reply)
 	}
+}
+
+func isSocat(listener core.Listener) bool {
+	return strings.HasPrefix(listener.App, "socat")
+}
+
+func fixturePort(t *testing.T, name string, fallback uint16) uint16 {
+	t.Helper()
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseUint(value, 10, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return uint16(parsed)
+}
+
+func listenersByPort(listeners []core.Listener) map[uint16]core.Listener {
+	indexed := make(map[uint16]core.Listener, len(listeners))
+	for _, listener := range listeners {
+		indexed[listener.Port] = listener
+	}
+	return indexed
 }

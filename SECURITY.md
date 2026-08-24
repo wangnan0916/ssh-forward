@@ -12,8 +12,11 @@ and expected impact.
   belong to system OpenSSH. This project stores no credentials.
 - Host aliases and ports are passed as an argument vector to an absolute `ssh`
   executable; no local shell interpolates them.
-- The remote command is a fixed embedded script. It reads only
-  `/proc/net/tcp` and returns loopback port numbers.
+- The remote command is a fixed embedded script. It reads TCP listener state,
+  the IPv6 bind mode, and best-effort executable/working-directory links from
+  procfs. When available, `ss` associates sockets with same-user processes.
+- Remote process metadata is bounded, UTF-8 repaired, and stripped of terminal
+  control characters before it reaches status output. It is never persisted.
 - Every local forward binds explicitly to `127.0.0.1`.
 - The manager socket and state files are accessible only to the current OS
   user.

@@ -44,8 +44,16 @@ func TestStatusSeparatesForwardedAndAvailablePorts(t *testing.T) {
 	surface := &App{
 		Manager: &fakeManager{status: core.Status{
 			Host: "dev", Discovery: core.DiscoveryStatus{State: core.DiscoveryActive},
-			Listeners: []uint16{3000, 5173},
-			Forwards:  []core.ForwardStatus{{Port: 5173, State: core.ForwardActive}},
+			Listeners: []core.Listener{
+				{Port: 631},
+				{Port: 3000, App: "vite", WorkingDirectory: "/workspace/web"},
+				{Port: 5173, App: "node", WorkingDirectory: "/workspace/app"},
+				{Port: 12000, App: "node", WorkingDirectory: "/workspace/api"},
+			},
+			Forwards: []core.ForwardStatus{
+				{Port: 5173, State: core.ForwardActive},
+				{Port: 12000, State: core.ForwardActive},
+			},
 		}},
 		Options: app.Options{ConfigPath: t.TempDir() + "/config.jsonc", Stdout: &stdout},
 	}
@@ -53,10 +61,39 @@ func TestStatusSeparatesForwardedAndAvailablePorts(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := stdout.String()
-	for _, text := range []string{"Host: dev", "5173 → 127.0.0.1:5173", "3000  ssh-forward add 3000"} {
+	for _, text := range []string{
+		"Host: dev",
+		"   5173 → 127.0.0.1:5173  node  /workspace/app",
+		"  12000 → 127.0.0.1:12000  node  /workspace/api",
+		"    631\n",
+		"   3000  vite  /workspace/web",
+	} {
 		if !strings.Contains(output, text) {
 			t.Fatalf("output = %q, missing %q", output, text)
 		}
+	}
+	if strings.Contains(output, "ssh-forward add") {
+		t.Fatalf("output still contains an add command: %q", output)
+	}
+}
+
+func TestListenerMetadata(t *testing.T) {
+	tests := []struct {
+		name     string
+		listener core.Listener
+		want     string
+	}{
+		{name: "empty"},
+		{name: "app", listener: core.Listener{App: "node"}, want: "  node"},
+		{name: "directory", listener: core.Listener{WorkingDirectory: "/workspace"}, want: "  /workspace"},
+		{name: "both", listener: core.Listener{App: "node", WorkingDirectory: "/workspace"}, want: "  node  /workspace"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := listenerMetadata(test.listener); got != test.want {
+				t.Fatalf("listenerMetadata() = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 
