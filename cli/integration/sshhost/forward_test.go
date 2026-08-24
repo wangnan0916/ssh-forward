@@ -74,6 +74,29 @@ func TestFallsBackToTemporaryLocalPortWhenPreferredPortIsBusy(t *testing.T) {
 	wantForwardedEcho(t, forward.LocalPort, "fallback")
 }
 
+func TestStrictPreferredLocalPortReportsConflict(t *testing.T) {
+	environment := loadTestEnvironment(t)
+	remotePort := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_V4", 38080)
+	preferredPort, blocker := occupiedLocalPort(t)
+	t.Cleanup(func() { _ = blocker.Close() })
+	manager := core.NewManager(core.HostAlias(environment.host), environment.adapter, core.ForwardingIntent{
+		RememberedForwards: []core.RememberedForward{{
+			RemotePort: remotePort, LocalPort: preferredPort,
+		}},
+	})
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	status := waitForStatus(t, manager, func(status core.Status) bool {
+		return len(status.Forwards) == 1 &&
+			status.Forwards[0].State == core.ForwardFailed &&
+			status.Forwards[0].Diagnostic == "local_port_conflict"
+	})
+	forward := status.Forwards[0]
+	if forward.PreferredLocalPort != preferredPort || forward.LocalPort != preferredPort {
+		t.Fatalf("forward status = %#v", forward)
+	}
+}
+
 func TestAutomaticallyForwardsMatchingWorkingDirectoryWhileListenerExists(t *testing.T) {
 	environment := loadTestEnvironment(t)
 	user := os.Getenv("SSH_FORWARD_TEST_USER")
