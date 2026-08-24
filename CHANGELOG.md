@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/wangnan0916/ssh-forward/compare/v0.3.0...v0.4.0) (2026-08-24)
+
+
+### Features
+
+* add terminal links to forward targets ([#7](https://github.com/wangnan0916/ssh-forward/issues/7)) ([235d19b](https://github.com/wangnan0916/ssh-forward/commit/235d19b5702f6de2fa339a55766ec5545b710b34))
+* forward ports by working directory glob ([#9](https://github.com/wangnan0916/ssh-forward/issues/9)) ([f0fde4e](https://github.com/wangnan0916/ssh-forward/commit/f0fde4ea61adc30a6d9bd54a5225a87dfa43e9fa))
+
 ## [0.3.0](https://github.com/wangnan0916/ssh-forward/compare/v0.2.0...v0.3.0) (2026-08-24)
 
 
