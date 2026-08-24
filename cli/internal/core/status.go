@@ -31,7 +31,8 @@ type DiscoveryStatus struct {
 }
 
 type ForwardStatus struct {
-	Port       uint16       `json:"port"`
+	RemotePort uint16       `json:"remote_port"`
+	LocalPort  uint16       `json:"local_port"`
 	State      ForwardState `json:"state"`
 	Diagnostic string       `json:"diagnostic,omitempty"`
 	Automatic  bool         `json:"automatic,omitempty"`
@@ -54,12 +55,22 @@ type Status struct {
 	WorkingDirectoryRules []string        `json:"working_directory_rules,omitempty"`
 }
 
+type RememberedForward struct {
+	RemotePort uint16 `json:"remote_port"`
+	LocalPort  uint16 `json:"local_port"`
+}
+
+type ForwardTarget struct {
+	RemotePort uint16
+	LocalPort  uint16
+}
+
 // ForwardingIntent is the persistent intent a Manager reconciles. Remembered
-// Ports stay forwarded independently of listener state. Working Directory
-// Rules create Automatic Forwards only for currently matching listeners.
+// Forwards stay live independently of listener state. Working Directory Rules
+// create Automatic Forwards only for currently matching listeners.
 type ForwardingIntent struct {
-	RememberedPorts       []uint16 `json:"remembered_ports"`
-	WorkingDirectoryRules []string `json:"working_directory_rules"`
+	RememberedForwards    []RememberedForward `json:"remembered_forwards"`
+	WorkingDirectoryRules []string            `json:"working_directory_rules"`
 }
 
 var ErrManagerClosed = errors.New("manager is closed")
@@ -71,7 +82,7 @@ var ErrManagerClosed = errors.New("manager is closed")
 // have stopped.
 type Backend interface {
 	Observe(context.Context, HostAlias, func([]Listener)) error
-	Forward(context.Context, HostAlias, uint16, func()) error
+	Forward(context.Context, HostAlias, ForwardTarget, func()) error
 	Close(context.Context) error
 }
 

@@ -144,7 +144,7 @@ func (a *Adapter) Observe(ctx context.Context, host core.HostAlias, emit func([]
 	return classifyError(waitErr, stderr.String())
 }
 
-func (a *Adapter) Forward(ctx context.Context, host core.HostAlias, port uint16, ready func()) error {
+func (a *Adapter) Forward(ctx context.Context, host core.HostAlias, target core.ForwardTarget, ready func()) error {
 	alias := string(host)
 	if !validAlias(alias) {
 		return backendError("invalid_alias")
@@ -153,12 +153,12 @@ func (a *Adapter) Forward(ctx context.Context, host core.HostAlias, port uint16,
 	if err != nil {
 		return err
 	}
-	forward := fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", port, port)
+	forward := fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", target.LocalPort, target.RemotePort)
 	defer a.cancelForward(host, forward)
 	if err := a.runControl(ctx, host, "forward", forward); err != nil {
 		return err
 	}
-	if err := a.waitForForward(ctx, master, port); err != nil {
+	if err := a.waitForForward(ctx, master, target.LocalPort); err != nil {
 		return err
 	}
 	ready()

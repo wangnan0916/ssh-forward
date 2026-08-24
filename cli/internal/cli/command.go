@@ -25,7 +25,7 @@ func grouped(id string, command *cobra.Command) *cobra.Command {
 func (a *App) RootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use: "ssh-forward", Short: "forward Development Host ports through OpenSSH",
-		Long: `ssh-forward shows loopback TCP listeners on one SSH host and keeps remembered ports available on localhost.
+		Long: `ssh-forward shows loopback TCP listeners on one SSH host and keeps remembered forwards available on localhost.
 
 Name the host with --host ALIAS (-h is help). Pin one with: ssh-forward default ALIAS`,
 		SilenceUsage: true, SilenceErrors: true, DisableAutoGenTag: true,
@@ -70,26 +70,47 @@ func (a *App) rememberCommand(adding bool) *cobra.Command {
 				if len(args) != 0 {
 					return UsageError(fmt.Errorf("%s accepts either PORT or --pwd GLOB, not both", name))
 				}
+				if adding && cmd.Flags().Changed("local") {
+					return UsageError(errors.New("add --pwd cannot be combined with --local"))
+				}
 				pattern, _ := cmd.Flags().GetString("pwd")
 				return a.rememberWorkingDirectory(cmd.Context(), pattern, adding, jsonFlag(cmd))
 			}
 			if len(args) == 0 {
 				return UsageError(fmt.Errorf("%s requires PORT or --pwd GLOB", name))
 			}
-			port, err := requirePort(name, args[0])
+			remotePort, err := requirePort(name, args[0])
 			if err != nil {
 				return UsageError(err)
 			}
-			return a.rememberPort(cmd.Context(), port, adding, jsonFlag(cmd))
+			forward := core.RememberedForward{RemotePort: remotePort, LocalPort: remotePort}
+			if adding && cmd.Flags().Changed("local") {
+				localPort, _ := cmd.Flags().GetUint16("local")
+				if localPort == 0 {
+					return UsageError(errors.New("add --local requires a port 1..65535"))
+				}
+				forward.LocalPort = localPort
+			}
+			return a.rememberForward(cmd.Context(), forward, adding, jsonFlag(cmd))
 		},
 	}
 	command.Flags().Bool("json", false, "emit JSON")
 	command.Flags().String("pwd", "", "absolute glob for remote process working directories")
+	if adding {
+		command.Flags().Uint16("local", 0, "local port (default: the remote port)")
+	}
 	command.Example = fmt.Sprintf("  ssh-forward %s 5173  # %s port 5173\n  ssh-forward %s --pwd '/workspace/**'", name, verb, name)
+	if adding {
+		command.Example += "\n  ssh-forward add 8443 --local 18443"
+	}
 	return grouped(groupDaily, command)
 }
 
-func (a *App) rememberPort(ctx context.Context, port uint16, adding, jsonOutput bool) error {
+func (a *App) rememberForward(
+	ctx context.Context,
+	forward core.RememberedForward,
+	adding, jsonOutput bool,
+) error {
 	status, err := a.Manager.Status(ctx)
 	if err != nil {
 		return err
@@ -97,20 +118,20 @@ func (a *App) rememberPort(ctx context.Context, port uint16, adding, jsonOutput 
 	host := string(status.Host)
 	var changed bool
 	if adding {
-		changed, err = app.AddPort(a.Options.ConfigPath, host, port)
+		changed, err = app.SetRememberedForward(a.Options.ConfigPath, host, forward)
 	} else {
-		changed, err = app.RemovePort(a.Options.ConfigPath, host, port)
+		changed, err = app.RemoveRememberedForward(a.Options.ConfigPath, host, forward.RemotePort)
 	}
 	if err != nil {
 		return err
 	}
 	if !adding && !changed {
-		return fmt.Errorf("port %d is not remembered for %s", port, host)
+		return fmt.Errorf("remote port %d is not remembered for %s", forward.RemotePort, host)
 	}
 	if err := a.updateManagerIntent(ctx, host); err != nil {
 		return err
 	}
-	return a.writeRemember(jsonOutput, adding, changed, host, port)
+	return a.writeRemember(jsonOutput, adding, changed, host, forward)
 }
 
 func (a *App) rememberWorkingDirectory(ctx context.Context, pattern string, adding, jsonOutput bool) error {
@@ -166,7 +187,7 @@ func (a *App) statusCommand() *cobra.Command {
 				}
 			}
 			if jsonFlag(cmd) {
-				return a.writeJSON(status)
+				return a.writeStatusJSON(status)
 			}
 			return a.writeStatusHuman(status)
 		},

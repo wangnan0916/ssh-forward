@@ -43,10 +43,12 @@ func TestManagerIPCRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := core.Status{
-		Host:                  "dev",
-		Discovery:             core.DiscoveryStatus{State: core.DiscoveryActive},
-		Listeners:             []core.Listener{{Port: 5173, App: "node", WorkingDirectory: "/workspace/app"}},
-		Forwards:              []core.ForwardStatus{{Port: 5173, State: core.ForwardActive, Automatic: true}},
+		Host:      "dev",
+		Discovery: core.DiscoveryStatus{State: core.DiscoveryActive},
+		Listeners: []core.Listener{{Port: 5173, App: "node", WorkingDirectory: "/workspace/app"}},
+		Forwards: []core.ForwardStatus{{
+			RemotePort: 5173, LocalPort: 5173, State: core.ForwardActive, Automatic: true,
+		}},
 		WorkingDirectoryRules: []string{"/workspace/**"},
 	}
 	backend := &fixedManager{status: want}
@@ -67,7 +69,10 @@ func TestManagerIPCRoundTrip(t *testing.T) {
 		t.Fatalf("status = %#v, want %#v", got, want)
 	}
 	wantIntent := core.ForwardingIntent{
-		RememberedPorts:       []uint16{3000, 5173},
+		RememberedForwards: []core.RememberedForward{
+			{RemotePort: 3000, LocalPort: 13000},
+			{RemotePort: 5173, LocalPort: 5173},
+		},
 		WorkingDirectoryRules: []string{"/workspace/**"},
 	}
 	if err := manager.UpdateIntent(context.Background(), wantIntent); err != nil {
@@ -86,13 +91,16 @@ func TestManagerMatchesSelectedHostAndForwardingIntent(t *testing.T) {
 		Host:                  "dev",
 		WorkingDirectoryRules: []string{"/workspace/**"},
 		Forwards: []core.ForwardStatus{
-			{Port: 3000, State: core.ForwardActive},
-			{Port: 5173, State: core.ForwardFailed},
-			{Port: 12000, State: core.ForwardActive, Automatic: true},
+			{RemotePort: 3000, LocalPort: 13000, State: core.ForwardActive},
+			{RemotePort: 5173, LocalPort: 5173, State: core.ForwardFailed},
+			{RemotePort: 12000, LocalPort: 12000, State: core.ForwardActive, Automatic: true},
 		},
 	}
 	intent := core.ForwardingIntent{
-		RememberedPorts:       []uint16{3000, 5173},
+		RememberedForwards: []core.RememberedForward{
+			{RemotePort: 3000, LocalPort: 13000},
+			{RemotePort: 5173, LocalPort: 5173},
+		},
 		WorkingDirectoryRules: []string{"/workspace/**"},
 	}
 	if !managerMatches(status, "dev", intent) {
@@ -101,11 +109,18 @@ func TestManagerMatchesSelectedHostAndForwardingIntent(t *testing.T) {
 	if managerMatches(status, "other", intent) {
 		t.Fatal("manager with another host was accepted")
 	}
-	intent.RememberedPorts = []uint16{3000}
+	intent.RememberedForwards = intent.RememberedForwards[:1]
 	if managerMatches(status, "dev", intent) {
 		t.Fatal("manager with stale ports was accepted")
 	}
-	intent.RememberedPorts = []uint16{3000, 5173}
+	intent.RememberedForwards = append(intent.RememberedForwards, core.RememberedForward{
+		RemotePort: 5173, LocalPort: 5173,
+	})
+	intent.RememberedForwards[0].LocalPort = 14000
+	if managerMatches(status, "dev", intent) {
+		t.Fatal("manager with a stale local port was accepted")
+	}
+	intent.RememberedForwards[0].LocalPort = 13000
 	intent.WorkingDirectoryRules = []string{"/srv/**"}
 	if managerMatches(status, "dev", intent) {
 		t.Fatal("manager with stale working-directory rules was accepted")

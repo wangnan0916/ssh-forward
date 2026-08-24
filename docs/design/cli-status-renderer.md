@@ -18,9 +18,9 @@ Render human status as compact, borderless tables with explicit columns:
 Host  ubuntu    Discovery  active
 
 FORWARDS
- PORT  TARGET           KIND        APP   WORKING DIRECTORY
- 5173  127.0.0.1:5173   remembered  —     —
-12000  127.0.0.1:12000  automatic   node  …/console.cli.im
+REMOTE  TARGET           KIND        APP   WORKING DIRECTORY
+  5173  127.0.0.1:15173  remembered  —     —
+ 12000  127.0.0.1:12000  automatic   node  …/console.cli.im
 
 AVAILABLE
  PORT  APP           WORKING DIRECTORY
@@ -29,8 +29,10 @@ AVAILABLE
 33331  clash-verge   /home/shampoo
 ```
 
-The output remains readable without color, keeps the five-character
-right-aligned port column, and makes unavailable metadata visible as `—`.
+The output remains readable without color. Forward Remote Ports use a
+six-character right-aligned `REMOTE` column; Available Ports retain the
+five-character right-aligned `PORT` column. Unavailable metadata appears as
+`—`.
 
 ## Module seam
 
@@ -62,8 +64,12 @@ with `golang.org/x/term`; color and hyperlinks are enabled only for a TTY when
 `NO_COLOR` is unset. A non-file writer, failed size probe, or redirected stdout
 produces plain, unbounded text.
 
-`core` does not import or refer to the renderer. JSON encoding bypasses it and
-continues to serialize `core.Status` directly.
+`core` does not import or refer to the renderer. Manager IPC serializes the
+complete `core.Status` model. Public `status --json` output bypasses the
+renderer and uses a CLI-owned compatibility projection: same-port Forwards
+retain the legacy `port` field, while mappings whose Local Port differs from
+the Remote Port expose the complete port model. The compatibility projection
+does not affect Manager IPC.
 
 ## Rendering rules
 
@@ -73,15 +79,17 @@ continues to serialize `core.Status` directly.
 3. Render active, starting, failed, and available rows in separate sections.
    Preserve the existing headings `FORWARDS`, `STARTING`, and
    `NEEDS ATTENTION`; diagnostics remain visible for failed rows.
-4. Align ports to the right in a five-cell column. Align all other columns to
-   the left.
+4. Align Forward Remote Ports to the right in a six-cell `REMOTE` column and
+   Available Ports to the right in a five-cell `PORT` column. Align all other
+   columns to the left.
 5. Render an absent app or working directory as `—`. Do not infer that missing
    metadata belongs to a system process.
 6. Identify every Forward as `remembered` or `automatic`; meaning must not
    depend on whether matching listener metadata is currently available.
-7. In a width-constrained TTY, preserve the port, target, kind, and app columns and
-   shorten only the working-directory column from the left with a single `…`.
-   Preserve the final path segment. Do not truncate redirected output.
+7. In a width-constrained TTY, preserve the remote port, target, kind, and app
+   columns and shorten only the working-directory column from the left with a
+   single `…`. Preserve the final path segment. Do not truncate redirected
+   output.
 8. Use a restrained semantic palette: bright green for active
    discovery/forwards, bright yellow for connecting/starting, bright red for
    failures, bright cyan for available ports, bright magenta for app names,
@@ -112,7 +120,7 @@ continues to serialize `core.Status` directly.
 Add renderer tests at the module interface for:
 
 - active forwards and available listeners in aligned columns;
-- right alignment of 3-, 4-, and 5-digit ports;
+- right alignment of 3-, 4-, and 5-digit ports in both port columns;
 - `—` for each missing metadata combination;
 - all forward states and diagnostics;
 - path shortening at a fixed narrow width;

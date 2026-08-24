@@ -122,13 +122,16 @@ func managerMatches(status core.Status, host string, intent core.ForwardingInten
 	if status.Host != core.HostAlias(host) || !slices.Equal(status.WorkingDirectoryRules, intent.WorkingDirectoryRules) {
 		return false
 	}
-	rememberedPorts := make([]uint16, 0, len(status.Forwards))
+	rememberedForwards := make([]core.RememberedForward, 0, len(status.Forwards))
 	for _, forward := range status.Forwards {
 		if !forward.Automatic {
-			rememberedPorts = append(rememberedPorts, forward.Port)
+			rememberedForwards = append(rememberedForwards, core.RememberedForward{
+				RemotePort: forward.RemotePort,
+				LocalPort:  forward.LocalPort,
+			})
 		}
 	}
-	return slices.Equal(rememberedPorts, intent.RememberedPorts)
+	return slices.Equal(rememberedForwards, intent.RememberedForwards)
 }
 
 // Serve runs the Manager in the current process. Installed service definitions

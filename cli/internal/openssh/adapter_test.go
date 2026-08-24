@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 func TestForwardsShareMasterAndCancelIndependently(t *testing.T) {
@@ -32,6 +34,8 @@ func TestForwardsShareMasterAndCancelIndependently(t *testing.T) {
 	defer releaseFirstPort()
 	secondPort, releaseSecondPort := reservedPort(t)
 	defer releaseSecondPort()
+	firstTarget := core.ForwardTarget{RemotePort: 38080, LocalPort: firstPort}
+	secondTarget := core.ForwardTarget{RemotePort: 38082, LocalPort: secondPort}
 
 	firstCtx, cancelFirst := context.WithCancel(context.Background())
 	secondCtx, cancelSecond := context.WithCancel(context.Background())
@@ -40,10 +44,10 @@ func TestForwardsShareMasterAndCancelIndependently(t *testing.T) {
 	firstDone := make(chan error, 1)
 	secondDone := make(chan error, 1)
 	go func() {
-		firstDone <- adapter.Forward(firstCtx, "dev", firstPort, func() { close(firstReady) })
+		firstDone <- adapter.Forward(firstCtx, "dev", firstTarget, func() { close(firstReady) })
 	}()
 	go func() {
-		secondDone <- adapter.Forward(secondCtx, "dev", secondPort, func() { close(secondReady) })
+		secondDone <- adapter.Forward(secondCtx, "dev", secondTarget, func() { close(secondReady) })
 	}()
 	waitClosed(t, firstReady)
 	waitClosed(t, secondReady)
@@ -70,8 +74,14 @@ func TestForwardsShareMasterAndCancelIndependently(t *testing.T) {
 	if countEvent(events, "master") != 1 {
 		t.Fatalf("events = %v, want one master", events)
 	}
-	if countEvent(events, "forward") != 2 || countEvent(events, "cancel") != 2 {
-		t.Fatalf("events = %v, want two forwards and two cancels", events)
+	for _, target := range []core.ForwardTarget{firstTarget, secondTarget} {
+		specification := fmt.Sprintf(
+			"127.0.0.1:%d:127.0.0.1:%d", target.LocalPort, target.RemotePort,
+		)
+		if countEvent(events, "forward="+specification) != 1 ||
+			countEvent(events, "cancel="+specification) != 1 {
+			t.Fatalf("events = %v, want forward and cancel for %s", events, specification)
+		}
 	}
 }
 
@@ -99,7 +109,11 @@ func TestOpenSSHHelperProcess(t *testing.T) {
 	}
 	arguments := os.Args[separator+1:]
 	operation := controlOperation(arguments)
-	appendEvent(operation)
+	event := operation
+	if forward := controlForward(arguments); forward != "" {
+		event += "=" + forward
+	}
+	appendEvent(event)
 	switch operation {
 	case "master":
 		if err := os.WriteFile("master.ready", nil, 0o600); err != nil {
@@ -179,6 +193,15 @@ func controlOperation(arguments []string) string {
 		}
 	}
 	return "session"
+}
+
+func controlForward(arguments []string) string {
+	for index, argument := range arguments {
+		if argument == "-L" && index+1 < len(arguments) {
+			return arguments[index+1]
+		}
+	}
+	return ""
 }
 
 func appendEvent(event string) {

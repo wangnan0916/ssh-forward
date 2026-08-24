@@ -21,9 +21,12 @@ import (
 func TestDiscoversReachableListenersAndForwardsRemotePort(t *testing.T) {
 	environment := loadTestEnvironment(t)
 	port := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_V4", 38080)
+	localPort := availableLocalPort(t)
 	dualStackPort := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_DUAL_STACK", 38082)
 	ipv6OnlyPort := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_V6", 38081)
-	manager := core.NewManager(core.HostAlias(environment.host), environment.adapter, core.ForwardingIntent{RememberedPorts: []uint16{port}})
+	manager := core.NewManager(core.HostAlias(environment.host), environment.adapter, core.ForwardingIntent{
+		RememberedForwards: []core.RememberedForward{{RemotePort: port, LocalPort: localPort}},
+	})
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 
 	status := waitForStatus(t, manager, func(status core.Status) bool {
@@ -46,7 +49,7 @@ func TestDiscoversReachableListenersAndForwardsRemotePort(t *testing.T) {
 		t.Fatal("the root-owned wildcard SSH listener should not be discovered")
 	}
 
-	wantForwardedEcho(t, port, "hello")
+	wantForwardedEcho(t, localPort, "hello")
 }
 
 func TestAutomaticallyForwardsMatchingWorkingDirectoryWhileListenerExists(t *testing.T) {
@@ -80,7 +83,7 @@ printf '%%s\n' "$!"
 
 	waitForStatus(t, manager, func(status core.Status) bool {
 		listeners := listenersByPort(status.Listeners)
-		return len(status.Forwards) == 1 && status.Forwards[0].Port == port &&
+		return len(status.Forwards) == 1 && status.Forwards[0].RemotePort == port &&
 			status.Forwards[0].State == core.ForwardActive && status.Forwards[0].Automatic &&
 			listeners[port].WorkingDirectory == "/home/"+user+"/Workspace/project"
 	})
@@ -106,7 +109,10 @@ func TestCancelingOneForwardKeepsAnotherForwardOnSharedConnection(t *testing.T) 
 	first := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_V4", 38080)
 	second := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_DUAL_STACK", 38082)
 	manager := core.NewManager(core.HostAlias(environment.host), environment.adapter, core.ForwardingIntent{
-		RememberedPorts: []uint16{first, second},
+		RememberedForwards: []core.RememberedForward{
+			{RemotePort: first, LocalPort: first},
+			{RemotePort: second, LocalPort: second},
+		},
 	})
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 
@@ -119,12 +125,12 @@ func TestCancelingOneForwardKeepsAnotherForwardOnSharedConnection(t *testing.T) 
 	wantForwardedEcho(t, second, "second")
 
 	if err := manager.UpdateIntent(context.Background(), core.ForwardingIntent{
-		RememberedPorts: []uint16{second},
+		RememberedForwards: []core.RememberedForward{{RemotePort: second, LocalPort: second}},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	waitForStatus(t, manager, func(status core.Status) bool {
-		if len(status.Forwards) != 1 || status.Forwards[0].Port != second ||
+		if len(status.Forwards) != 1 || status.Forwards[0].RemotePort != second ||
 			status.Forwards[0].State != core.ForwardActive {
 			return false
 		}
@@ -234,6 +240,19 @@ func fixturePort(t *testing.T, name string, fallback uint16) uint16 {
 		t.Fatal(err)
 	}
 	return uint16(parsed)
+}
+
+func availableLocalPort(t *testing.T) uint16 {
+	t.Helper()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := uint16(listener.Addr().(*net.TCPAddr).Port)
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return port
 }
 
 func listenersByPort(listeners []core.Listener) map[uint16]core.Listener {

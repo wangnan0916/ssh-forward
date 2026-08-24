@@ -20,6 +20,7 @@ const (
 	portWidth              = 5
 	missing                = "—"
 	portHeader             = "PORT"
+	remotePortHeader       = "REMOTE"
 	targetHeader           = "TARGET"
 	appHeader              = "APP"
 	kindHeader             = "KIND"
@@ -44,7 +45,7 @@ func Render(writer io.Writer, status core.Status, options Options) error {
 		listenersByPort[listener.Port] = listener
 	}
 	for _, forward := range status.Forwards {
-		forwardedPorts[forward.Port] = struct{}{}
+		forwardedPorts[forward.RemotePort] = struct{}{}
 	}
 
 	for _, state := range []core.ForwardState{core.ForwardActive, core.ForwardStarting, core.ForwardFailed} {
@@ -116,15 +117,15 @@ func renderForwards(
 		rows := make([][]string, 0, len(forwards))
 		for _, forward := range forwards {
 			rows = append(rows, []string{
-				strconv.Itoa(int(forward.Port)),
-				localTarget(forward.Port, false),
+				strconv.Itoa(int(forward.RemotePort)),
+				localTarget(forward.LocalPort, false),
 				forwardKind(forward),
 				diagnosticText(forward.Diagnostic),
 			})
 		}
 		return renderSection(
 			"NEEDS ATTENTION",
-			[]string{portHeader, targetHeader, kindHeader, issueHeader},
+			[]string{remotePortHeader, targetHeader, kindHeader, issueHeader},
 			rows,
 			stateColor(state),
 			options,
@@ -133,10 +134,10 @@ func renderForwards(
 
 	rows := make([][]string, 0, len(forwards))
 	for _, forward := range forwards {
-		listener := listeners[forward.Port]
+		listener := listeners[forward.RemotePort]
 		rows = append(rows, []string{
-			strconv.Itoa(int(forward.Port)),
-			localTarget(forward.Port, options.Hyperlinks && state == core.ForwardActive),
+			strconv.Itoa(int(forward.RemotePort)),
+			localTarget(forward.LocalPort, options.Hyperlinks && state == core.ForwardActive),
 			forwardKind(forward),
 			valueOrMissing(listener.App),
 			valueOrMissing(listener.WorkingDirectory),
@@ -148,7 +149,7 @@ func renderForwards(
 	}
 	return renderSection(
 		title,
-		[]string{portHeader, targetHeader, kindHeader, appHeader, workingDirectoryHeader},
+		[]string{remotePortHeader, targetHeader, kindHeader, appHeader, workingDirectoryHeader},
 		rows,
 		stateColor(state),
 		options,
@@ -216,7 +217,8 @@ func tableStyle(colored bool, accent color.Color, headers []string, workingDirec
 	return func(row, column int) lipgloss.Style {
 		style := lipgloss.NewStyle()
 		if column == 0 {
-			style = style.Width(portWidth + columnGap).Align(lipgloss.Right)
+			width := max(portWidth, lipgloss.Width(headers[0]))
+			style = style.Width(width + columnGap).Align(lipgloss.Right)
 		}
 		if column < len(headers)-1 {
 			style = style.PaddingRight(columnGap)

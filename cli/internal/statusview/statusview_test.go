@@ -17,27 +17,30 @@ func TestRenderPlainStatus(t *testing.T) {
 		Discovery: core.DiscoveryStatus{State: core.DiscoveryActive},
 		Listeners: []core.Listener{
 			{Port: 631},
+			{Port: 922},
 			{Port: 5173},
 			{Port: 7897, App: "verge-mihomo", WorkingDirectory: "/home/shampoo"},
 			{Port: 12000, App: "node", WorkingDirectory: "/home/shampoo/Workspace/project/console.cli.im"},
 			{Port: 33331, App: "clash-verge", WorkingDirectory: "/home/shampoo"},
 		},
 		Forwards: []core.ForwardStatus{
-			{Port: 5173, State: core.ForwardActive},
-			{Port: 12000, State: core.ForwardActive},
+			{RemotePort: 631, LocalPort: 10631, State: core.ForwardActive},
+			{RemotePort: 5173, LocalPort: 15173, State: core.ForwardActive},
+			{RemotePort: 12000, LocalPort: 12000, State: core.ForwardActive},
 		},
 	}
 	output := renderStatus(t, status, Options{})
 	want := `Host  ubuntu    Discovery  active
 
 FORWARDS
- PORT  TARGET           KIND        APP   WORKING DIRECTORY
- 5173  127.0.0.1:5173   remembered  —     —
-12000  127.0.0.1:12000  remembered  node  /home/shampoo/Workspace/project/console.cli.im
+REMOTE  TARGET           KIND        APP   WORKING DIRECTORY
+   631  127.0.0.1:10631  remembered  —     —
+  5173  127.0.0.1:15173  remembered  —     —
+ 12000  127.0.0.1:12000  remembered  node  /home/shampoo/Workspace/project/console.cli.im
 
 AVAILABLE
  PORT  APP           WORKING DIRECTORY
-  631  —             —
+  922  —             —
  7897  verge-mihomo  /home/shampoo
 33331  clash-verge   /home/shampoo
 `
@@ -87,8 +90,8 @@ func TestRenderForwardStatesAndDiagnostics(t *testing.T) {
 		Host:      "dev",
 		Discovery: core.DiscoveryStatus{State: core.DiscoveryFailed, Diagnostic: "authentication_failed"},
 		Forwards: []core.ForwardStatus{
-			{Port: 3000, State: core.ForwardStarting},
-			{Port: 8080, State: core.ForwardFailed, Diagnostic: "local_port_conflict", Automatic: true},
+			{RemotePort: 3000, LocalPort: 13000, State: core.ForwardStarting},
+			{RemotePort: 8080, LocalPort: 8080, State: core.ForwardFailed, Diagnostic: "local_port_conflict", Automatic: true},
 		},
 	}
 	output := renderStatus(t, status, Options{})
@@ -96,7 +99,7 @@ func TestRenderForwardStatesAndDiagnostics(t *testing.T) {
 		"Discovery  failed",
 		"Discovery detail  SSH authentication failed.",
 		"STARTING",
-		"3000  127.0.0.1:3000  remembered",
+		"3000  127.0.0.1:13000  remembered",
 		"NEEDS ATTENTION",
 		"8080  127.0.0.1:8080  automatic  the same local port is already in use",
 	} {
@@ -114,7 +117,7 @@ func TestRenderColorIsExplicit(t *testing.T) {
 			{Port: 3000, App: "node", WorkingDirectory: "/workspace/app"},
 			{Port: 8080, App: "api", WorkingDirectory: "/workspace/api"},
 		},
-		Forwards: []core.ForwardStatus{{Port: 3000, State: core.ForwardActive}},
+		Forwards: []core.ForwardStatus{{RemotePort: 3000, LocalPort: 13000, State: core.ForwardActive}},
 	}
 	plain := renderStatus(t, status, Options{})
 	colored := renderStatus(t, status, Options{Color: true})
@@ -140,17 +143,17 @@ func TestRenderHyperlinksActiveForwardTargets(t *testing.T) {
 		Host:      "dev",
 		Discovery: core.DiscoveryStatus{State: core.DiscoveryActive},
 		Forwards: []core.ForwardStatus{
-			{Port: 3000, State: core.ForwardActive},
-			{Port: 4000, State: core.ForwardStarting},
-			{Port: 5000, State: core.ForwardFailed, Diagnostic: "local_port_conflict"},
+			{RemotePort: 3000, LocalPort: 13000, State: core.ForwardActive},
+			{RemotePort: 4000, LocalPort: 14000, State: core.ForwardStarting},
+			{RemotePort: 5000, LocalPort: 15000, State: core.ForwardFailed, Diagnostic: "local_port_conflict"},
 		},
 	}
 	output := renderStatus(t, status, Options{Width: 80, Color: true, Hyperlinks: true})
-	link := "\x1b]8;;http://127.0.0.1:3000\x1b\\127.0.0.1:3000\x1b]8;;\x1b\\"
+	link := "\x1b]8;;http://127.0.0.1:13000\x1b\\127.0.0.1:13000\x1b]8;;\x1b\\"
 	if !strings.Contains(output, link) {
 		t.Fatalf("output = %q, missing active forward hyperlink %q", output, link)
 	}
-	for _, port := range []string{"4000", "5000"} {
+	for _, port := range []string{"14000", "15000"} {
 		if strings.Contains(output, "http://127.0.0.1:"+port) {
 			t.Fatalf("output unexpectedly links inactive forward %s: %q", port, output)
 		}

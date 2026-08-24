@@ -9,8 +9,8 @@ import (
 
 type fakeBackend struct {
 	listeners  chan []Listener
-	started    chan uint16
-	stopped    chan uint16
+	started    chan ForwardTarget
+	stopped    chan ForwardTarget
 	closed     chan struct{}
 	closeErr   error
 	closeCalls int
@@ -19,8 +19,8 @@ type fakeBackend struct {
 func newFakeBackend() *fakeBackend {
 	return &fakeBackend{
 		listeners: make(chan []Listener, 4),
-		started:   make(chan uint16, 4),
-		stopped:   make(chan uint16, 4),
+		started:   make(chan ForwardTarget, 4),
+		stopped:   make(chan ForwardTarget, 4),
 		closed:    make(chan struct{}),
 	}
 }
@@ -36,11 +36,11 @@ func (b *fakeBackend) Observe(ctx context.Context, _ HostAlias, emit func([]List
 	}
 }
 
-func (b *fakeBackend) Forward(ctx context.Context, _ HostAlias, port uint16, ready func()) error {
-	b.started <- port
+func (b *fakeBackend) Forward(ctx context.Context, _ HostAlias, target ForwardTarget, ready func()) error {
+	b.started <- target
 	ready()
 	<-ctx.Done()
-	b.stopped <- port
+	b.stopped <- target
 	return ctx.Err()
 }
 
@@ -54,7 +54,9 @@ func TestManagerForwardsRememberedPortWithoutRemoteListener(t *testing.T) {
 	backend := newFakeBackend()
 	manager := newManager(managerOptions{
 		host: "dev", backend: backend,
-		intent:     ForwardingIntent{RememberedPorts: []uint16{0, 5173, 5173}},
+		intent: ForwardingIntent{RememberedForwards: []RememberedForward{
+			{}, {RemotePort: 5173}, {RemotePort: 5173},
+		}},
 		retryDelay: 5 * time.Millisecond,
 	})
 	wantEvent(t, backend.started, 5173)
@@ -117,7 +119,7 @@ func TestManagerReconcilesAutomaticForwardForWorkingDirectoryGlob(t *testing.T) 
 	wantEvent(t, backend.started, 5173)
 	eventually(t, func() bool {
 		status := managerStatus(t, manager)
-		return len(status.Forwards) == 1 && status.Forwards[0].Port == 5173 &&
+		return len(status.Forwards) == 1 && status.Forwards[0].RemotePort == 5173 &&
 			status.Forwards[0].State == ForwardActive && status.Forwards[0].Automatic
 	})
 
@@ -131,7 +133,7 @@ func TestRememberedPortOutlivesWorkingDirectoryMatch(t *testing.T) {
 	manager := newManager(managerOptions{
 		host: "dev", backend: backend,
 		intent: ForwardingIntent{
-			RememberedPorts:       []uint16{5173},
+			RememberedForwards:    samePortForwards(5173),
 			WorkingDirectoryRules: []string{"/workspace/app/**"},
 		},
 		retryDelay: 5 * time.Millisecond,
@@ -174,11 +176,11 @@ func TestAutomaticForwardRestartsOnceAfterRapidListenerReappearance(t *testing.T
 	})
 }
 
-func TestManagerUpdatesRememberedPortsWithoutRestartingUnchangedForward(t *testing.T) {
+func TestManagerUpdatesRememberedForwardsWithoutRestartingUnchangedForward(t *testing.T) {
 	backend := newFakeBackend()
 	manager := newManager(managerOptions{
 		host: "dev", backend: backend,
-		intent:     ForwardingIntent{RememberedPorts: []uint16{3000}},
+		intent:     ForwardingIntent{RememberedForwards: samePortForwards(3000)},
 		retryDelay: 5 * time.Millisecond,
 	})
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
@@ -188,20 +190,20 @@ func TestManagerUpdatesRememberedPortsWithoutRestartingUnchangedForward(t *testi
 		status := managerStatus(t, manager)
 		return len(status.Forwards) == 1 && status.Forwards[0].State == ForwardActive
 	})
-	if err := manager.UpdateIntent(context.Background(), ForwardingIntent{RememberedPorts: []uint16{3000, 5173}}); err != nil {
+	if err := manager.UpdateIntent(context.Background(), ForwardingIntent{RememberedForwards: samePortForwards(3000, 5173)}); err != nil {
 		t.Fatal(err)
 	}
 	wantEvent(t, backend.started, 5173)
 	wantNoEvent(t, backend.stopped)
 
-	if err := manager.UpdateIntent(context.Background(), ForwardingIntent{RememberedPorts: []uint16{5173}}); err != nil {
+	if err := manager.UpdateIntent(context.Background(), ForwardingIntent{RememberedForwards: samePortForwards(5173)}); err != nil {
 		t.Fatal(err)
 	}
 	wantEvent(t, backend.stopped, 3000)
 	wantNoEvent(t, backend.started)
 	eventually(t, func() bool {
 		status := managerStatus(t, manager)
-		return len(status.Forwards) == 1 && status.Forwards[0].Port == 5173 &&
+		return len(status.Forwards) == 1 && status.Forwards[0].RemotePort == 5173 &&
 			status.Forwards[0].State == ForwardActive
 	})
 }
@@ -229,7 +231,7 @@ func TestManagerUpdatesWorkingDirectoryRulesAgainstCurrentListeners(t *testing.T
 		return len(status.Forwards) == 1 && status.Forwards[0].Automatic
 	})
 
-	if err := manager.UpdateIntent(context.Background(), ForwardingIntent{RememberedPorts: []uint16{5173}}); err != nil {
+	if err := manager.UpdateIntent(context.Background(), ForwardingIntent{RememberedForwards: samePortForwards(5173)}); err != nil {
 		t.Fatal(err)
 	}
 	wantNoEvent(t, backend.started)
@@ -243,6 +245,40 @@ func TestManagerUpdatesWorkingDirectoryRulesAgainstCurrentListeners(t *testing.T
 		t.Fatal(err)
 	}
 	wantEvent(t, backend.stopped, 5173)
+}
+
+func TestManagerRestartsForwardWhenLocalPortChanges(t *testing.T) {
+	backend := newFakeBackend()
+	initial := RememberedForward{RemotePort: 3000, LocalPort: 13000}
+	manager := newManager(managerOptions{
+		host: "dev", backend: backend,
+		intent:     ForwardingIntent{RememberedForwards: []RememberedForward{initial}},
+		retryDelay: 5 * time.Millisecond,
+	})
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	wantTarget(t, backend.started, ForwardTarget(initial))
+
+	updated := RememberedForward{RemotePort: 3000, LocalPort: 14000}
+	if err := manager.UpdateIntent(context.Background(), ForwardingIntent{
+		RememberedForwards: []RememberedForward{updated},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	wantTarget(t, backend.stopped, ForwardTarget(initial))
+	wantTarget(t, backend.started, ForwardTarget(updated))
+	eventually(t, func() bool {
+		status := managerStatus(t, manager)
+		return len(status.Forwards) == 1 && status.Forwards[0].RemotePort == 3000 &&
+			status.Forwards[0].LocalPort == 14000 && status.Forwards[0].State == ForwardActive
+	})
+}
+
+func samePortForwards(ports ...uint16) []RememberedForward {
+	forwards := make([]RememberedForward, 0, len(ports))
+	for _, port := range ports {
+		forwards = append(forwards, RememberedForward{RemotePort: port, LocalPort: port})
+	}
+	return forwards
 }
 
 func managerStatus(t *testing.T, manager Manager) Status {
@@ -266,23 +302,35 @@ func eventually(t *testing.T, condition func() bool) {
 	t.Fatal("condition was not met")
 }
 
-func wantEvent(t *testing.T, events <-chan uint16, want uint16) {
+func wantEvent(t *testing.T, events <-chan ForwardTarget, want uint16) {
 	t.Helper()
 	select {
 	case got := <-events:
-		if got != want {
-			t.Fatalf("event = %d, want %d", got, want)
+		if got.RemotePort != want {
+			t.Fatalf("remote port = %d, want %d", got.RemotePort, want)
 		}
 	case <-time.After(time.Second):
 		t.Fatalf("timed out waiting for port %d", want)
 	}
 }
 
-func wantNoEvent(t *testing.T, events <-chan uint16) {
+func wantTarget(t *testing.T, events <-chan ForwardTarget, want ForwardTarget) {
 	t.Helper()
 	select {
 	case got := <-events:
-		t.Fatalf("unexpected port event %d", got)
+		if got != want {
+			t.Fatalf("target = %#v, want %#v", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for target %#v", want)
+	}
+}
+
+func wantNoEvent(t *testing.T, events <-chan ForwardTarget) {
+	t.Helper()
+	select {
+	case got := <-events:
+		t.Fatalf("unexpected target event %#v", got)
 	case <-time.After(20 * time.Millisecond):
 	}
 }

@@ -2,7 +2,8 @@
 
 Discover services reachable through IPv4 loopback on a Linux SSH host and keep
 selected ports—or ports whose process working directory matches a configured
-glob—available on the same port at `localhost` through system OpenSSH.
+glob—available at `localhost` through system OpenSSH. Remembered forwards may
+use a different local port; automatic forwards use the remote port.
 
 [![CI](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml/badge.svg)](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -103,6 +104,7 @@ Then choose the host and remember the ports you want locally:
 ssh-forward default my-dev
 ssh-forward status              # see remote loopback listeners
 ssh-forward add 5173            # keep remote 5173 on localhost:5173
+ssh-forward add 8443 --local 18443  # map remote 8443 to localhost:18443
 ssh-forward add --pwd '/home/me/Workspace/**'  # forward matching live services
 ssh-forward status --watch      # follow changes
 ssh-forward remove 5173
@@ -116,7 +118,7 @@ next command automatically replaces an older Manager.
 ## Commands
 
 ```text
-ssh-forward add PORT
+ssh-forward add PORT [--local PORT]
 ssh-forward add --pwd GLOB
 ssh-forward remove PORT
 ssh-forward remove --pwd GLOB
@@ -141,10 +143,10 @@ Global options are `--host ALIAS` and `--ssh-config PATH`. Set
    working directories are collected on a best-effort basis when `ss` and the
    relevant procfs links are available. No remote agent is installed.
 3. The Manager owns one product-private OpenSSH master connection and uses
-   OpenSSH control commands to add and cancel each desired local forward. The
-   local port stays available while the remote process restarts; individual
-   connections fail until the remote listener returns. Stopping one Forward
-   does not disturb the shared connection or other ports.
+   OpenSSH control commands to add and cancel each desired remote-to-local
+   forward. The local port stays available while the remote process restarts;
+   individual connections fail until the remote listener returns. Stopping one
+   Forward does not disturb the shared connection or other ports.
 4. Absolute working-directory globs create Automatic Forwards for matching
    Remote Listeners. `*` matches within one path segment and `**` crosses path
    segments. When a listener disappears or stops matching, its Automatic
@@ -156,7 +158,9 @@ The OS user service manager (launchd on macOS, the detected init system on
 Linux) owns process startup, restart, and logs. Installation and startup happen
 automatically when a command first needs the Manager.
 
-There is no alternate local-port allocation. If the same local port is in use,
+Use `add REMOTE --local LOCAL` when the same-numbered local port is unavailable
+or when a stable local address is preferable. Remembered forwards for one Host
+must use distinct local ports. If another local process owns the selected port,
 status reports the conflict and retries later.
 
 ## Configuration
@@ -165,10 +169,13 @@ All persistent intent is in one `config.jsonc`:
 
 ```jsonc
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "default_host": "my-dev",
-  "forwards": {
-    "my-dev": [5173, 8080]
+  "remembered_forwards": {
+    "my-dev": [
+      {"remote_port": 5173, "local_port": 5173},
+      {"remote_port": 8443, "local_port": 18443}
+    ]
   },
   "working_directory_rules": {
     "my-dev": ["/home/me/Workspace/**"]
@@ -176,12 +183,13 @@ All persistent intent is in one `config.jsonc`:
 }
 ```
 
-Commands send remembered-port and working-directory-rule changes to the
+Commands send remembered-forward and working-directory-rule changes to the
 running Manager, which reconciles only the affected forwards. Unchanged
 forwards stay connected. A selected-host, protocol, or binary-version change
-still replaces the Manager. Schema 1 files remain readable and upgrade to
-schema 2 on the next write. Runtime observations, automatically selected
-ports, and process IDs are not persisted.
+still replaces the Manager. Schema 1 and 2 files remain readable; their port
+lists become same-port mappings and upgrade to schema 3 on the next write.
+Runtime observations, automatically selected ports, and process IDs are not
+persisted.
 
 Default directories:
 
@@ -214,7 +222,6 @@ selected Host and ports.
 - one active SSH host per Manager
 - TCP listeners reachable through remote `127.0.0.1`; IPv6-only listeners are
   excluded
-- same local and remote port only
 - Automatic Forwards require best-effort process working-directory metadata;
   listeners without that metadata cannot match a rule
 

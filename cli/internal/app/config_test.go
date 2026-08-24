@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 func writeTextFile(path, content string) error {
@@ -41,7 +43,7 @@ func TestLoadConfigRejectsUnknownFields(t *testing.T) {
 }
 
 func TestLoadConfigRejectsUnsupportedSchema(t *testing.T) {
-	path := writeConfigFile(t, `{"schema_version": 3, "default_host": "development"}`)
+	path := writeConfigFile(t, `{"schema_version": 4, "default_host": "development"}`)
 	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "schema_version") {
 		t.Fatalf("LoadConfig err = %v, want a schema rejection", err)
 	}
@@ -64,7 +66,7 @@ func TestWorkingDirectoryRuleMutationsPreserveHostAndUpgradeSchema(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.SchemaVersion != 2 || config.DefaultHost != "dev" ||
+	if config.SchemaVersion != 3 || config.DefaultHost != "dev" ||
 		len(config.WorkingDirectoryRules["dev"]) != 1 || config.WorkingDirectoryRules["dev"][0] != "/workspace/**" ||
 		config.WorkingDirectoryRules["other"][0] != "/srv/**" {
 		t.Fatalf("config = %#v", config)
@@ -111,28 +113,73 @@ func TestPinnedHost(t *testing.T) {
 	}
 }
 
-func TestPortMutationsPreserveHostAndOtherPorts(t *testing.T) {
+func TestForwardMutationsPreserveHostAndOtherForwards(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.jsonc")
 	if err := SetDefaultHost(path, "dev"); err != nil {
 		t.Fatal(err)
 	}
-	for _, port := range []uint16{8080, 5173, 8080} {
-		if _, err := AddPort(path, "dev", port); err != nil {
+	for _, forward := range []core.RememberedForward{
+		{RemotePort: 8080, LocalPort: 18080},
+		{RemotePort: 5173, LocalPort: 5173},
+		{RemotePort: 8080, LocalPort: 28080},
+		{RemotePort: 8080, LocalPort: 28080},
+	} {
+		if _, err := SetRememberedForward(path, "dev", forward); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := AddPort(path, "other", 3000); err != nil {
+	if _, err := SetRememberedForward(path, "other", core.RememberedForward{
+		RemotePort: 3000, LocalPort: 13000,
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if removed, err := RemovePort(path, "dev", 5173); err != nil || !removed {
-		t.Fatalf("RemovePort = %v, %v", removed, err)
+	if removed, err := RemoveRememberedForward(path, "dev", 5173); err != nil || !removed {
+		t.Fatalf("RemoveRememberedForward = %v, %v", removed, err)
 	}
 	config, err := LoadConfig(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.DefaultHost != "dev" || len(config.Forwards["dev"]) != 1 || config.Forwards["dev"][0] != 8080 || config.Forwards["other"][0] != 3000 {
+	if config.DefaultHost != "dev" ||
+		len(config.RememberedForwards["dev"]) != 1 ||
+		config.RememberedForwards["dev"][0] != (core.RememberedForward{RemotePort: 8080, LocalPort: 28080}) ||
+		config.RememberedForwards["other"][0] != (core.RememberedForward{RemotePort: 3000, LocalPort: 13000}) {
 		t.Fatalf("config = %#v", config)
+	}
+}
+
+func TestLoadConfigMigratesLegacyPortsToSamePortForwards(t *testing.T) {
+	path := writeConfigFile(t, `{"schema_version": 2, "forwards": {"dev": [5173, 3000]}}`)
+	config, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []core.RememberedForward{
+		{RemotePort: 3000, LocalPort: 3000},
+		{RemotePort: 5173, LocalPort: 5173},
+	}
+	if config.LegacyForwards != nil || len(config.RememberedForwards["dev"]) != len(want) {
+		t.Fatalf("config = %#v", config)
+	}
+	for index := range want {
+		if config.RememberedForwards["dev"][index] != want[index] {
+			t.Fatalf("forwards = %#v, want %#v", config.RememberedForwards["dev"], want)
+		}
+	}
+}
+
+func TestSetRememberedForwardRejectsDuplicateLocalPort(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.jsonc")
+	if _, err := SetRememberedForward(path, "dev", core.RememberedForward{
+		RemotePort: 3000, LocalPort: 13000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := SetRememberedForward(path, "dev", core.RememberedForward{
+		RemotePort: 5173, LocalPort: 13000,
+	})
+	if err == nil || !strings.Contains(err.Error(), "local port 13000") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

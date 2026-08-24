@@ -22,6 +22,7 @@ type managerOptions struct {
 type forwardWorker struct {
 	ctx    context.Context
 	cancel context.CancelFunc
+	target ForwardTarget
 }
 
 type manager struct {
@@ -33,7 +34,7 @@ type manager struct {
 	discovery             DiscoveryStatus
 	listeners             map[uint16]Listener
 	states                map[uint16]ForwardStatus
-	remembered            []uint16
+	remembered            []RememberedForward
 	workingDirectoryRules []string
 	forwardWorkers        map[uint16]*forwardWorker
 
@@ -63,7 +64,7 @@ func newManager(options managerOptions) *manager {
 		discovery:             DiscoveryStatus{State: DiscoveryConnecting},
 		listeners:             make(map[uint16]Listener),
 		states:                make(map[uint16]ForwardStatus),
-		remembered:            intent.RememberedPorts,
+		remembered:            intent.RememberedForwards,
 		workingDirectoryRules: intent.WorkingDirectoryRules,
 		forwardWorkers:        make(map[uint16]*forwardWorker),
 		retryDelay:            options.retryDelay,
@@ -73,15 +74,17 @@ func newManager(options managerOptions) *manager {
 	}
 	if m.backend == nil || m.host == "" {
 		m.discovery = DiscoveryStatus{State: DiscoveryFailed, Diagnostic: "not_configured"}
-		for _, port := range m.remembered {
-			m.states[port] = ForwardStatus{Port: port, State: ForwardFailed, Diagnostic: "not_configured"}
+		for _, forward := range m.remembered {
+			m.states[forward.RemotePort] = m.forwardStatus(
+				forward.RemotePort, ForwardFailed, "not_configured",
+			)
 		}
 		return m
 	}
 
 	m.mu.Lock()
-	for _, port := range m.remembered {
-		m.startForwardLocked(port)
+	for _, forward := range m.remembered {
+		m.startForwardLocked(ForwardTarget(forward))
 	}
 	m.mu.Unlock()
 	m.tasks.Go(m.observe)
@@ -89,7 +92,7 @@ func newManager(options managerOptions) *manager {
 }
 
 func normalizedForwardingIntent(intent ForwardingIntent) ForwardingIntent {
-	intent.RememberedPorts = normalizedManagerPorts(intent.RememberedPorts)
+	intent.RememberedForwards = normalizedManagerForwards(intent.RememberedForwards)
 	patterns := make([]string, 0, len(intent.WorkingDirectoryRules))
 	for _, pattern := range intent.WorkingDirectoryRules {
 		if path.IsAbs(pattern) && doublestar.ValidatePattern(pattern) {
@@ -101,14 +104,25 @@ func normalizedForwardingIntent(intent ForwardingIntent) ForwardingIntent {
 	return intent
 }
 
-func normalizedManagerPorts(ports []uint16) []uint16 {
-	ports = slices.Clone(ports)
-	slices.Sort(ports)
-	ports = slices.Compact(ports)
-	if len(ports) != 0 && ports[0] == 0 {
-		ports = ports[1:]
+func normalizedManagerForwards(forwards []RememberedForward) []RememberedForward {
+	byRemotePort := make(map[uint16]RememberedForward, len(forwards))
+	for _, forward := range forwards {
+		if forward.RemotePort == 0 {
+			continue
+		}
+		if forward.LocalPort == 0 {
+			forward.LocalPort = forward.RemotePort
+		}
+		byRemotePort[forward.RemotePort] = forward
 	}
-	return ports
+	normalized := make([]RememberedForward, 0, len(byRemotePort))
+	for _, forward := range byRemotePort {
+		normalized = append(normalized, forward)
+	}
+	slices.SortFunc(normalized, func(left, right RememberedForward) int {
+		return int(left.RemotePort) - int(right.RemotePort)
+	})
+	return normalized
 }
 
 func (m *manager) Status(ctx context.Context) (Status, error) {
@@ -132,7 +146,7 @@ func (m *manager) Status(ctx context.Context) (Status, error) {
 		forwards = append(forwards, status)
 	}
 	slices.SortFunc(forwards, func(left, right ForwardStatus) int {
-		return int(left.Port) - int(right.Port)
+		return int(left.RemotePort) - int(right.RemotePort)
 	})
 	return Status{
 		Host:                  m.host,
@@ -158,12 +172,11 @@ func (m *manager) UpdateIntent(ctx context.Context, intent ForwardingIntent) err
 	if m.closed {
 		return ErrManagerClosed
 	}
-	m.remembered = intent.RememberedPorts
+	m.remembered = intent.RememberedForwards
 	m.workingDirectoryRules = intent.WorkingDirectoryRules
 	m.reconcileForwardsLocked()
-	for port, status := range m.states {
-		status.Automatic = !m.isRemembered(port)
-		m.states[port] = status
+	for remotePort, status := range m.states {
+		m.states[remotePort] = m.forwardStatus(remotePort, status.State, status.Diagnostic)
 	}
 	return nil
 }
@@ -207,29 +220,37 @@ func (m *manager) setListeners(listeners []Listener) {
 }
 
 func (m *manager) reconcileForwardsLocked() {
-	for port, worker := range m.forwardWorkers {
-		if m.wantsForward(port) {
+	for remotePort, worker := range m.forwardWorkers {
+		desired, found := m.desiredForward(remotePort)
+		if found && worker.target == desired {
 			continue
 		}
 		worker.cancel()
-		delete(m.states, port)
+		if found {
+			m.states[remotePort] = m.forwardStatus(remotePort, ForwardStarting, "")
+		} else {
+			delete(m.states, remotePort)
+		}
 	}
-	for _, port := range m.remembered {
-		m.ensureForwardLocked(port)
+	for _, forward := range m.remembered {
+		m.ensureForwardLocked(ForwardTarget(forward))
 	}
-	for port, listener := range m.listeners {
-		if matchesWorkingDirectory(m.workingDirectoryRules, listener.WorkingDirectory) {
-			m.ensureForwardLocked(port)
+	for remotePort, listener := range m.listeners {
+		if !m.isRemembered(remotePort) && matchesWorkingDirectory(m.workingDirectoryRules, listener.WorkingDirectory) {
+			m.ensureForwardLocked(ForwardTarget{RemotePort: remotePort, LocalPort: remotePort})
 		}
 	}
 }
 
-func (m *manager) wantsForward(port uint16) bool {
-	if m.isRemembered(port) {
-		return true
+func (m *manager) desiredForward(remotePort uint16) (ForwardTarget, bool) {
+	if remembered, found := m.rememberedForward(remotePort); found {
+		return ForwardTarget(remembered), true
 	}
-	listener, found := m.listeners[port]
-	return found && matchesWorkingDirectory(m.workingDirectoryRules, listener.WorkingDirectory)
+	listener, found := m.listeners[remotePort]
+	if found && matchesWorkingDirectory(m.workingDirectoryRules, listener.WorkingDirectory) {
+		return ForwardTarget{RemotePort: remotePort, LocalPort: remotePort}, true
+	}
+	return ForwardTarget{}, false
 }
 
 func matchesWorkingDirectory(patterns []string, directory string) bool {
@@ -244,73 +265,103 @@ func matchesWorkingDirectory(patterns []string, directory string) bool {
 	return false
 }
 
-func (m *manager) ensureForwardLocked(port uint16) {
-	if worker := m.forwardWorkers[port]; worker != nil {
+func (m *manager) ensureForwardLocked(target ForwardTarget) {
+	if worker := m.forwardWorkers[target.RemotePort]; worker != nil {
 		if worker.ctx.Err() != nil {
-			m.states[port] = m.forwardStatus(port, ForwardStarting, "")
+			m.states[target.RemotePort] = m.forwardStatus(target.RemotePort, ForwardStarting, "")
 		}
 		return
 	}
-	m.startForwardLocked(port)
+	m.startForwardLocked(target)
 }
 
-func (m *manager) startForwardLocked(port uint16) {
+func (m *manager) startForwardLocked(target ForwardTarget) {
 	ctx, cancel := context.WithCancel(m.ctx)
-	worker := &forwardWorker{ctx: ctx, cancel: cancel}
-	m.forwardWorkers[port] = worker
-	m.states[port] = m.forwardStatus(port, ForwardStarting, "")
-	m.tasks.Go(func() { m.runForward(port, worker) })
+	worker := &forwardWorker{ctx: ctx, cancel: cancel, target: target}
+	m.forwardWorkers[target.RemotePort] = worker
+	m.states[target.RemotePort] = m.forwardStatus(target.RemotePort, ForwardStarting, "")
+	m.tasks.Go(func() { m.runForward(worker) })
 }
 
-func (m *manager) runForward(port uint16, worker *forwardWorker) {
-	defer m.forwardStopped(port, worker)
+func (m *manager) runForward(worker *forwardWorker) {
+	remotePort := worker.target.RemotePort
+	defer m.forwardStopped(remotePort, worker)
 	for {
-		m.setForwardState(port, worker, ForwardStarting, "")
-		err := m.backend.Forward(worker.ctx, m.host, port, func() {
-			m.setForwardState(port, worker, ForwardActive, "")
+		m.setForwardState(remotePort, worker, ForwardStarting, "")
+		err := m.backend.Forward(worker.ctx, m.host, worker.target, func() {
+			m.setForwardState(remotePort, worker, ForwardActive, "")
 		})
 		if worker.ctx.Err() != nil {
 			return
 		}
-		m.setForwardState(port, worker, ForwardFailed, ErrorDiagnostic(err))
+		m.setForwardState(remotePort, worker, ForwardFailed, ErrorDiagnostic(err))
 		if !wait(worker.ctx, m.retryDelay) {
 			return
 		}
 	}
 }
 
-func (m *manager) forwardStopped(port uint16, worker *forwardWorker) {
+func (m *manager) forwardStopped(remotePort uint16, worker *forwardWorker) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.forwardWorkers[port] != worker {
+	if m.forwardWorkers[remotePort] != worker {
 		return
 	}
-	delete(m.forwardWorkers, port)
+	delete(m.forwardWorkers, remotePort)
 	if m.closed {
 		return
 	}
-	if m.wantsForward(port) {
-		m.startForwardLocked(port)
+	if target, found := m.desiredForward(remotePort); found {
+		m.startForwardLocked(target)
 	} else {
-		delete(m.states, port)
+		delete(m.states, remotePort)
 	}
 }
 
-func (m *manager) setForwardState(port uint16, worker *forwardWorker, state ForwardState, diagnostic string) {
+func (m *manager) setForwardState(
+	remotePort uint16,
+	worker *forwardWorker,
+	state ForwardState,
+	diagnostic string,
+) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if !m.closed && worker.ctx.Err() == nil && m.forwardWorkers[port] == worker {
-		m.states[port] = m.forwardStatus(port, state, diagnostic)
+	if !m.closed && worker.ctx.Err() == nil && m.forwardWorkers[remotePort] == worker {
+		m.states[remotePort] = m.forwardStatus(remotePort, state, diagnostic)
 	}
 }
 
-func (m *manager) forwardStatus(port uint16, state ForwardState, diagnostic string) ForwardStatus {
-	return ForwardStatus{Port: port, State: state, Diagnostic: diagnostic, Automatic: !m.isRemembered(port)}
+func (m *manager) forwardStatus(remotePort uint16, state ForwardState, diagnostic string) ForwardStatus {
+	if remembered, found := m.rememberedForward(remotePort); found {
+		return ForwardStatus{
+			RemotePort: remembered.RemotePort,
+			LocalPort:  remembered.LocalPort,
+			State:      state,
+			Diagnostic: diagnostic,
+		}
+	}
+	return ForwardStatus{
+		RemotePort: remotePort,
+		LocalPort:  remotePort,
+		State:      state,
+		Diagnostic: diagnostic,
+		Automatic:  true,
+	}
 }
 
-func (m *manager) isRemembered(port uint16) bool {
-	_, found := slices.BinarySearch(m.remembered, port)
+func (m *manager) isRemembered(remotePort uint16) bool {
+	_, found := m.rememberedForward(remotePort)
 	return found
+}
+
+func (m *manager) rememberedForward(remotePort uint16) (RememberedForward, bool) {
+	index, found := slices.BinarySearchFunc(m.remembered, remotePort, func(forward RememberedForward, remotePort uint16) int {
+		return int(forward.RemotePort) - int(remotePort)
+	})
+	if !found {
+		return RememberedForward{}, false
+	}
+	return m.remembered[index], true
 }
 
 func wait(ctx context.Context, delay time.Duration) bool {
