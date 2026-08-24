@@ -30,6 +30,24 @@ archives:
 checksum:
   name_template: checksums.txt
 
+brews:
+  - name: ssh-forward
+    directory: Formula
+    homepage: https://github.com/wangnan0916/ssh-forward
+    description: Forward Linux development-host ports to localhost through system OpenSSH
+    license: MIT
+    skip_upload: auto
+    test: |
+      assert_match "ssh-forward #{version}", shell_output("#{bin}/ssh-forward --version")
+    repository:
+      owner: wangnan0916
+      name: homebrew-ssh-forward
+      branch: main
+      token: "{{ .Env.RELEASE_AUTOMATION_TOKEN }}"
+    commit_author:
+      name: ssh-forward release bot
+      email: 41898282+github-actions[bot]@users.noreply.github.com
+
 changelog:
   use: github-native
 

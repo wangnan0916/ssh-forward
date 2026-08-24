@@ -28,12 +28,25 @@ forwarding behavior in Go.
 
 ## Releases
 
-Release tags and the default `buildVersion` use the same semantic version.
-GoReleaser builds macOS and Linux archives for AMD64 and ARM64:
+Release Please maintains a release PR from Conventional Commit messages. The
+PR updates `CHANGELOG.md` and the default `buildVersion`; merging it creates
+the version tag and GitHub Release. The tag-triggered GoReleaser workflow then
+builds macOS and Linux archives for AMD64 and ARM64 and updates the Homebrew
+tap.
+
+The workflows require one repository secret named
+`RELEASE_AUTOMATION_TOKEN`. Create a fine-grained personal access token limited
+to `ssh-forward` and `homebrew-ssh-forward`, grant Contents, Issues, and Pull
+requests read/write access, then save it under **Settings → Secrets and
+variables → Actions**. This lets a Release Please tag trigger the release
+workflow and lets GoReleaser update the separate Homebrew tap.
+
+To exercise the packaging locally without publishing:
 
 ```bash
 goreleaser release --snapshot --clean
 ```
 
-Push a release tag only after `main` is green. Tags containing a prerelease
-suffix such as `-alpha.1` become GitHub prereleases automatically.
+Do not create release tags manually. Merge the release PR only after its CI is
+green. Conventional `fix:` commits produce patches, `feat:` commits produce
+minor releases, and `BREAKING CHANGE` remains a minor bump before v1.0.0.
