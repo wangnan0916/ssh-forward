@@ -22,6 +22,20 @@ ports and working-directory globs you choose, and keeps the required local SSH
 port forwards running in the background. It does not install a remote agent or
 store SSH credentials.
 
+## Automatically forward project services
+
+Forward short-lived development servers whose working directories are anywhere
+under a remote workspace, without discovering and adding each port:
+
+```bash
+ssh-forward add --pwd '/home/me/Workspace/**'
+```
+
+When a matching remote process starts listening, its port becomes available on
+the same port at `localhost`. When the listener stops, the automatic SSH
+forward disappears. This works well for development servers, preview tools,
+notebooks, and OAuth callback servers that use temporary ports.
+
 ## Lightweight
 
 Measured with `v0.1.0` on an Apple M1 Pro running macOS 26.6.2:
