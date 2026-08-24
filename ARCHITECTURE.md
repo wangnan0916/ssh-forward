@@ -28,10 +28,11 @@ CLI
   readiness checks, and bounded SSH error classification.
 - `internal/app` owns the single config file, SSH alias selection, and the thin
   adapters that compose HTTP/Unix Socket and the user's OS service manager.
-  A Manager loads immutable forwarding intent at startup; `Connect` restarts it
-  when the selected host, remembered ports, working-directory rules, protocol,
-  or binary version differs from the current process. `Uninstall` removes only
-  the background service; persistent intent remains user-owned configuration.
+  A Manager loads forwarding intent at startup and accepts idempotent intent
+  updates over its user-only Unix socket. It reconciles only affected workers;
+  `Connect` restarts it when the selected host, protocol, or binary version
+  differs from the current process. `Uninstall` removes only the background
+  service; persistent intent remains user-owned configuration.
 - `internal/statusview` owns human status grouping, terminal-width fitting,
   missing-value presentation, and optional ANSI styling and hyperlinks. JSON
   bypasses it.

@@ -14,6 +14,7 @@ import (
 
 type fixedManager struct {
 	status core.Status
+	intent core.ForwardingIntent
 }
 
 func TestServiceConfigIsUserScopedAndAutomatic(t *testing.T) {
@@ -28,10 +29,14 @@ func TestServiceConfigIsUserScopedAndAutomatic(t *testing.T) {
 	}
 }
 
-func (m fixedManager) Status(context.Context) (core.Status, error) { return m.status, nil }
-func (fixedManager) Close(context.Context) error                   { return nil }
+func (m *fixedManager) Status(context.Context) (core.Status, error) { return m.status, nil }
+func (m *fixedManager) UpdateIntent(_ context.Context, intent core.ForwardingIntent) error {
+	m.intent = intent
+	return nil
+}
+func (*fixedManager) Close(context.Context) error { return nil }
 
-func TestManagerStatusRoundTrip(t *testing.T) {
+func TestManagerIPCRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "manager.sock")
 	listener, err := listenManager(path)
 	if err != nil {
@@ -44,7 +49,8 @@ func TestManagerStatusRoundTrip(t *testing.T) {
 		Forwards:              []core.ForwardStatus{{Port: 5173, State: core.ForwardActive, Automatic: true}},
 		WorkingDirectoryRules: []string{"/workspace/**"},
 	}
-	server := &http.Server{Handler: managerHandler(fixedManager{status: want}, "test-version")}
+	backend := &fixedManager{status: want}
+	server := &http.Server{Handler: managerHandler(backend, "test-version")}
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close() })
 
@@ -59,6 +65,16 @@ func TestManagerStatusRoundTrip(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("status = %#v, want %#v", got, want)
+	}
+	wantIntent := core.ForwardingIntent{
+		RememberedPorts:       []uint16{3000, 5173},
+		WorkingDirectoryRules: []string{"/workspace/**"},
+	}
+	if err := manager.UpdateIntent(context.Background(), wantIntent); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(backend.intent, wantIntent) {
+		t.Fatalf("intent = %#v, want %#v", backend.intent, wantIntent)
 	}
 	if _, err := dialManager(context.Background(), path, "other-version"); !errors.Is(err, ErrIncompatibleManager) {
 		t.Fatalf("version mismatch error = %v", err)

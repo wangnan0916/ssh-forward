@@ -76,8 +76,18 @@ func Connect(ctx context.Context, opts Options) (core.Manager, error) {
 	replace := dialErr != nil && socketLive(opts.Layout.Socket)
 	if dialErr == nil {
 		status, statusErr := client.Status(ctx)
-		if statusErr == nil && managerMatches(status, host, intent) {
-			return client, nil
+		if statusErr == nil && status.Host == core.HostAlias(host) {
+			if managerMatches(status, host, intent) {
+				return client, nil
+			}
+			updateErr := client.UpdateIntent(ctx, intent)
+			if updateErr == nil {
+				return client, nil
+			}
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				_ = client.Close(context.Background())
+				return nil, ctxErr
+			}
 		}
 		_ = client.Close(context.Background())
 		replace = true

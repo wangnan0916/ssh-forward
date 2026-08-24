@@ -107,7 +107,7 @@ func (a *App) rememberPort(ctx context.Context, port uint16, adding, jsonOutput 
 	if !adding && !changed {
 		return fmt.Errorf("port %d is not remembered for %s", port, host)
 	}
-	if err := a.reloadManager(ctx, host); err != nil {
+	if err := a.updateManagerIntent(ctx, host); err != nil {
 		return err
 	}
 	return a.writeRemember(jsonOutput, adding, changed, host, port)
@@ -134,26 +134,18 @@ func (a *App) rememberWorkingDirectory(ctx context.Context, pattern string, addi
 	if !adding && !changed {
 		return fmt.Errorf("working-directory glob %q is not remembered for %s", pattern, host)
 	}
-	if err := a.reloadManager(ctx, host); err != nil {
+	if err := a.updateManagerIntent(ctx, host); err != nil {
 		return err
 	}
 	return a.writeRememberWorkingDirectory(jsonOutput, adding, changed, host, pattern)
 }
 
-func (a *App) reloadManager(ctx context.Context, host string) error {
-	if !a.sessionOwned {
-		return nil
-	}
-	_ = a.Manager.Close(context.Background())
-	a.Manager = nil
-	opts := a.Options
-	opts.HostFlag = host
-	manager, err := app.Connect(ctx, opts)
+func (a *App) updateManagerIntent(ctx context.Context, host string) error {
+	intent, err := app.HostIntent(a.Options.ConfigPath, host)
 	if err != nil {
 		return err
 	}
-	a.Manager = manager
-	return nil
+	return a.Manager.UpdateIntent(ctx, intent)
 }
 
 func (a *App) statusCommand() *cobra.Command {

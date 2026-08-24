@@ -173,11 +173,12 @@ All persistent intent is in one `config.jsonc`:
 }
 ```
 
-Commands compare this file with the running Manager and restart it when the
-selected host, remembered ports, working-directory rules, or binary version
-changes. Schema 1 files remain readable and upgrade to schema 2 on the next
-write. Runtime observations, automatically selected ports, and process IDs are
-not persisted.
+Commands send remembered-port and working-directory-rule changes to the
+running Manager, which reconciles only the affected forwards. Unchanged
+forwards stay connected. A selected-host, protocol, or binary-version change
+still replaces the Manager. Schema 1 files remain readable and upgrade to
+schema 2 on the next write. Runtime observations, automatically selected
+ports, and process IDs are not persisted.
 
 Default directories:
 

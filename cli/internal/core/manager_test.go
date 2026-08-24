@@ -142,6 +142,77 @@ func TestAutomaticForwardRestartsOnceAfterRapidListenerReappearance(t *testing.T
 	})
 }
 
+func TestManagerUpdatesRememberedPortsWithoutRestartingUnchangedForward(t *testing.T) {
+	backend := newFakeBackend()
+	manager := newManager(managerOptions{
+		host: "dev", backend: backend,
+		intent:     ForwardingIntent{RememberedPorts: []uint16{3000}},
+		retryDelay: 5 * time.Millisecond,
+	})
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	wantEvent(t, backend.started, 3000)
+	eventually(t, func() bool {
+		status := managerStatus(t, manager)
+		return len(status.Forwards) == 1 && status.Forwards[0].State == ForwardActive
+	})
+	if err := manager.UpdateIntent(context.Background(), ForwardingIntent{RememberedPorts: []uint16{3000, 5173}}); err != nil {
+		t.Fatal(err)
+	}
+	wantEvent(t, backend.started, 5173)
+	wantNoEvent(t, backend.stopped)
+
+	if err := manager.UpdateIntent(context.Background(), ForwardingIntent{RememberedPorts: []uint16{5173}}); err != nil {
+		t.Fatal(err)
+	}
+	wantEvent(t, backend.stopped, 3000)
+	wantNoEvent(t, backend.started)
+	eventually(t, func() bool {
+		status := managerStatus(t, manager)
+		return len(status.Forwards) == 1 && status.Forwards[0].Port == 5173 &&
+			status.Forwards[0].State == ForwardActive
+	})
+}
+
+func TestManagerUpdatesWorkingDirectoryRulesAgainstCurrentListeners(t *testing.T) {
+	backend := newFakeBackend()
+	manager := newManager(managerOptions{
+		host: "dev", backend: backend,
+		retryDelay: 5 * time.Millisecond,
+	})
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	backend.listeners <- []Listener{{Port: 5173, WorkingDirectory: "/workspace/app"}}
+	eventually(t, func() bool {
+		return managerStatus(t, manager).Discovery.State == DiscoveryActive
+	})
+	if err := manager.UpdateIntent(context.Background(), ForwardingIntent{
+		WorkingDirectoryRules: []string{"/workspace/**"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	wantEvent(t, backend.started, 5173)
+	eventually(t, func() bool {
+		status := managerStatus(t, manager)
+		return len(status.Forwards) == 1 && status.Forwards[0].Automatic
+	})
+
+	if err := manager.UpdateIntent(context.Background(), ForwardingIntent{RememberedPorts: []uint16{5173}}); err != nil {
+		t.Fatal(err)
+	}
+	wantNoEvent(t, backend.started)
+	wantNoEvent(t, backend.stopped)
+	eventually(t, func() bool {
+		status := managerStatus(t, manager)
+		return len(status.Forwards) == 1 && !status.Forwards[0].Automatic
+	})
+
+	if err := manager.UpdateIntent(context.Background(), ForwardingIntent{}); err != nil {
+		t.Fatal(err)
+	}
+	wantEvent(t, backend.stopped, 5173)
+}
+
 func managerStatus(t *testing.T, manager Manager) Status {
 	t.Helper()
 	status, err := manager.Status(context.Background())

@@ -139,6 +139,31 @@ func (m *manager) Status(ctx context.Context) (Status, error) {
 	}, nil
 }
 
+// UpdateIntent reconciles new persistent intent without disturbing forwards
+// that remain desired. It is safe to call repeatedly with equivalent intent.
+func (m *manager) UpdateIntent(ctx context.Context, intent ForwardingIntent) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	intent = normalizedForwardingIntent(intent)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if m.closed {
+		return ErrManagerClosed
+	}
+	m.remembered = intent.RememberedPorts
+	m.workingDirectoryRules = intent.WorkingDirectoryRules
+	m.reconcileForwardsLocked()
+	for port, status := range m.states {
+		status.Automatic = !m.isRemembered(port)
+		m.states[port] = status
+	}
+	return nil
+}
+
 func (m *manager) observe() {
 	for {
 		m.setDiscovery(DiscoveryConnecting, "")

@@ -13,16 +13,22 @@ import (
 
 type fakeManager struct {
 	status core.Status
+	intent core.ForwardingIntent
 }
 
 func (m *fakeManager) Status(context.Context) (core.Status, error) { return m.status, nil }
-func (*fakeManager) Close(context.Context) error                   { return nil }
+func (m *fakeManager) UpdateIntent(_ context.Context, intent core.ForwardingIntent) error {
+	m.intent = intent
+	return nil
+}
+func (*fakeManager) Close(context.Context) error { return nil }
 
 func TestAddWritesOneHostPortList(t *testing.T) {
 	configPath := t.TempDir() + "/config.jsonc"
 	var stdout bytes.Buffer
+	manager := &fakeManager{status: core.Status{Host: "dev"}}
 	surface := &App{
-		Manager: &fakeManager{status: core.Status{Host: "dev"}},
+		Manager: manager,
 		Options: app.Options{ConfigPath: configPath, Stdout: &stdout},
 	}
 	if err := surface.Run(context.Background(), []string{"add", "5173"}); err != nil {
@@ -34,6 +40,9 @@ func TestAddWritesOneHostPortList(t *testing.T) {
 	}
 	if len(intent.RememberedPorts) != 1 || intent.RememberedPorts[0] != 5173 {
 		t.Fatalf("ports = %v", intent.RememberedPorts)
+	}
+	if len(manager.intent.RememberedPorts) != 1 || manager.intent.RememberedPorts[0] != 5173 {
+		t.Fatalf("manager intent = %#v", manager.intent)
 	}
 	if !strings.Contains(stdout.String(), "Remembered 5173 for dev") {
 		t.Fatalf("output = %q", stdout.String())

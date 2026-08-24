@@ -58,8 +58,8 @@ type Status struct {
 // Ports stay forwarded independently of listener state. Working Directory
 // Rules create Automatic Forwards only for currently matching listeners.
 type ForwardingIntent struct {
-	RememberedPorts       []uint16
-	WorkingDirectoryRules []string
+	RememberedPorts       []uint16 `json:"remembered_ports"`
+	WorkingDirectoryRules []string `json:"working_directory_rules"`
 }
 
 var ErrManagerClosed = errors.New("manager is closed")
@@ -90,5 +90,6 @@ func ErrorDiagnostic(err error) string {
 
 type Manager interface {
 	Status(context.Context) (Status, error)
+	UpdateIntent(context.Context, ForwardingIntent) error
 	Close(context.Context) error
 }
