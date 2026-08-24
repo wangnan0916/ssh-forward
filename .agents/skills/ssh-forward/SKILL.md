@@ -2,9 +2,9 @@
 name: ssh-forward
 description: >-
   Operates ssh-forward for a Linux SSH host: list remote loopback listeners,
-  remember or forget a port, select the default SSH alias, inspect forwarding
-  status, or trigger automatic manager recovery. Use when a remote development
-  port should be reachable on localhost or an ssh-forward port is unavailable.
+  remember a port, maintain automatic working-directory glob rules, select the
+  default SSH alias, inspect forwarding status, or trigger automatic manager
+  recovery. Use when remote development ports should be reachable on localhost.
 ---
 
 # ssh-forward
@@ -37,7 +37,7 @@ go install github.com/wangnan0916/ssh-forward/cli/cmd/ssh-forward@main
 
 This step is complete when an existing alias is pinned or explicitly selected.
 
-## 2. Inspect and change remembered ports
+## 2. Inspect and change forwarding intent
 
 Read live state first:
 
@@ -64,6 +64,25 @@ ssh-forward remove PORT --json
 remembered. After a change, poll `status --json` until the relevant forward
 reaches `active` or `failed`. Report that state and, when active, the URL or
 endpoint using the same port.
+
+Maintain an absolute remote working-directory glob when the user asks for
+automatic, listener-scoped forwarding:
+
+```bash
+ssh-forward add --pwd '/home/me/Workspace/**' --json
+ssh-forward remove --pwd '/home/me/Workspace/**' --json
+```
+
+Quote patterns so the local shell does not expand them. `*` stays within one
+path segment; `**` crosses directories. A matching Remote Listener creates an
+`automatic` Forward, and that Forward stops when a complete listener snapshot
+no longer matches. Missing working-directory metadata never matches. A
+Remembered Port remains forwarded if the same port also matches a rule.
+
+After adding a rule, confirm it appears in `working_directory_rules` from
+`status --json`. If a listener currently matches, also poll until its Forward
+is `active` or `failed`. After removing a rule, confirm it is absent and any
+Forward selected only by that rule disappears.
 
 ## 3. Recover only when needed
 

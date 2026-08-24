@@ -31,9 +31,9 @@ func TestRenderPlainStatus(t *testing.T) {
 	want := `Host  ubuntu    Discovery  active
 
 FORWARDS
- PORT  TARGET           APP   WORKING DIRECTORY
- 5173  127.0.0.1:5173   —     —
-12000  127.0.0.1:12000  node  /home/shampoo/Workspace/project/console.cli.im
+ PORT  TARGET           KIND        APP   WORKING DIRECTORY
+ 5173  127.0.0.1:5173   remembered  —     —
+12000  127.0.0.1:12000  remembered  node  /home/shampoo/Workspace/project/console.cli.im
 
 AVAILABLE
  PORT  APP           WORKING DIRECTORY
@@ -88,7 +88,7 @@ func TestRenderForwardStatesAndDiagnostics(t *testing.T) {
 		Discovery: core.DiscoveryStatus{State: core.DiscoveryFailed, Diagnostic: "authentication_failed"},
 		Forwards: []core.ForwardStatus{
 			{Port: 3000, State: core.ForwardStarting},
-			{Port: 8080, State: core.ForwardFailed, Diagnostic: "local_port_conflict"},
+			{Port: 8080, State: core.ForwardFailed, Diagnostic: "local_port_conflict", Automatic: true},
 		},
 	}
 	output := renderStatus(t, status, Options{})
@@ -96,9 +96,9 @@ func TestRenderForwardStatesAndDiagnostics(t *testing.T) {
 		"Discovery  failed",
 		"Discovery detail  SSH authentication failed.",
 		"STARTING",
-		"3000  127.0.0.1:3000",
+		"3000  127.0.0.1:3000  remembered",
 		"NEEDS ATTENTION",
-		"8080  127.0.0.1:8080  the same local port is already in use",
+		"8080  127.0.0.1:8080  automatic  the same local port is already in use",
 	} {
 		if !strings.Contains(output, text) {
 			t.Fatalf("output = %q, missing %q", output, text)

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -40,9 +41,42 @@ func TestLoadConfigRejectsUnknownFields(t *testing.T) {
 }
 
 func TestLoadConfigRejectsUnsupportedSchema(t *testing.T) {
-	path := writeConfigFile(t, `{"schema_version": 2, "default_host": "development"}`)
+	path := writeConfigFile(t, `{"schema_version": 3, "default_host": "development"}`)
 	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "schema_version") {
 		t.Fatalf("LoadConfig err = %v, want a schema rejection", err)
+	}
+}
+
+func TestWorkingDirectoryRuleMutationsPreserveHostAndUpgradeSchema(t *testing.T) {
+	path := writeConfigFile(t, `{"schema_version": 1, "default_host": "dev"}`)
+	for _, pattern := range []string{"/workspace/**", "/workspace/apps/*", "/workspace/**"} {
+		if _, err := AddWorkingDirectoryRule(path, "dev", pattern); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := AddWorkingDirectoryRule(path, "other", "/srv/**"); err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := RemoveWorkingDirectoryRule(path, "dev", "/workspace/apps/*"); err != nil || !removed {
+		t.Fatalf("RemoveWorkingDirectoryRule = %v, %v", removed, err)
+	}
+	config, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.SchemaVersion != 2 || config.DefaultHost != "dev" ||
+		len(config.WorkingDirectoryRules["dev"]) != 1 || config.WorkingDirectoryRules["dev"][0] != "/workspace/**" ||
+		config.WorkingDirectoryRules["other"][0] != "/srv/**" {
+		t.Fatalf("config = %#v", config)
+	}
+}
+
+func TestLoadConfigRejectsInvalidWorkingDirectoryRules(t *testing.T) {
+	for _, pattern := range []string{"workspace/**", "/workspace/["} {
+		path := writeConfigFile(t, `{"schema_version": 2, "working_directory_rules": {"dev": [`+strconv.Quote(pattern)+`]}}`)
+		if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "working-directory glob") {
+			t.Fatalf("LoadConfig pattern %q err = %v", pattern, err)
+		}
 	}
 }
 

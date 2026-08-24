@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -58,13 +59,23 @@ Name the host with --host ALIAS (-h is help). Pin one with: ssh-forward default 
 }
 
 func (a *App) rememberCommand(adding bool) *cobra.Command {
-	name, verb, short := "add", "remember", "remember a remote port"
+	name, verb, short := "add", "remember", "remember a remote port or working-directory glob"
 	if !adding {
-		name, verb, short = "remove", "forget", "forget a remembered port"
+		name, verb, short = "remove", "forget", "forget a remembered port or working-directory glob"
 	}
 	command := &cobra.Command{
-		Use: name + " PORT", Short: short, Args: cobra.ExactArgs(1),
+		Use: name + " [PORT]", Short: short, Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("pwd") {
+				if len(args) != 0 {
+					return UsageError(fmt.Errorf("%s accepts either PORT or --pwd GLOB, not both", name))
+				}
+				pattern, _ := cmd.Flags().GetString("pwd")
+				return a.rememberWorkingDirectory(cmd.Context(), pattern, adding, jsonFlag(cmd))
+			}
+			if len(args) == 0 {
+				return UsageError(fmt.Errorf("%s requires PORT or --pwd GLOB", name))
+			}
 			port, err := requirePort(name, args[0])
 			if err != nil {
 				return UsageError(err)
@@ -73,7 +84,8 @@ func (a *App) rememberCommand(adding bool) *cobra.Command {
 		},
 	}
 	command.Flags().Bool("json", false, "emit JSON")
-	command.Example = fmt.Sprintf("  ssh-forward %s 5173  # %s port 5173", name, verb)
+	command.Flags().String("pwd", "", "absolute glob for remote process working directories")
+	command.Example = fmt.Sprintf("  ssh-forward %s 5173  # %s port 5173\n  ssh-forward %s --pwd '/workspace/**'", name, verb, name)
 	return grouped(groupDaily, command)
 }
 
@@ -95,18 +107,53 @@ func (a *App) rememberPort(ctx context.Context, port uint16, adding, jsonOutput 
 	if !adding && !changed {
 		return fmt.Errorf("port %d is not remembered for %s", port, host)
 	}
-	if a.sessionOwned {
-		_ = a.Manager.Close(context.Background())
-		a.Manager = nil
-		opts := a.Options
-		opts.HostFlag = host
-		manager, err := app.Connect(ctx, opts)
-		if err != nil {
-			return err
-		}
-		a.Manager = manager
+	if err := a.reloadManager(ctx, host); err != nil {
+		return err
 	}
 	return a.writeRemember(jsonOutput, adding, changed, host, port)
+}
+
+func (a *App) rememberWorkingDirectory(ctx context.Context, pattern string, adding, jsonOutput bool) error {
+	status, err := a.Manager.Status(ctx)
+	if err != nil {
+		return err
+	}
+	host := string(status.Host)
+	var changed bool
+	if adding {
+		changed, err = app.AddWorkingDirectoryRule(a.Options.ConfigPath, host, pattern)
+	} else {
+		changed, err = app.RemoveWorkingDirectoryRule(a.Options.ConfigPath, host, pattern)
+	}
+	if errors.Is(err, app.ErrInvalidWorkingDirectoryRule) {
+		return UsageError(err)
+	}
+	if err != nil {
+		return err
+	}
+	if !adding && !changed {
+		return fmt.Errorf("working-directory glob %q is not remembered for %s", pattern, host)
+	}
+	if err := a.reloadManager(ctx, host); err != nil {
+		return err
+	}
+	return a.writeRememberWorkingDirectory(jsonOutput, adding, changed, host, pattern)
+}
+
+func (a *App) reloadManager(ctx context.Context, host string) error {
+	if !a.sessionOwned {
+		return nil
+	}
+	_ = a.Manager.Close(context.Background())
+	a.Manager = nil
+	opts := a.Options
+	opts.HostFlag = host
+	manager, err := app.Connect(ctx, opts)
+	if err != nil {
+		return err
+	}
+	a.Manager = manager
+	return nil
 }
 
 func (a *App) statusCommand() *cobra.Command {

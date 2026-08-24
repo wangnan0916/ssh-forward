@@ -22,6 +22,7 @@ const (
 	portHeader             = "PORT"
 	targetHeader           = "TARGET"
 	appHeader              = "APP"
+	kindHeader             = "KIND"
 	workingDirectoryHeader = "WORKING DIRECTORY"
 	issueHeader            = "ISSUE"
 )
@@ -117,12 +118,13 @@ func renderForwards(
 			rows = append(rows, []string{
 				strconv.Itoa(int(forward.Port)),
 				localTarget(forward.Port, false),
+				forwardKind(forward),
 				diagnosticText(forward.Diagnostic),
 			})
 		}
 		return renderSection(
 			"NEEDS ATTENTION",
-			[]string{portHeader, targetHeader, issueHeader},
+			[]string{portHeader, targetHeader, kindHeader, issueHeader},
 			rows,
 			stateColor(state),
 			options,
@@ -135,6 +137,7 @@ func renderForwards(
 		rows = append(rows, []string{
 			strconv.Itoa(int(forward.Port)),
 			localTarget(forward.Port, options.Hyperlinks && state == core.ForwardActive),
+			forwardKind(forward),
 			valueOrMissing(listener.App),
 			valueOrMissing(listener.WorkingDirectory),
 		})
@@ -145,11 +148,18 @@ func renderForwards(
 	}
 	return renderSection(
 		title,
-		[]string{portHeader, targetHeader, appHeader, workingDirectoryHeader},
+		[]string{portHeader, targetHeader, kindHeader, appHeader, workingDirectoryHeader},
 		rows,
 		stateColor(state),
 		options,
 	)
+}
+
+func forwardKind(forward core.ForwardStatus) string {
+	if forward.Automatic {
+		return "automatic"
+	}
+	return "remembered"
 }
 
 func renderAvailable(listeners []core.Listener, options Options) string {

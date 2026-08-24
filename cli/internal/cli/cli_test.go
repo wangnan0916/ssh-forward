@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -27,15 +28,48 @@ func TestAddWritesOneHostPortList(t *testing.T) {
 	if err := surface.Run(context.Background(), []string{"add", "5173"}); err != nil {
 		t.Fatal(err)
 	}
-	ports, err := app.Ports(configPath, "dev")
+	intent, err := app.HostIntent(configPath, "dev")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ports) != 1 || ports[0] != 5173 {
-		t.Fatalf("ports = %v", ports)
+	if len(intent.RememberedPorts) != 1 || intent.RememberedPorts[0] != 5173 {
+		t.Fatalf("ports = %v", intent.RememberedPorts)
 	}
 	if !strings.Contains(stdout.String(), "Remembered 5173 for dev") {
 		t.Fatalf("output = %q", stdout.String())
+	}
+}
+
+func TestAddWorkingDirectoryGlobWritesOneHostRuleList(t *testing.T) {
+	configPath := t.TempDir() + "/config.jsonc"
+	var stdout bytes.Buffer
+	surface := &App{
+		Manager: &fakeManager{status: core.Status{Host: "dev"}},
+		Options: app.Options{ConfigPath: configPath, Stdout: &stdout},
+	}
+	if err := surface.Run(context.Background(), []string{"add", "--pwd", "/workspace/**"}); err != nil {
+		t.Fatal(err)
+	}
+	intent, err := app.HostIntent(configPath, "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(intent.WorkingDirectoryRules) != 1 || intent.WorkingDirectoryRules[0] != "/workspace/**" {
+		t.Fatalf("rules = %v", intent.WorkingDirectoryRules)
+	}
+	if !strings.Contains(stdout.String(), "Remembered working-directory glob /workspace/** for dev") {
+		t.Fatalf("output = %q", stdout.String())
+	}
+}
+
+func TestAddWorkingDirectoryGlobRejectsRelativePattern(t *testing.T) {
+	surface := &App{
+		Manager: &fakeManager{status: core.Status{Host: "dev"}},
+		Options: app.Options{ConfigPath: t.TempDir() + "/config.jsonc"},
+	}
+	err := surface.Run(context.Background(), []string{"add", "--pwd", "workspace/**"})
+	if !errors.Is(err, ErrUsage) {
+		t.Fatalf("error = %v, want usage error", err)
 	}
 }
 
@@ -63,8 +97,8 @@ func TestStatusSeparatesForwardedAndAvailablePorts(t *testing.T) {
 	output := stdout.String()
 	for _, text := range []string{
 		"Host  dev    Discovery  active",
-		" 5173  127.0.0.1:5173   node  /workspace/app",
-		"12000  127.0.0.1:12000  node  /workspace/api",
+		" 5173  127.0.0.1:5173   remembered  node  /workspace/app",
+		"12000  127.0.0.1:12000  remembered  node  /workspace/api",
 		"  631  —     —",
 		" 3000  vite  /workspace/web",
 	} {
@@ -108,6 +142,9 @@ func TestRootHasNoPolicyOrDirectorySurface(t *testing.T) {
 	}
 	if add.Flags().Lookup("dir") != nil {
 		t.Fatal("add --dir still exists")
+	}
+	if add.Flags().Lookup("pwd") == nil {
+		t.Fatal("add --pwd is missing")
 	}
 	status, _, err := root.Find([]string{"status"})
 	if err != nil || status.Flags().Lookup("watch") == nil {

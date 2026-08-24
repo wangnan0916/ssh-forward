@@ -34,6 +34,7 @@ type ForwardStatus struct {
 	Port       uint16       `json:"port"`
 	State      ForwardState `json:"state"`
 	Diagnostic string       `json:"diagnostic,omitempty"`
+	Automatic  bool         `json:"automatic,omitempty"`
 }
 
 // Listener is a remote TCP listener reachable through the IPv4 loopback
@@ -46,10 +47,19 @@ type Listener struct {
 }
 
 type Status struct {
-	Host      HostAlias       `json:"host"`
-	Discovery DiscoveryStatus `json:"discovery"`
-	Listeners []Listener      `json:"listeners"`
-	Forwards  []ForwardStatus `json:"forwards"`
+	Host                  HostAlias       `json:"host"`
+	Discovery             DiscoveryStatus `json:"discovery"`
+	Listeners             []Listener      `json:"listeners"`
+	Forwards              []ForwardStatus `json:"forwards"`
+	WorkingDirectoryRules []string        `json:"working_directory_rules,omitempty"`
+}
+
+// ForwardingIntent is the persistent intent a Manager reconciles. Remembered
+// Ports stay forwarded independently of listener state. Working Directory
+// Rules create Automatic Forwards only for currently matching listeners.
+type ForwardingIntent struct {
+	RememberedPorts       []uint16
+	WorkingDirectoryRules []string
 }
 
 var ErrManagerClosed = errors.New("manager is closed")

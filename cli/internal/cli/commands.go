@@ -41,6 +41,25 @@ func (a *App) writeRemember(jsonOutput, adding, changed bool, host string, port 
 	return nil
 }
 
+func (a *App) writeRememberWorkingDirectory(jsonOutput, adding, changed bool, host, pattern string) error {
+	if jsonOutput {
+		key := "removed"
+		if adding {
+			key = "added"
+		}
+		return a.writeJSON(map[string]any{key: changed, "host": host, "working_directory_rule": pattern})
+	}
+	switch {
+	case adding && changed:
+		fmt.Fprintf(a.Options.Stdout, "Remembered working-directory glob %s for %s.\n", pattern, host)
+	case adding:
+		fmt.Fprintf(a.Options.Stdout, "Already remembered working-directory glob %s for %s.\n", pattern, host)
+	default:
+		fmt.Fprintf(a.Options.Stdout, "Forgot working-directory glob %s for %s.\n", pattern, host)
+	}
+	return nil
+}
+
 func (a *App) runWatch(ctx context.Context, jsonOutput bool) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
