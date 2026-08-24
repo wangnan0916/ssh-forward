@@ -80,12 +80,12 @@ func (a *Adapter) waitForMaster(ctx context.Context, host core.HostAlias, master
 	for {
 		select {
 		case <-ctx.Done():
-			a.stopMaster(master)
+			_ = a.stopMaster(ctx, master)
 			return ctx.Err()
 		case <-master.done:
 			return master.failure()
 		case <-deadline.C:
-			a.stopMaster(master)
+			_ = a.stopMaster(ctx, master)
 			return backendError("master_start_timeout")
 		case <-ticker.C:
 			if err := a.runControl(ctx, host, "check", ""); err == nil {
@@ -126,21 +126,32 @@ func (m *sshMaster) failure() error {
 	return classifyError(m.err, m.stderr.String())
 }
 
-func (a *Adapter) stopMaster(master *sshMaster) {
+func (a *Adapter) stopMaster(ctx context.Context, master *sshMaster) error {
 	_ = terminateProcess(master.command)
-	timer := time.NewTimer(a.waitDelay)
-	defer timer.Stop()
+	stopped := make(chan struct{})
+	// Cleanup must continue if the caller's deadline expires.
+	go func() {
+		defer close(stopped)
+		timer := time.NewTimer(a.waitDelay)
+		defer timer.Stop()
+		select {
+		case <-master.done:
+		case <-timer.C:
+			_ = killProcess(master.command)
+			<-master.done
+		}
+	}()
 	select {
-	case <-master.done:
-	case <-timer.C:
-		_ = killProcess(master.command)
-		<-master.done
+	case <-stopped:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
 // Close stops every product-owned OpenSSH master after Manager workers have
 // canceled their individual forward requests and discovery session.
-func (a *Adapter) Close(_ context.Context) error {
+func (a *Adapter) Close(ctx context.Context) error {
 	a.mu.Lock()
 	if a.closed {
 		a.mu.Unlock()
@@ -153,8 +164,9 @@ func (a *Adapter) Close(_ context.Context) error {
 	}
 	a.masters = nil
 	a.mu.Unlock()
+	var err error
 	for _, master := range masters {
-		a.stopMaster(master)
+		err = errors.Join(err, a.stopMaster(ctx, master))
 	}
-	return nil
+	return err
 }

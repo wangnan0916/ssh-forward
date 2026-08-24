@@ -13,6 +13,7 @@ import (
 	"charm.land/lipgloss/v2/table"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/diagnostics"
 )
 
 const (
@@ -87,7 +88,7 @@ func renderSummary(status core.Status, options Options) string {
 	summary := fmt.Sprintf("%s  %s    %s  %s", hostLabel, host, discoveryLabel, state)
 	if status.Discovery.Diagnostic != "" {
 		detailLabel := "Discovery detail"
-		detail := diagnosticText(status.Discovery.Diagnostic)
+		detail := diagnostics.Text(status.Discovery.Diagnostic)
 		if options.Color {
 			detailLabel = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.BrightRed).Render(detailLabel)
 			detail = lipgloss.NewStyle().Foreground(lipgloss.BrightRed).Render(detail)
@@ -120,7 +121,7 @@ func renderForwards(
 				strconv.Itoa(int(forward.RemotePort)),
 				forwardTarget(forward, false),
 				forwardKind(forward),
-				diagnosticText(forward.Diagnostic),
+				diagnostics.Text(forward.Diagnostic),
 			})
 		}
 		return renderSection(
@@ -365,28 +366,5 @@ func stateColor(state core.ForwardState) color.Color {
 		return lipgloss.BrightRed
 	default:
 		return lipgloss.BrightYellow
-	}
-}
-
-func diagnosticText(diagnostic string) string {
-	switch diagnostic {
-	case "invalid_alias":
-		return "SSH does not know this host alias."
-	case "authentication_failed":
-		return "SSH authentication failed."
-	case "host_key_failed":
-		return "SSH host key verification failed."
-	case "local_port_conflict":
-		return "the same local port is already in use"
-	case "transport_unavailable":
-		return "SSH connection unavailable"
-	case "discovery_invalid":
-		return "the remote listener scan returned invalid data"
-	case "forward_start_timeout":
-		return "OpenSSH did not open the local port in time"
-	case "master_start_timeout":
-		return "the shared OpenSSH connection did not become ready in time"
-	default:
-		return diagnostic
 	}
 }

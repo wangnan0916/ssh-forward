@@ -47,7 +47,7 @@ Name the host with --host ALIAS (-h is help). Pin one with: ssh-forward default 
 	}
 	root.AddCommand(
 		a.rememberCommand(true), a.rememberCommand(false), a.statusCommand(),
-		a.hostCommand(), a.defaultCommand(), a.uninstallCommand(), a.managerCommand(),
+		a.hostCommand(), a.defaultCommand(), a.doctorCommand(), a.uninstallCommand(), a.managerCommand(),
 	)
 	root.InitDefaultHelpCmd()
 	for _, command := range root.Commands() {

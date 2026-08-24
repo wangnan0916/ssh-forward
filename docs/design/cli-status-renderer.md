@@ -48,16 +48,20 @@ type Options struct {
 }
 ```
 
-The module owns all human status presentation:
+The module owns all human status layout and rendering decisions:
 
 - grouping forwards by state;
-- mapping diagnostics to human text;
+- placing shared diagnostic text in summaries and failed rows;
 - selecting headings and columns;
 - alignment and spacing;
 - missing-value placeholders;
 - working-directory truncation;
 - optional ANSI styling.
 - terminal hyperlinks for active local targets.
+
+`internal/diagnostics` owns the shared mapping from bounded backend diagnostic
+codes to human-readable descriptions and doctor remediation text. The renderer
+decides where and how those descriptions appear in status output.
 
 The CLI adapter derives `Options` from stdout. It detects TTY state and width
 with `golang.org/x/term`; color and hyperlinks are enabled only for a TTY when

@@ -125,6 +125,7 @@ ssh-forward add --pwd GLOB
 ssh-forward remove PORT
 ssh-forward remove --pwd GLOB
 ssh-forward status [--json] [--watch]
+ssh-forward doctor [--json]
 ssh-forward host [--json]
 ssh-forward default [ALIAS]
 ssh-forward uninstall
@@ -163,6 +164,11 @@ Global options are `--host ALIAS` and `--ssh-config PATH`. Set
 The OS user service manager (launchd on macOS, the detected init system on
 Linux) owns process startup, restart, and logs. Installation and startup happen
 automatically when a command first needs the Manager.
+
+Run `ssh-forward doctor` for a read-only check of config files, OpenSSH, Host
+selection, Manager health, Forward failures, and a real remote listener scan.
+It does not install, restart, or change the Manager. Use `--json` for
+automation.
 
 Use `add REMOTE --local LOCAL` when a stable local address is required. The
 command creates a strict mapping: if another process owns that port, status

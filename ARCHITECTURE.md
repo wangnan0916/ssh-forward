@@ -35,7 +35,11 @@ CLI
   updates over its user-only Unix socket. It reconciles only affected workers;
   `Connect` restarts it when the selected host, protocol, or binary version
   differs from the current process. `Uninstall` removes only the background
-  service; persistent intent remains user-owned configuration.
+  service; persistent intent remains user-owned configuration. Its read-only
+  doctor module composes configuration, Manager, and true-remote discovery
+  checks without repairing or mutating them.
+- `internal/diagnostics` owns the bounded human-readable diagnostic catalog,
+  including shared descriptions and doctor remediation text.
 - `internal/statusview` owns human status grouping, terminal-width fitting,
   missing-value presentation, and optional ANSI styling and hyperlinks. JSON
   bypasses it.

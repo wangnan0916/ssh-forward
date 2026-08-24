@@ -156,6 +156,38 @@ func TestNewRejectsSharedWritableControlDirectory(t *testing.T) {
 	}
 }
 
+func TestCloseHonorsCanceledContext(t *testing.T) {
+	controlDirectory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(controlDirectory, "ignore-master-terminate"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	adapter, err := New(Options{
+		Executable: fakeSSHExecutable(t, controlDirectory), ControlDirectory: controlDirectory,
+		ReadyTimeout: 10 * time.Second, WaitDelay: 250 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	master, err := adapter.ensureMaster(context.Background(), "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		select {
+		case <-master.done:
+		default:
+			_ = killProcess(master.command)
+			<-master.done
+		}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := adapter.Close(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Close error = %v, want context.Canceled", err)
+	}
+}
+
 func TestOpenSSHHelperProcess(t *testing.T) {
 	separator := -1
 	for index, argument := range os.Args {
@@ -180,8 +212,18 @@ func TestOpenSSHHelperProcess(t *testing.T) {
 	}
 	switch operation {
 	case "master":
+		ignoreTerminate := false
+		if _, err := os.Stat("ignore-master-terminate"); err == nil {
+			signal.Ignore(syscall.SIGTERM)
+			ignoreTerminate = true
+		}
 		if err := os.WriteFile("master.ready", nil, 0o600); err != nil {
 			os.Exit(1)
+		}
+		if ignoreTerminate {
+			for {
+				time.Sleep(time.Hour)
+			}
 		}
 		signals := make(chan os.Signal, 1)
 		signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)

@@ -233,6 +233,9 @@ func TestRootHasNoPolicyOrDirectorySurface(t *testing.T) {
 	if uninstall, _, err := root.Find([]string{"uninstall"}); err != nil || uninstall.Hidden {
 		t.Fatalf("uninstall command is missing: %v", err)
 	}
+	if doctor, _, err := root.Find([]string{"doctor"}); err != nil || doctor.Hidden || needsManager(doctor) {
+		t.Fatalf("read-only doctor command is unavailable: %v", err)
+	}
 	for _, command := range root.Commands() {
 		if command.Name() == "watch" || command.Name() == "manager" && !command.Hidden {
 			t.Fatalf("obsolete public command %q is still visible", command.Name())
