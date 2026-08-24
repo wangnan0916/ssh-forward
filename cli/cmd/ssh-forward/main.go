@@ -18,7 +18,7 @@ import (
 
 // buildVersion is the product version managed by Release Please; the formula's
 // test and the brew audit both key off it.
-var buildVersion = "0.1.0" // x-release-please-version
+var buildVersion = "0.2.0" // x-release-please-version
 
 // versionString reports the product version plus the embedded build
 // revision (Go stamps vcs.revision into the binary), so --version tells a
