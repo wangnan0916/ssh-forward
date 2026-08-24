@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -37,10 +38,11 @@ func TestManagerStatusRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := core.Status{
-		Host:      "dev",
-		Discovery: core.DiscoveryStatus{State: core.DiscoveryActive},
-		Listeners: []core.Listener{{Port: 5173, App: "node", WorkingDirectory: "/workspace/app"}},
-		Forwards:  []core.ForwardStatus{{Port: 5173, State: core.ForwardActive}},
+		Host:                  "dev",
+		Discovery:             core.DiscoveryStatus{State: core.DiscoveryActive},
+		Listeners:             []core.Listener{{Port: 5173, App: "node", WorkingDirectory: "/workspace/app"}},
+		Forwards:              []core.ForwardStatus{{Port: 5173, State: core.ForwardActive, Automatic: true}},
+		WorkingDirectoryRules: []string{"/workspace/**"},
 	}
 	server := &http.Server{Handler: managerHandler(fixedManager{status: want}, "test-version")}
 	go func() { _ = server.Serve(listener) }()
@@ -55,8 +57,7 @@ func TestManagerStatusRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Host != want.Host || len(got.Listeners) != 1 || got.Listeners[0] != want.Listeners[0] ||
-		len(got.Forwards) != 1 || got.Forwards[0] != want.Forwards[0] {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("status = %#v, want %#v", got, want)
 	}
 	if _, err := dialManager(context.Background(), path, "other-version"); !errors.Is(err, ErrIncompatibleManager) {
@@ -64,21 +65,33 @@ func TestManagerStatusRoundTrip(t *testing.T) {
 	}
 }
 
-func TestManagerMatchesSelectedHostAndConfiguredPorts(t *testing.T) {
+func TestManagerMatchesSelectedHostAndForwardingIntent(t *testing.T) {
 	status := core.Status{
-		Host: "dev",
+		Host:                  "dev",
+		WorkingDirectoryRules: []string{"/workspace/**"},
 		Forwards: []core.ForwardStatus{
 			{Port: 3000, State: core.ForwardActive},
 			{Port: 5173, State: core.ForwardFailed},
+			{Port: 12000, State: core.ForwardActive, Automatic: true},
 		},
 	}
-	if !managerMatches(status, "dev", []uint16{3000, 5173}) {
+	intent := core.ForwardingIntent{
+		RememberedPorts:       []uint16{3000, 5173},
+		WorkingDirectoryRules: []string{"/workspace/**"},
+	}
+	if !managerMatches(status, "dev", intent) {
 		t.Fatal("matching manager was rejected")
 	}
-	if managerMatches(status, "other", []uint16{3000, 5173}) {
+	if managerMatches(status, "other", intent) {
 		t.Fatal("manager with another host was accepted")
 	}
-	if managerMatches(status, "dev", []uint16{3000}) {
+	intent.RememberedPorts = []uint16{3000}
+	if managerMatches(status, "dev", intent) {
 		t.Fatal("manager with stale ports was accepted")
+	}
+	intent.RememberedPorts = []uint16{3000, 5173}
+	intent.WorkingDirectoryRules = []string{"/srv/**"}
+	if managerMatches(status, "dev", intent) {
+		t.Fatal("manager with stale working-directory rules was accepted")
 	}
 }

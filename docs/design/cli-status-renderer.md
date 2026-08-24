@@ -18,9 +18,9 @@ Render human status as compact, borderless tables with explicit columns:
 Host  ubuntu    Discovery  active
 
 FORWARDS
- PORT  TARGET           APP   WORKING DIRECTORY
- 5173  127.0.0.1:5173   —     —
-12000  127.0.0.1:12000  node  …/console.cli.im
+ PORT  TARGET           KIND        APP   WORKING DIRECTORY
+ 5173  127.0.0.1:5173   remembered  —     —
+12000  127.0.0.1:12000  automatic   node  …/console.cli.im
 
 AVAILABLE
  PORT  APP           WORKING DIRECTORY
@@ -77,25 +77,29 @@ continues to serialize `core.Status` directly.
    the left.
 5. Render an absent app or working directory as `—`. Do not infer that missing
    metadata belongs to a system process.
-6. In a width-constrained TTY, preserve the port, target, and app columns and
+6. Identify every Forward as `remembered` or `automatic`; meaning must not
+   depend on whether matching listener metadata is currently available.
+7. In a width-constrained TTY, preserve the port, target, kind, and app columns and
    shorten only the working-directory column from the left with a single `…`.
    Preserve the final path segment. Do not truncate redirected output.
-7. Use a restrained semantic palette: bright green for active
+8. Use a restrained semantic palette: bright green for active
    discovery/forwards, bright yellow for connecting/starting, bright red for
    failures, bright cyan for available ports, bright magenta for app names,
    cyan for targets, and muted gray for table headers and working directories.
    Meaning must never depend on color alone.
-8. `status --watch` continues to append changed snapshots. It does not clear
+9. `status --watch` continues to append changed snapshots. It does not clear
    the terminal or become a full-screen TUI.
-9. `Connecting to HOST...` remains a stderr progress message and is outside
+10. `Connecting to HOST...` remains a stderr progress message and is outside
    the table.
-10. In an ANSI-enabled TTY, active forward targets use OSC 8 hyperlinks to
+11. In an ANSI-enabled TTY, active forward targets use OSC 8 hyperlinks to
     `http://127.0.0.1:PORT`. Starting and failed targets remain plain text, as
     does all piped or redirected output.
 
 ## Compatibility
 
-- `status --json` and `status --watch --json` are byte-for-byte unaffected.
+- Existing statuses without Working Directory Rules retain their JSON shape;
+  configured rules add `working_directory_rules`, and Automatic Forwards add
+  `automatic: true`.
 - Piped and redirected human output contains no ANSI escape sequences.
 - `NO_COLOR` disables ANSI styling.
 - macOS and Linux remain supported on AMD64 and ARM64.

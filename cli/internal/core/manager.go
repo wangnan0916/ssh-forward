@@ -2,9 +2,12 @@ package core
 
 import (
 	"context"
+	"path"
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/bmatcuk/doublestar/v4"
 )
 
 const defaultRetryDelay = time.Second
@@ -12,8 +15,13 @@ const defaultRetryDelay = time.Second
 type managerOptions struct {
 	host       HostAlias
 	backend    Backend
-	ports      []uint16
+	intent     ForwardingIntent
 	retryDelay time.Duration
+}
+
+type forwardWorker struct {
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 type manager struct {
@@ -22,20 +30,22 @@ type manager struct {
 	host    HostAlias
 	backend Backend
 
-	discovery DiscoveryStatus
-	listeners map[uint16]Listener
-	states    map[uint16]ForwardStatus
+	discovery             DiscoveryStatus
+	listeners             map[uint16]Listener
+	states                map[uint16]ForwardStatus
+	remembered            []uint16
+	workingDirectoryRules []string
+	forwardWorkers        map[uint16]*forwardWorker
 
 	retryDelay time.Duration
 	ctx        context.Context
 	cancel     context.CancelFunc
-	workers    sync.WaitGroup
+	tasks      sync.WaitGroup
 }
 
-// NewManager observes host and keeps every remembered port forwarded. OpenSSH
-// holds the local listener even when the remote process is temporarily absent.
-func NewManager(host HostAlias, backend Backend, ports []uint16) Manager {
-	return newManager(managerOptions{host: host, backend: backend, ports: ports})
+// NewManager observes host and reconciles remembered and automatic forwards.
+func NewManager(host HostAlias, backend Backend, intent ForwardingIntent) Manager {
+	return newManager(managerOptions{host: host, backend: backend, intent: intent})
 }
 
 func newManager(options managerOptions) *manager {
@@ -43,35 +53,48 @@ func newManager(options managerOptions) *manager {
 	if options.retryDelay <= 0 {
 		options.retryDelay = defaultRetryDelay
 	}
-	ports := normalizedManagerPorts(options.ports)
+	intent := normalizedForwardingIntent(options.intent)
 	m := &manager{
-		host:       options.host,
-		backend:    options.backend,
-		discovery:  DiscoveryStatus{State: DiscoveryConnecting},
-		listeners:  make(map[uint16]Listener),
-		states:     make(map[uint16]ForwardStatus),
-		retryDelay: options.retryDelay,
-		ctx:        ctx,
-		cancel:     cancel,
-	}
-	for _, port := range ports {
-		m.states[port] = ForwardStatus{Port: port, State: ForwardStarting}
+		host:                  options.host,
+		backend:               options.backend,
+		discovery:             DiscoveryStatus{State: DiscoveryConnecting},
+		listeners:             make(map[uint16]Listener),
+		states:                make(map[uint16]ForwardStatus),
+		remembered:            intent.RememberedPorts,
+		workingDirectoryRules: intent.WorkingDirectoryRules,
+		forwardWorkers:        make(map[uint16]*forwardWorker),
+		retryDelay:            options.retryDelay,
+		ctx:                   ctx,
+		cancel:                cancel,
 	}
 	if m.backend == nil || m.host == "" {
 		m.discovery = DiscoveryStatus{State: DiscoveryFailed, Diagnostic: "not_configured"}
-		for port := range m.states {
+		for _, port := range m.remembered {
 			m.states[port] = ForwardStatus{Port: port, State: ForwardFailed, Diagnostic: "not_configured"}
 		}
 		return m
 	}
 
-	m.workers.Add(1)
-	go m.observe()
-	for _, port := range ports {
-		m.workers.Add(1)
-		go m.runForward(port)
+	m.mu.Lock()
+	for _, port := range m.remembered {
+		m.startForwardLocked(port)
 	}
+	m.mu.Unlock()
+	m.tasks.Go(m.observe)
 	return m
+}
+
+func normalizedForwardingIntent(intent ForwardingIntent) ForwardingIntent {
+	intent.RememberedPorts = normalizedManagerPorts(intent.RememberedPorts)
+	patterns := make([]string, 0, len(intent.WorkingDirectoryRules))
+	for _, pattern := range intent.WorkingDirectoryRules {
+		if path.IsAbs(pattern) && doublestar.ValidatePattern(pattern) {
+			patterns = append(patterns, pattern)
+		}
+	}
+	slices.Sort(patterns)
+	intent.WorkingDirectoryRules = slices.Compact(patterns)
+	return intent
 }
 
 func normalizedManagerPorts(ports []uint16) []uint16 {
@@ -108,15 +131,15 @@ func (m *manager) Status(ctx context.Context) (Status, error) {
 		return int(left.Port) - int(right.Port)
 	})
 	return Status{
-		Host:      m.host,
-		Discovery: m.discovery,
-		Listeners: listeners,
-		Forwards:  forwards,
+		Host:                  m.host,
+		Discovery:             m.discovery,
+		Listeners:             listeners,
+		Forwards:              forwards,
+		WorkingDirectoryRules: slices.Clone(m.workingDirectoryRules),
 	}, nil
 }
 
 func (m *manager) observe() {
-	defer m.workers.Done()
 	for {
 		m.setDiscovery(DiscoveryConnecting, "")
 		err := m.backend.Observe(m.ctx, m.host, m.setListeners)
@@ -150,32 +173,115 @@ func (m *manager) setListeners(listeners []Listener) {
 			m.listeners[listener.Port] = listener
 		}
 	}
+	m.reconcileForwardsLocked()
 	m.discovery = DiscoveryStatus{State: DiscoveryActive}
 }
 
-func (m *manager) runForward(port uint16) {
-	defer m.workers.Done()
+func (m *manager) reconcileForwardsLocked() {
+	for port, worker := range m.forwardWorkers {
+		if m.wantsForward(port) {
+			continue
+		}
+		worker.cancel()
+		delete(m.states, port)
+	}
+	for _, port := range m.remembered {
+		m.ensureForwardLocked(port)
+	}
+	for port, listener := range m.listeners {
+		if matchesWorkingDirectory(m.workingDirectoryRules, listener.WorkingDirectory) {
+			m.ensureForwardLocked(port)
+		}
+	}
+}
+
+func (m *manager) wantsForward(port uint16) bool {
+	if m.isRemembered(port) {
+		return true
+	}
+	listener, found := m.listeners[port]
+	return found && matchesWorkingDirectory(m.workingDirectoryRules, listener.WorkingDirectory)
+}
+
+func matchesWorkingDirectory(patterns []string, directory string) bool {
+	if directory == "" || !path.IsAbs(directory) {
+		return false
+	}
+	for _, pattern := range patterns {
+		if matched, _ := doublestar.Match(pattern, directory); matched {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *manager) ensureForwardLocked(port uint16) {
+	if worker := m.forwardWorkers[port]; worker != nil {
+		if worker.ctx.Err() != nil {
+			m.states[port] = m.forwardStatus(port, ForwardStarting, "")
+		}
+		return
+	}
+	m.startForwardLocked(port)
+}
+
+func (m *manager) startForwardLocked(port uint16) {
+	ctx, cancel := context.WithCancel(m.ctx)
+	worker := &forwardWorker{ctx: ctx, cancel: cancel}
+	m.forwardWorkers[port] = worker
+	m.states[port] = m.forwardStatus(port, ForwardStarting, "")
+	m.tasks.Go(func() { m.runForward(port, worker) })
+}
+
+func (m *manager) runForward(port uint16, worker *forwardWorker) {
+	defer m.forwardStopped(port, worker)
 	for {
-		m.setForwardState(port, ForwardStarting, "")
-		err := m.backend.Forward(m.ctx, m.host, port, func() {
-			m.setForwardState(port, ForwardActive, "")
+		m.setForwardState(port, worker, ForwardStarting, "")
+		err := m.backend.Forward(worker.ctx, m.host, port, func() {
+			m.setForwardState(port, worker, ForwardActive, "")
 		})
-		if m.ctx.Err() != nil {
+		if worker.ctx.Err() != nil {
 			return
 		}
-		m.setForwardState(port, ForwardFailed, ErrorDiagnostic(err))
-		if !wait(m.ctx, m.retryDelay) {
+		m.setForwardState(port, worker, ForwardFailed, ErrorDiagnostic(err))
+		if !wait(worker.ctx, m.retryDelay) {
 			return
 		}
 	}
 }
 
-func (m *manager) setForwardState(port uint16, state ForwardState, diagnostic string) {
+func (m *manager) forwardStopped(port uint16, worker *forwardWorker) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if !m.closed {
-		m.states[port] = ForwardStatus{Port: port, State: state, Diagnostic: diagnostic}
+	if m.forwardWorkers[port] != worker {
+		return
 	}
+	delete(m.forwardWorkers, port)
+	if m.closed {
+		return
+	}
+	if m.wantsForward(port) {
+		m.startForwardLocked(port)
+	} else {
+		delete(m.states, port)
+	}
+}
+
+func (m *manager) setForwardState(port uint16, worker *forwardWorker, state ForwardState, diagnostic string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.closed && worker.ctx.Err() == nil && m.forwardWorkers[port] == worker {
+		m.states[port] = m.forwardStatus(port, state, diagnostic)
+	}
+}
+
+func (m *manager) forwardStatus(port uint16, state ForwardState, diagnostic string) ForwardStatus {
+	return ForwardStatus{Port: port, State: state, Diagnostic: diagnostic, Automatic: !m.isRemembered(port)}
+}
+
+func (m *manager) isRemembered(port uint16) bool {
+	_, found := slices.BinarySearch(m.remembered, port)
+	return found
 }
 
 func wait(ctx context.Context, delay time.Duration) bool {
@@ -198,7 +304,7 @@ func (m *manager) Close(ctx context.Context) error {
 	m.mu.Unlock()
 	done := make(chan struct{})
 	go func() {
-		m.workers.Wait()
+		m.tasks.Wait()
 		close(done)
 	}()
 	select {

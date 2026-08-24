@@ -43,10 +43,3 @@ func writeJSONC(path string, value any) error {
 	encoded = append(encoded, '\n')
 	return writeAtomic(path, encoded)
 }
-
-func checkSchemaVersion(label string, got, want int) error {
-	if got != want {
-		return fmt.Errorf("%s: unsupported schema_version %d (want %d)", label, got, want)
-	}
-	return nil
-}

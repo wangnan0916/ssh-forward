@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
@@ -66,7 +67,7 @@ func Connect(ctx context.Context, opts Options) (core.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	ports, err := Ports(opts.ConfigPath, host)
+	intent, err := HostIntent(opts.ConfigPath, host)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +76,7 @@ func Connect(ctx context.Context, opts Options) (core.Manager, error) {
 	replace := dialErr != nil && socketLive(opts.Layout.Socket)
 	if dialErr == nil {
 		status, statusErr := client.Status(ctx)
-		if statusErr == nil && managerMatches(status, host, ports) {
+		if statusErr == nil && managerMatches(status, host, intent) {
 			return client, nil
 		}
 		_ = client.Close(context.Background())
@@ -107,16 +108,17 @@ func Connect(ctx context.Context, opts Options) (core.Manager, error) {
 	return client, nil
 }
 
-func managerMatches(status core.Status, host string, ports []uint16) bool {
-	if status.Host != core.HostAlias(host) || len(status.Forwards) != len(ports) {
+func managerMatches(status core.Status, host string, intent core.ForwardingIntent) bool {
+	if status.Host != core.HostAlias(host) || !slices.Equal(status.WorkingDirectoryRules, intent.WorkingDirectoryRules) {
 		return false
 	}
-	for index, forward := range status.Forwards {
-		if forward.Port != ports[index] {
-			return false
+	rememberedPorts := make([]uint16, 0, len(status.Forwards))
+	for _, forward := range status.Forwards {
+		if !forward.Automatic {
+			rememberedPorts = append(rememberedPorts, forward.Port)
 		}
 	}
-	return true
+	return slices.Equal(rememberedPorts, intent.RememberedPorts)
 }
 
 // Serve runs the Manager in the current process. Installed service definitions

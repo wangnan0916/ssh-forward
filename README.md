@@ -1,8 +1,8 @@
 # ssh-forward — automatic SSH port forwarding for remote development
 
 Discover services reachable through IPv4 loopback on a Linux SSH host and keep
-selected ports available on the same port at `localhost` through system
-OpenSSH.
+selected ports—or ports whose process working directory matches a configured
+glob—available on the same port at `localhost` through system OpenSSH.
 
 [![CI](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml/badge.svg)](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -17,9 +17,10 @@ Remote development servers often start HTTP applications on unpredictable or
 short-lived ports. A manual `ssh -L` works, but you have to discover the port,
 start the tunnel, and recreate it after the SSH connection changes.
 
-`ssh-forward` shows remote listeners reachable at `127.0.0.1`, remembers only
-the ports you choose, and keeps their local SSH port forwards running in the
-background. It does not install a remote agent or store SSH credentials.
+`ssh-forward` shows remote listeners reachable at `127.0.0.1`, remembers the
+ports and working-directory globs you choose, and keeps the required local SSH
+port forwards running in the background. It does not install a remote agent or
+store SSH credentials.
 
 ## Lightweight
 
@@ -86,8 +87,10 @@ Then choose the host and remember the ports you want locally:
 ssh-forward default my-dev
 ssh-forward status              # see remote loopback listeners
 ssh-forward add 5173            # keep remote 5173 on localhost:5173
+ssh-forward add --pwd '/home/me/Workspace/**'  # forward matching live services
 ssh-forward status --watch      # follow changes
 ssh-forward remove 5173
+ssh-forward remove --pwd '/home/me/Workspace/**'
 ```
 
 The first command that needs a connection automatically installs and starts a
@@ -98,7 +101,9 @@ next command automatically replaces an older Manager.
 
 ```text
 ssh-forward add PORT
+ssh-forward add --pwd GLOB
 ssh-forward remove PORT
+ssh-forward remove --pwd GLOB
 ssh-forward status [--json] [--watch]
 ssh-forward host [--json]
 ssh-forward default [ALIAS]
@@ -123,7 +128,11 @@ Global options are `--host ALIAS` and `--ssh-config PATH`. Set
    `ssh -N -L 127.0.0.1:PORT:127.0.0.1:PORT HOST` process. The local port stays
    available while the remote process restarts; individual connections fail
    until the remote listener returns.
-4. HTTP over a user-only Unix socket lets later CLI calls read Manager status.
+4. Absolute working-directory globs create Automatic Forwards for matching
+   Remote Listeners. `*` matches within one path segment and `**` crosses path
+   segments. When a listener disappears or stops matching, its Automatic
+   Forward stops. Quote globs so the local shell does not expand them.
+5. HTTP over a user-only Unix socket lets later CLI calls read Manager status.
    `status --watch` polls that status.
 
 The OS user service manager (launchd on macOS, the detected init system on
@@ -139,17 +148,22 @@ All persistent intent is in one `config.jsonc`:
 
 ```jsonc
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "default_host": "my-dev",
   "forwards": {
     "my-dev": [5173, 8080]
+  },
+  "working_directory_rules": {
+    "my-dev": ["/home/me/Workspace/**"]
   }
 }
 ```
 
 Commands compare this file with the running Manager and restart it when the
-selected host, remembered ports, or binary version changes. Runtime
-observations and process IDs are not persisted.
+selected host, remembered ports, working-directory rules, or binary version
+changes. Schema 1 files remain readable and upgrade to schema 2 on the next
+write. Runtime observations, automatically selected ports, and process IDs are
+not persisted.
 
 Default directories:
 
@@ -183,6 +197,8 @@ selected Host and ports.
 - TCP listeners reachable through remote `127.0.0.1`; IPv6-only listeners are
   excluded
 - same local and remote port only
+- Automatic Forwards require best-effort process working-directory metadata;
+  listeners without that metadata cannot match a rule
 
 ## Development
 

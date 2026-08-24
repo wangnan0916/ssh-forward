@@ -3,7 +3,8 @@
 The product contract is:
 
 > Select one SSH alias, see TCP listeners reachable through its IPv4 loopback,
-> and remember a port so it stays mapped to the same port on localhost.
+> and keep remembered ports plus live listeners matching configured
+> working-directory globs mapped to the same port on localhost.
 
 Anything that does not serve this sentence is outside the current design.
 
@@ -11,12 +12,12 @@ Anything that does not serve this sentence is outside the current design.
 
 ```text
 CLI
- ├─ config.jsonc (default host and remembered ports)
+ ├─ config.jsonc (default host, remembered ports, and directory rules)
  └─ GET /v1/status over a user-only Unix socket
                          │
                       Manager
                ┌─────────┴─────────┐
-        observe listeners      one worker per remembered port
+        observe listeners      one worker per desired port
                │                    │
       ssh HOST sh -s       ssh -N -L local:remote
 ```
@@ -27,10 +28,10 @@ CLI
   readiness checks, and bounded SSH error classification.
 - `internal/app` owns the single config file, SSH alias selection, and the thin
   adapters that compose HTTP/Unix Socket and the user's OS service manager.
-  A Manager loads its immutable port set at startup; `Connect` restarts it when
-  the selected host, configured ports, protocol, or binary version differs
-  from the current process. `Uninstall` removes only the background service;
-  persistent intent remains user-owned configuration.
+  A Manager loads immutable forwarding intent at startup; `Connect` restarts it
+  when the selected host, remembered ports, working-directory rules, protocol,
+  or binary version differs from the current process. `Uninstall` removes only
+  the background service; persistent intent remains user-owned configuration.
 - `internal/statusview` owns human status grouping, terminal-width fitting,
   missing-value presentation, and optional ANSI styling and hyperlinks. JSON
   bypasses it.
@@ -48,15 +49,20 @@ renders human status tables, while `x/term` detects stdout capabilities.
 Persistent state is only:
 
 - one optional default SSH alias;
-- a sorted port list per alias.
+- a sorted remembered-port list per alias;
+- a sorted absolute working-directory glob list per alias.
 
 Volatile state is rebuilt after restart:
 
 - current remote listeners;
 - best-effort listener executable names and working directories;
+- ports currently selected by working-directory rules;
 - discovery health;
 - each forward's starting, active, or failed state.
 
-The manager retries discovery and failed forwards. A port worker exists for
-every Remembered Port; OpenSSH keeps the local listener useful across remote
-process restarts. Invalid configuration prevents a new Manager from starting.
+The manager retries discovery and failed forwards. A port worker always exists
+for every Remembered Port. It creates a worker for a listener whose observed
+working directory matches a configured glob, and cancels that Automatic
+Forward when a later complete listener snapshot no longer matches. Remembered
+intent wins when both sources select the same port, so only one worker exists.
+Invalid configuration prevents a new Manager from starting.

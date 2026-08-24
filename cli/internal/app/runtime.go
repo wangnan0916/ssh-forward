@@ -10,7 +10,7 @@ import (
 )
 
 func inProcess(host, sshConfig, configPath string) (core.Manager, error) {
-	ports, err := Ports(configPath, host)
+	intent, err := HostIntent(configPath, host)
 	if err != nil {
 		return nil, err
 	}
@@ -18,7 +18,7 @@ func inProcess(host, sshConfig, configPath string) (core.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	return core.NewManager(core.HostAlias(host), adapter, ports), nil
+	return core.NewManager(core.HostAlias(host), adapter, intent), nil
 }
 
 func NewOpenSSHAdapter(sshConfig string) (*openssh.Adapter, error) {

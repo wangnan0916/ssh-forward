@@ -137,7 +137,7 @@ func serviceConfig(opts Options, host string, wait func()) *service.Config {
 	return &service.Config{
 		Name:             managerServiceName,
 		DisplayName:      "ssh-forward manager",
-		Description:      "Keeps remembered Development Host ports available on localhost.",
+		Description:      "Keeps selected Development Host ports available on localhost.",
 		Executable:       executable,
 		Arguments:        arguments,
 		WorkingDirectory: opts.Layout.Dir,

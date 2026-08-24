@@ -4,6 +4,7 @@ package sshhost
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -18,6 +19,97 @@ import (
 )
 
 func TestDiscoversReachableListenersAndForwardsRemotePort(t *testing.T) {
+	environment := loadTestEnvironment(t)
+	port := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_V4", 38080)
+	dualStackPort := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_DUAL_STACK", 38082)
+	ipv6OnlyPort := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_V6", 38081)
+	manager := core.NewManager(core.HostAlias(environment.host), environment.adapter, core.ForwardingIntent{RememberedPorts: []uint16{port}})
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	status := waitForStatus(t, manager, func(status core.Status) bool {
+		listeners := listenersByPort(status.Listeners)
+		return len(status.Forwards) == 1 && status.Forwards[0].State == core.ForwardActive &&
+			isSocat(listeners[port]) && listeners[port].WorkingDirectory != "" &&
+			isSocat(listeners[dualStackPort])
+	})
+	listeners := listenersByPort(status.Listeners)
+	if !isSocat(listeners[port]) || listeners[port].WorkingDirectory == "" {
+		t.Fatalf("IPv4 listener metadata = %#v", listeners[port])
+	}
+	if !isSocat(listeners[dualStackPort]) {
+		t.Fatalf("dual-stack listener was not discovered: %#v", listeners[dualStackPort])
+	}
+	if _, found := listeners[ipv6OnlyPort]; found {
+		t.Fatalf("IPv6-only listener %d should not be reachable at 127.0.0.1", ipv6OnlyPort)
+	}
+	if _, found := listeners[22]; found {
+		t.Fatal("the root-owned wildcard SSH listener should not be discovered")
+	}
+
+	wantForwardedEcho(t, port, "hello")
+}
+
+func TestAutomaticallyForwardsMatchingWorkingDirectoryWhileListenerExists(t *testing.T) {
+	environment := loadTestEnvironment(t)
+	user := os.Getenv("SSH_FORWARD_TEST_USER")
+	if user == "" {
+		user = "testdev"
+	}
+	port := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_AUTO", 38084)
+	intent := core.ForwardingIntent{WorkingDirectoryRules: []string{"/home/" + user + "/Workspace/**"}}
+	manager := core.NewManager(core.HostAlias(environment.host), environment.adapter, intent)
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	startScript := fmt.Sprintf(`set -eu
+fixture_dir=$HOME/Workspace/project
+mkdir -p "$fixture_dir"
+cd "$fixture_dir"
+nohup /usr/bin/socat "TCP4-LISTEN:%d,bind=127.0.0.1,reuseaddr,fork" EXEC:/bin/cat >/tmp/ssh-forward-auto.log 2>&1 </dev/null &
+printf '%%s\n' "$!"
+`, port)
+	output, err := runRemoteScript(environment, startScript)
+	if err != nil {
+		t.Fatalf("start remote listener: %v: %s", err, output)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(output))
+	if err != nil || pid <= 0 {
+		t.Fatalf("remote listener pid = %q", output)
+	}
+	stopScript := fmt.Sprintf("kill %d 2>/dev/null || true\n", pid)
+	t.Cleanup(func() { _, _ = runRemoteScript(environment, stopScript) })
+
+	waitForStatus(t, manager, func(status core.Status) bool {
+		listeners := listenersByPort(status.Listeners)
+		return len(status.Forwards) == 1 && status.Forwards[0].Port == port &&
+			status.Forwards[0].State == core.ForwardActive && status.Forwards[0].Automatic &&
+			listeners[port].WorkingDirectory == "/home/"+user+"/Workspace/project"
+	})
+	wantForwardedEcho(t, port, "automatic")
+
+	if output, err := runRemoteScript(environment, stopScript); err != nil {
+		t.Fatalf("stop remote listener: %v: %s", err, output)
+	}
+	waitForStatus(t, manager, func(status core.Status) bool {
+		if _, listening := listenersByPort(status.Listeners)[port]; !listening && len(status.Forwards) == 0 {
+			connection, dialErr := net.DialTimeout("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(port))), 50*time.Millisecond)
+			if dialErr != nil {
+				return true
+			}
+			_ = connection.Close()
+		}
+		return false
+	})
+}
+
+type testEnvironment struct {
+	ssh     string
+	config  string
+	host    string
+	adapter *openssh.Adapter
+}
+
+func loadTestEnvironment(t *testing.T) testEnvironment {
+	t.Helper()
 	config := os.Getenv("SSH_FORWARD_TEST_SSH_CONFIG")
 	if config == "" {
 		t.Fatal("SSH_FORWARD_TEST_SSH_CONFIG is not set; run scripts/test-integration")
@@ -34,51 +126,27 @@ func TestDiscoversReachableListenersAndForwardsRemotePort(t *testing.T) {
 	if host == "" {
 		host = "ssh-forward-test-host"
 	}
-	port := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_V4", 38080)
-	dualStackPort := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_DUAL_STACK", 38082)
-	ipv6OnlyPort := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_V6", 38081)
-	manager := core.NewManager(core.HostAlias(host), adapter, []uint16{port})
-	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	return testEnvironment{ssh: ssh, config: config, host: host, adapter: adapter}
+}
 
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
-		status, err := manager.Status(context.Background())
-		if err != nil {
-			t.Fatal(err)
-		}
-		listeners := listenersByPort(status.Listeners)
-		if len(status.Forwards) == 1 && status.Forwards[0].State == core.ForwardActive &&
-			isSocat(listeners[port]) && listeners[port].WorkingDirectory != "" &&
-			isSocat(listeners[dualStackPort]) {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	status, err := manager.Status(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	listeners := listenersByPort(status.Listeners)
-	if !isSocat(listeners[port]) || listeners[port].WorkingDirectory == "" {
-		t.Fatalf("IPv4 listener metadata = %#v", listeners[port])
-	}
-	if !isSocat(listeners[dualStackPort]) {
-		t.Fatalf("dual-stack listener was not discovered: %#v", listeners[dualStackPort])
-	}
-	if _, found := listeners[ipv6OnlyPort]; found {
-		t.Fatalf("IPv6-only listener %d should not be reachable at 127.0.0.1", ipv6OnlyPort)
-	}
-	if _, found := listeners[22]; found {
-		t.Fatal("the root-owned wildcard SSH listener should not be discovered")
-	}
+func runRemoteScript(environment testEnvironment, script string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, environment.ssh, "-F", environment.config, environment.host, "sh", "-s")
+	command.Stdin = strings.NewReader(script)
+	output, err := command.CombinedOutput()
+	return string(output), err
+}
 
+func wantForwardedEcho(t *testing.T, port uint16, message string) {
+	t.Helper()
 	connection, err := net.DialTimeout("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(port))), time.Second)
 	if err != nil {
 		t.Fatalf("dial forwarded port: %v", err)
 	}
 	tcp := connection.(*net.TCPConn)
 	defer tcp.Close()
-	if _, err := tcp.Write([]byte("hello")); err != nil {
+	if _, err := tcp.Write([]byte(message)); err != nil {
 		t.Fatal(err)
 	}
 	if err := tcp.CloseWrite(); err != nil {
@@ -88,9 +156,28 @@ func TestDiscoversReachableListenersAndForwardsRemotePort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(reply) != "hello" {
-		t.Fatalf("reply = %q", reply)
+	if string(reply) != message {
+		t.Fatalf("reply = %q, want %q", reply, message)
 	}
+}
+
+func waitForStatus(t *testing.T, manager core.Manager, condition func(core.Status) bool) core.Status {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	var status core.Status
+	for time.Now().Before(deadline) {
+		var err error
+		status, err = manager.Status(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if condition(status) {
+			return status
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("manager status did not converge: %#v", status)
+	return core.Status{}
 }
 
 func isSocat(listener core.Listener) bool {

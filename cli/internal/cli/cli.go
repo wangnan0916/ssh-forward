@@ -157,7 +157,9 @@ const primerText = `ssh-forward — expose Development Host ports on localhost
 Daily
   status          what is forwarded right now
   add PORT        remember a remote port
+  add --pwd GLOB  auto-forward matching working directories
   remove PORT     forget a remembered port
+  remove --pwd GLOB
 
 Host
   host            aliases from ~/.ssh/config
