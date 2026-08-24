@@ -5,14 +5,15 @@ Keep changes inside the one-sentence contract in [ARCHITECTURE.md](ARCHITECTURE.
 ## Checks
 
 ```bash
-cd cli
-go test ./...
-go test -race ./...
-go vet ./...
-test -z "$(gofmt -l .)"
-go mod tidy -diff
-go test -run '^$' -bench . -benchmem ./internal/core ./internal/openssh
+./scripts/check
 ```
+
+The script checks shell syntax, then runs unit and race tests, vet, formatting
+and module-tidiness checks, plus the Manager and OpenSSH scanner benchmarks.
+
+Preview the latest CLI against the installed Manager with
+`./scripts/dev status`. Use `./scripts/dev --full status` when the Manager also
+changed; full mode restores the installed Manager before it exits.
 
 The real OpenSSH path uses a disposable Linux container and never connects to
 a developer's configured hosts:

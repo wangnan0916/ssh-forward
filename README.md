@@ -186,11 +186,28 @@ selected Host and ports.
 
 ## Development
 
+For CLI-only changes, build and run the latest code against the installed
+Manager without replacing the background service:
+
 ```bash
-cd cli
-go test ./...
-go test -race ./...
-go vet ./...
+./scripts/dev status
+```
+
+Use full mode when Manager behavior also changed. It temporarily runs the
+development Manager and restores the installed one when the command exits:
+
+```bash
+./scripts/dev --full status
+```
+
+Both modes build an ignored binary at `.tmp/dev/ssh-forward`. By default the
+baseline binary is the `ssh-forward` found on `PATH`; set
+`SSH_FORWARD_DEV_BASELINE` to select another installed binary.
+
+Run the complete local check suite with:
+
+```bash
+./scripts/check
 ```
 
 The disposable Linux/OpenSSH integration test requires Docker:

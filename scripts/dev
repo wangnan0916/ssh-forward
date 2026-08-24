@@ -1,0 +1,85 @@
+#!/bin/sh
+
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+build_dir="$root/.tmp/dev"
+dev_bin="$build_dir/ssh-forward"
+full_stack=0
+
+if [ "${1:-}" = "--full" ]; then
+    full_stack=1
+    shift
+fi
+if [ "$#" -eq 0 ]; then
+    set -- status
+fi
+
+baseline_bin=${SSH_FORWARD_DEV_BASELINE:-}
+if [ -z "$baseline_bin" ]; then
+    baseline_bin=$(command -v ssh-forward || true)
+fi
+if [ -z "$baseline_bin" ] || [ ! -x "$baseline_bin" ]; then
+    printf '%s\n' 'scripts/dev requires an installed ssh-forward binary.' >&2
+    printf '%s\n' 'Install it with Homebrew or set SSH_FORWARD_DEV_BASELINE to its path.' >&2
+    exit 1
+fi
+baseline_dir=$(CDPATH= cd -- "$(dirname -- "$baseline_bin")" && pwd)
+baseline_bin="$baseline_dir/$(basename -- "$baseline_bin")"
+if [ "$baseline_bin" = "$dev_bin" ]; then
+    printf '%s\n' 'SSH_FORWARD_DEV_BASELINE must not point to the development binary.' >&2
+    exit 1
+fi
+
+version_line=$("$baseline_bin" --version)
+case "$version_line" in
+    'ssh-forward '*)
+        baseline_version=${version_line#ssh-forward }
+        ;;
+    *)
+        printf 'could not read a version from %s: %s\n' "$baseline_bin" "$version_line" >&2
+        exit 1
+        ;;
+esac
+case "$baseline_version" in
+    *[!A-Za-z0-9._+-]*)
+        printf 'unsupported baseline version: %s\n' "$baseline_version" >&2
+        exit 1
+        ;;
+esac
+
+# Start or repair the installed Manager before the development client runs.
+# Non-interactive input avoids waiting for remote discovery to settle.
+if ! "$baseline_bin" status --json </dev/null >/dev/null; then
+    printf 'could not prepare the installed Manager with %s\n' "$baseline_bin" >&2
+    exit 1
+fi
+
+mkdir -p "$build_dir"
+cd "$root/cli"
+if [ "$full_stack" -eq 1 ]; then
+    printf '%s\n' 'Building the development CLI and Manager...'
+    go build -o "$dev_bin" ./cmd/ssh-forward
+else
+    printf 'Building the development CLI against Manager %s...\n' "$baseline_version"
+    go build -buildvcs=false -ldflags "-X main.buildVersion=$baseline_version" -o "$dev_bin" ./cmd/ssh-forward
+fi
+
+restore_manager() {
+    exit_status=$?
+    trap - 0 HUP INT TERM
+    if ! "$baseline_bin" status --json </dev/null >/dev/null 2>&1; then
+        printf 'warning: could not restore the installed Manager with %s\n' "$baseline_bin" >&2
+        if [ "$exit_status" -eq 0 ]; then
+            exit_status=1
+        fi
+    fi
+    exit "$exit_status"
+}
+
+trap restore_manager 0
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+"$dev_bin" "$@"

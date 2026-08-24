@@ -1,0 +1,36 @@
+#!/bin/sh
+
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+
+run() {
+    printf '\n==>'
+    printf ' %s' "$@"
+    printf '\n'
+    "$@"
+}
+
+run sh -n \
+    "$root/scripts/check" \
+    "$root/scripts/dev" \
+    "$root/scripts/test-integration" \
+    "$root/scripts/internal/test-host-up" \
+    "$root/scripts/internal/test-host-down"
+
+cd "$root/cli"
+run go test ./...
+run go test -race ./...
+run go vet ./...
+
+printf '\n==> gofmt -l .\n'
+unformatted_files=$(gofmt -l .)
+if [ -n "$unformatted_files" ]; then
+    printf '%s\n' "$unformatted_files"
+    exit 1
+fi
+
+run go mod tidy -diff
+run go test -run '^$' -bench . -benchmem ./internal/core ./internal/openssh
+
+printf '\nAll checks passed.\n'
