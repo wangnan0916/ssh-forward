@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/wangnan0916/ssh-forward/compare/v0.5.0...v0.6.0) (2026-08-25)
+
+
+### Features
+
+* publish local services over SSH ([#13](https://github.com/wangnan0916/ssh-forward/issues/13)) ([d690511](https://github.com/wangnan0916/ssh-forward/commit/d690511faa089ea48ea758030d9c0f2d2f62094d))
+
 ## [0.5.0](https://github.com/wangnan0916/ssh-forward/compare/v0.4.0...v0.5.0) (2026-08-25)
 
 
