@@ -92,10 +92,7 @@ func New(options Options) (*Adapter, error) {
 
 func (a *Adapter) Observe(ctx context.Context, host core.HostAlias, emit func([]core.Listener)) error {
 	alias := string(host)
-	if err := a.validateAlias(ctx, alias); err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
+	if !validAlias(alias) {
 		return backendError("invalid_alias")
 	}
 	master, err := a.ensureMaster(ctx, host)

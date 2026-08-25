@@ -65,6 +65,60 @@ while :; do sleep 3600; done
 	}
 }
 
+func TestObserveReusesMasterWithoutAliasValidation(t *testing.T) {
+	adapter, logPath := newLoggingAdapter(t, "")
+	adapter.masters["dev"] = &sshMaster{done: make(chan struct{})}
+
+	err := adapter.Observe(context.Background(), "dev", func([]core.Listener) {})
+	if core.ErrorDiagnostic(err) != "transport_unavailable" {
+		t.Fatalf("Observe error = %v", err)
+	}
+	commands, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(commands)), "\n")
+	if len(lines) != 1 || strings.Contains(lines[0], "-G") {
+		t.Fatalf("commands = %q, want one discovery command", lines)
+	}
+}
+
+func TestEnsureMasterValidatesAliasBeforeStarting(t *testing.T) {
+	adapter, logPath := newLoggingAdapter(t, "exit 1\n")
+
+	_, err := adapter.ensureMaster(context.Background(), "dev")
+	if core.ErrorDiagnostic(err) != "invalid_alias" {
+		t.Fatalf("ensureMaster error = %v", err)
+	}
+	commands, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command := strings.TrimSpace(string(commands)); command != "-G dev" {
+		t.Fatalf("command = %q, want %q", command, "-G dev")
+	}
+}
+
+func newLoggingAdapter(t *testing.T, scriptSuffix string) (*Adapter, string) {
+	t.Helper()
+	directory := t.TempDir()
+	logPath := filepath.Join(directory, "commands")
+	executable := filepath.Join(directory, "ssh")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$SSH_FORWARD_TEST_LOG"
+` + scriptSuffix
+	if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return &Adapter{
+		executable:       executable,
+		controlDirectory: directory,
+		waitDelay:        time.Second,
+		environment:      append(approvedEnvironment(), "SSH_FORWARD_TEST_LOG="+logPath),
+		masters:          make(map[core.HostAlias]*sshMaster),
+	}, logPath
+}
+
 func waitForFile(t *testing.T, path string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

@@ -38,6 +38,12 @@ func (a *Adapter) ensureMaster(ctx context.Context, host core.HostAlias) (*sshMa
 			return master, nil
 		}
 	}
+	if err := a.validateAlias(ctx, string(host)); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, backendError("invalid_alias")
+	}
 
 	// A previous Manager may have died before closing its product-owned master.
 	// Ask that stale master to exit before creating the replacement.
