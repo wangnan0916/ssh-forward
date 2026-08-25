@@ -2,9 +2,10 @@
 
 Discover services reachable through IPv4 loopback on a Linux SSH host and keep
 selected ports—or ports whose process working directory matches a configured
-glob—available at `localhost` through system OpenSSH. Remembered forwards may
-use a different preferred local port and choose whether to fall back when it
-is busy. Automatic forwards always allow temporary fallback.
+glob—available at `localhost` through system OpenSSH. Explicit local services
+can also be published on the Development Host's loopback. Remembered forwards
+may use a different preferred local port and choose whether to fall back when
+it is busy. Automatic forwards always allow temporary fallback.
 
 [![CI](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml/badge.svg)](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -21,8 +22,21 @@ start the tunnel, and recreate it after the SSH connection changes.
 
 `ssh-forward` shows remote listeners reachable at `127.0.0.1`, remembers the
 ports and working-directory globs you choose, and keeps the required local SSH
-port forwards running in the background. It does not install a remote agent or
-store SSH credentials.
+port forwards running in the background. It can also publish an explicit local
+port back to remote `127.0.0.1` without requiring an inbound connection to the
+local machine. It does not install a remote agent or store SSH credentials.
+
+## Compared with `ssh -L`, autossh, and editor port forwarding
+
+Manual `ssh -L` is a good fit for one known, stable port mapping. autossh can
+monitor and restart a predefined SSH tunnel. Editor-integrated port forwarding
+is convenient when a remote development session owns the workflow.
+
+`ssh-forward` is for development services on the same Linux SSH host that need
+to remain available at localhost across terminals and editors. It automatically
+discovers loopback dev-server ports, keeps remembered or working-directory
+matched forwards active in a user background process, and delegates transport,
+authentication, jump hosts, and connection options to system OpenSSH.
 
 ## Automatically forward project services
 
@@ -38,6 +52,32 @@ the same port at `localhost`, or the next available port if that port is busy.
 When the listener stops, the automatic SSH forward disappears. This works well
 for development servers, preview tools, notebooks, and OAuth callback servers
 that use temporary ports.
+
+## Publish a local service to the Development Host
+
+Make a service on the local machine available only through remote loopback:
+
+```bash
+ssh-forward publish 9222                 # local 9222 -> remote 127.0.0.1:9222
+ssh-forward publish 9222 --remote 19222  # local 9222 -> remote 127.0.0.1:19222
+ssh-forward status --watch
+ssh-forward unpublish 9222
+```
+
+The remote port is stable and strict: if it is occupied or the SSH server
+rejects remote forwarding, status reports a failure and the Manager retries.
+Both endpoints are fixed to IPv4 loopback; this command cannot request a
+public remote bind.
+
+SSH forwarding adds no application authentication; the Local Service's own
+authentication and trust model still apply.
+
+Chrome DevTools MCP is one example: publish Chrome's local debugging port, then
+configure the MCP process on the Development Host with
+`--browser-url=http://127.0.0.1:9222`. DevTools access can control the browser
+profile, so use a dedicated profile without sensitive browsing, publish it only
+to a trusted single-user Development Host, and unpublish the port when it is no
+longer needed.
 
 ## Lightweight
 
@@ -108,9 +148,11 @@ ssh-forward status              # see remote loopback listeners
 ssh-forward add 5173            # prefer localhost:5173; temporarily fall back if busy
 ssh-forward add 8443 --local 18443  # require remote 8443 on localhost:18443
 ssh-forward add --pwd '/home/me/Workspace/**'  # forward matching live services
+ssh-forward publish 9222       # expose local 9222 at remote 127.0.0.1:9222
 ssh-forward status --watch      # follow changes
 ssh-forward remove 5173
 ssh-forward remove --pwd '/home/me/Workspace/**'
+ssh-forward unpublish 9222
 ```
 
 The first command that needs a connection automatically installs and starts a
@@ -124,6 +166,8 @@ ssh-forward add PORT [--local PORT]
 ssh-forward add --pwd GLOB
 ssh-forward remove PORT
 ssh-forward remove --pwd GLOB
+ssh-forward publish LOCAL [--remote REMOTE]
+ssh-forward unpublish LOCAL
 ssh-forward status [--json] [--watch]
 ssh-forward doctor [--json]
 ssh-forward host [--json]
@@ -146,10 +190,11 @@ Global options are `--host ALIAS` and `--ssh-config PATH`. Set
    working directories are collected on a best-effort basis when `ss` and the
    relevant procfs links are available. No remote agent is installed.
 3. The Manager owns one product-private OpenSSH master connection and uses
-   OpenSSH control commands to add and cancel each desired remote-to-local
-   forward. The local port stays available while the remote process restarts;
-   individual connections fail until the remote listener returns. Stopping one
-   Forward does not disturb the shared connection or other ports.
+   OpenSSH control commands to add and cancel each desired remote-to-local or
+   local-to-remote forward. The local port stays available while the remote
+   process restarts; individual connections fail until the remote listener
+   returns. Stopping one Forward does not disturb the shared connection or
+   other ports.
 4. Absolute working-directory globs create Automatic Forwards for matching
    Remote Listeners. `*` matches within one path segment and `**` crosses path
    segments. When a listener disappears or stops matching, its Automatic
@@ -158,7 +203,14 @@ Global options are `--host ALIAS` and `--ssh-config PATH`. Set
    to 20 higher local ports when the preferred port is busy. The actual port
    appears in status but is temporary and is never written to configuration.
    Explicit `--local` mappings are strict by default.
-6. HTTP over a user-only Unix socket lets later CLI calls read Manager status.
+6. Published Forwards use strict OpenSSH remote forwarding from one explicit
+   local loopback service to one explicit Development Host loopback port. They
+   persist across Manager and SSH reconnects and do not participate in local
+   listener discovery. Before reporting one active, the Adapter verifies its
+   actual remote procfs socket and cancels wildcard binds forced by
+   `GatewayPorts yes`. If cancellation of an installed forward fails, it closes
+   the product-owned SSH master to guarantee that the listener is removed.
+7. HTTP over a user-only Unix socket lets later CLI calls read Manager status.
    `status --watch` polls that status.
 
 The OS user service manager (launchd on macOS, the detected init system on
@@ -181,12 +233,17 @@ All persistent intent is in one `config.jsonc`:
 
 ```jsonc
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "default_host": "my-dev",
   "remembered_forwards": {
     "my-dev": [
       {"remote_port": 5173, "local_port": 5173, "allow_fallback": true},
       {"remote_port": 8443, "local_port": 18443}
+    ]
+  },
+  "published_forwards": {
+    "my-dev": [
+      {"local_port": 9222, "remote_port": 9222}
     ]
   },
   "working_directory_rules": {
@@ -197,16 +254,18 @@ All persistent intent is in one `config.jsonc`:
 
 `allow_fallback` is authoritative whether or not the remote and local ports
 differ. `add REMOTE` enables it, while `add REMOTE --local LOCAL` leaves it
-disabled. A manually edited schema-4 entry may explicitly choose either
+disabled. A manually edited schema-5 entry may explicitly choose either
 policy.
 
-Commands send remembered-forward and working-directory-rule changes to the
-running Manager, which reconciles only the affected forwards. Unchanged
-forwards stay connected. A selected-host, protocol, or binary-version change
-still replaces the Manager. Schema 1–3 files remain readable; during migration,
-legacy same-port mappings gain temporary fallback and legacy custom mappings
-remain strict. The file upgrades to schema 4 on the next write. Runtime
-observations, temporary actual ports, and process IDs are not persisted.
+Commands send remembered-forward, published-forward, and
+working-directory-rule changes to the running Manager, which reconciles only
+the affected forwards. Unchanged forwards stay connected. A selected-host,
+protocol, or binary-version change still replaces the Manager. Schema 1–4
+files remain readable; during migration, fields introduced after the declared
+schema are ignored, legacy same-port mappings gain temporary fallback, and
+legacy custom mappings remain strict. The file upgrades to schema 5 on the next
+write. Runtime observations, temporary actual ports, and process IDs are not
+persisted.
 
 Default directories:
 
@@ -239,6 +298,10 @@ selected Host and ports.
 - one active SSH host per Manager
 - TCP listeners reachable through remote `127.0.0.1`; IPv6-only listeners are
   excluded
+- Published services use TCP and IPv4 loopback at both ends; remote wildcard
+  binding, UDP, Unix sockets, and dynamic remote ports are not supported.
+  Development Host sshd must use `GatewayPorts no` or `clientspecified`;
+  wildcard binds forced by `GatewayPorts yes` are rejected and canceled
 - Automatic Forwards require best-effort process working-directory metadata;
   listeners without that metadata cannot match a rule
 

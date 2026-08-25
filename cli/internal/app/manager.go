@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"slices"
 	"time"
 
@@ -39,11 +38,12 @@ func (o Options) WithDefaults() Options {
 	if o.Layout.Dir == "" {
 		o.Layout = DefaultLayout()
 	} else {
+		filled := layoutForDir(o.Layout.Dir)
 		if o.Layout.Config == "" {
-			o.Layout.Config = filepath.Join(o.Layout.Dir, "config.jsonc")
+			o.Layout.Config = filled.Config
 		}
 		if o.Layout.Socket == "" {
-			o.Layout.Socket = filepath.Join(o.Layout.Dir, "manager.sock")
+			o.Layout.Socket = filled.Socket
 		}
 	}
 	if o.ConfigPath == "" {
@@ -123,8 +123,14 @@ func managerMatches(status core.Status, host string, intent core.ForwardingInten
 		return false
 	}
 	rememberedForwards := make([]core.RememberedForward, 0, len(status.Forwards))
+	publishedForwards := make([]core.PublishedForward, 0, len(status.Forwards))
 	for _, forward := range status.Forwards {
-		if !forward.Automatic {
+		switch {
+		case forward.Direction == core.LocalToRemote:
+			publishedForwards = append(publishedForwards, core.PublishedForward{
+				LocalPort: forward.LocalPort, RemotePort: forward.PreferredRemotePort,
+			})
+		case !forward.Automatic:
 			rememberedForwards = append(rememberedForwards, core.RememberedForward{
 				RemotePort:    forward.RemotePort,
 				LocalPort:     forward.PreferredLocalPort,
@@ -132,7 +138,8 @@ func managerMatches(status core.Status, host string, intent core.ForwardingInten
 			})
 		}
 	}
-	return slices.Equal(rememberedForwards, intent.RememberedForwards)
+	return slices.Equal(rememberedForwards, intent.RememberedForwards) &&
+		slices.Equal(publishedForwards, intent.PublishedForwards)
 }
 
 // Serve runs the Manager in the current process. Installed service definitions

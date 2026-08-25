@@ -3,9 +3,9 @@ package app
 import (
 	"context"
 	"errors"
-	"slices"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
@@ -33,8 +33,8 @@ func TestProbeDiscoveryReturnsFirstCompleteSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(got, want) {
-		t.Fatalf("listeners = %#v, want %#v", got, want)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("listeners mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -55,7 +55,57 @@ func TestProbeDiscoveryPrefersSnapshotOverLaterFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error = %v after a complete snapshot", err)
 	}
-	if !slices.Equal(got, want) {
-		t.Fatalf("listeners = %#v, want %#v", got, want)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("listeners mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestFailedForwardDetailNamesDirectionalListeningEndpoints(t *testing.T) {
+	got := failedForwardDetail([]int{15173, 3000}, []int{19222})
+	want := "failed local port(s): 3000, 15173; Development Host port(s): 19222"
+	if got != want {
+		t.Fatalf("detail = %q, want %q", got, want)
+	}
+}
+
+func TestDiagnoseForwardsUsesPublishedDiagnosticAdvice(t *testing.T) {
+	got := diagnoseForwards(core.Status{
+		Host: "dev",
+		Forwards: []core.ForwardStatus{{
+			Direction:  core.LocalToRemote,
+			RemotePort: 19222,
+			State:      core.ForwardFailed,
+			Diagnostic: "remote_port_unavailable",
+		}},
+	})
+	want := DoctorCheck{
+		Name:   "forwards",
+		State:  DoctorFailed,
+		Detail: "failed Development Host port(s): 19222",
+		Fix:    "Check whether the remote port is occupied and whether sshd allows TCP forwarding.",
+	}
+	if got != want {
+		t.Fatalf("check = %#v, want %#v", got, want)
+	}
+}
+
+func TestDiagnoseForwardsUsesReservedLocalPortAdvice(t *testing.T) {
+	got := diagnoseForwards(core.Status{
+		Host: "dev",
+		Forwards: []core.ForwardStatus{{
+			Direction:  core.RemoteToLocal,
+			LocalPort:  9222,
+			State:      core.ForwardFailed,
+			Diagnostic: "local_port_reserved",
+		}},
+	})
+	want := DoctorCheck{
+		Name:   "forwards",
+		State:  DoctorFailed,
+		Detail: "failed local port(s): 9222",
+		Fix:    "Choose another --local port or remove one intent.",
+	}
+	if got != want {
+		t.Fatalf("check = %#v, want %#v", got, want)
 	}
 }

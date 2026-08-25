@@ -152,15 +152,17 @@ func flagError(cmd *cobra.Command, err error) error {
 	return UsageError(err)
 }
 
-const primerText = `ssh-forward — expose Development Host ports on localhost
+const primerText = `ssh-forward — import Development Host ports and publish local services
 
 Daily
-  status          what is forwarded right now
-  doctor          diagnose configuration, SSH, and Manager health
-  add PORT        remember a remote port
-  add --pwd GLOB  auto-forward matching working directories
-  remove PORT     forget a remembered port
+  status           what is forwarded right now
+  doctor           diagnose configuration, SSH, and Manager health
+  add PORT         remember a remote port
+  add --pwd GLOB   auto-forward matching working directories
+  remove PORT      forget a remembered port
   remove --pwd GLOB
+  publish LOCAL    publish a local port on the Development Host
+  unpublish LOCAL  stop publishing a local port
 
 Host
   host            aliases from ~/.ssh/config
@@ -178,10 +180,10 @@ func missingCommand(cmd *cobra.Command) error {
 	return err
 }
 
-func requirePort(command, text string) (uint16, error) {
+func requirePort(command, kind, text string) (uint16, error) {
 	port, err := strconv.ParseUint(text, 10, 16)
 	if err != nil || port == 0 {
-		return 0, fmt.Errorf("%s requires one remote port 1..65535", command)
+		return 0, fmt.Errorf("%s requires one %s port 1..65535", command, kind)
 	}
 	return uint16(port), nil
 }

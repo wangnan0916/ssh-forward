@@ -8,20 +8,21 @@ import (
 )
 
 type fakeBackend struct {
-	listeners       chan []Listener
-	started         chan ForwardTarget
-	stopped         chan ForwardTarget
-	closed          chan struct{}
-	actualLocalPort uint16
-	closeErr        error
-	closeCalls      int
+	listeners    chan []Listener
+	started      chan ForwardTarget
+	stopped      chan ForwardTarget
+	stopGate     <-chan struct{}
+	closed       chan struct{}
+	forwardError func(ForwardTarget) error
+	closeErr     error
+	closeCalls   int
 }
 
 func newFakeBackend() *fakeBackend {
 	return &fakeBackend{
-		listeners: make(chan []Listener, 4),
-		started:   make(chan ForwardTarget, 4),
-		stopped:   make(chan ForwardTarget, 4),
+		listeners: make(chan []Listener, 16),
+		started:   make(chan ForwardTarget, 16),
+		stopped:   make(chan ForwardTarget, 16),
 		closed:    make(chan struct{}),
 	}
 }
@@ -41,15 +42,19 @@ func (b *fakeBackend) Forward(
 	ctx context.Context,
 	_ HostAlias,
 	target ForwardTarget,
-	ready func(uint16),
+	ready func(),
 ) error {
 	b.started <- target
-	localPort := target.LocalPort
-	if b.actualLocalPort != 0 {
-		localPort = b.actualLocalPort
+	if b.forwardError != nil {
+		if err := b.forwardError(target); err != nil {
+			return err
+		}
 	}
-	ready(localPort)
+	ready()
 	<-ctx.Done()
+	if b.stopGate != nil {
+		<-b.stopGate
+	}
 	b.stopped <- target
 	return ctx.Err()
 }
@@ -70,7 +75,7 @@ func TestManagerForwardsRememberedPortWithoutRemoteListener(t *testing.T) {
 		retryDelay: 5 * time.Millisecond,
 	})
 	wantTarget(t, backend.started, ForwardTarget{
-		RemotePort: 5173, LocalPort: 5173, AllowFallback: true,
+		Direction: RemoteToLocal, RemotePort: 5173, LocalPort: 5173,
 	})
 	eventually(t, func() bool {
 		status := managerStatus(t, manager)
@@ -89,7 +94,7 @@ func TestManagerForwardsRememberedPortWithoutRemoteListener(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantTarget(t, backend.stopped, ForwardTarget{
-		RemotePort: 5173, LocalPort: 5173, AllowFallback: true,
+		Direction: RemoteToLocal, RemotePort: 5173, LocalPort: 5173,
 	})
 }
 
@@ -270,7 +275,7 @@ func TestManagerRestartsForwardWhenLocalPortChanges(t *testing.T) {
 		retryDelay: 5 * time.Millisecond,
 	})
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
-	wantTarget(t, backend.started, ForwardTarget(initial))
+	wantTarget(t, backend.started, desiredRememberedForward(initial).preferred)
 
 	updated := RememberedForward{RemotePort: 3000, LocalPort: 14000}
 	if err := manager.UpdateIntent(context.Background(), ForwardingIntent{
@@ -278,8 +283,8 @@ func TestManagerRestartsForwardWhenLocalPortChanges(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	wantTarget(t, backend.stopped, ForwardTarget(initial))
-	wantTarget(t, backend.started, ForwardTarget(updated))
+	wantTarget(t, backend.stopped, desiredRememberedForward(initial).preferred)
+	wantTarget(t, backend.started, desiredRememberedForward(updated).preferred)
 	eventually(t, func() bool {
 		status := managerStatus(t, manager)
 		return len(status.Forwards) == 1 && status.Forwards[0].RemotePort == 3000 &&
@@ -289,7 +294,12 @@ func TestManagerRestartsForwardWhenLocalPortChanges(t *testing.T) {
 
 func TestManagerReportsActualFallbackPortWithoutChangingIntent(t *testing.T) {
 	backend := newFakeBackend()
-	backend.actualLocalPort = 13001
+	backend.forwardError = func(target ForwardTarget) error {
+		if target.LocalPort == 13000 {
+			return &BackendError{Diagnostic: "local_port_conflict"}
+		}
+		return nil
+	}
 	forward := RememberedForward{
 		RemotePort: 3000, LocalPort: 13000, AllowFallback: true,
 	}
@@ -300,7 +310,11 @@ func TestManagerReportsActualFallbackPortWithoutChangingIntent(t *testing.T) {
 	})
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 
-	wantTarget(t, backend.started, forwardTarget(forward))
+	preferred := desiredRememberedForward(forward).preferred
+	wantTarget(t, backend.started, preferred)
+	fallback := preferred
+	fallback.LocalPort = 13001
+	wantTarget(t, backend.started, fallback)
 	eventually(t, func() bool {
 		status := managerStatus(t, manager)
 		return len(status.Forwards) == 1 &&
@@ -319,6 +333,187 @@ func TestManagerReportsActualFallbackPortWithoutChangingIntent(t *testing.T) {
 	}
 	wantNoEvent(t, backend.started)
 	wantNoEvent(t, backend.stopped)
+}
+
+func TestManagerPublishesLocalPortAndHidesItsRemoteListener(t *testing.T) {
+	backend := newFakeBackend()
+	published := PublishedForward{LocalPort: 9222, RemotePort: 19222}
+	manager := newManager(managerOptions{
+		host: "dev", backend: backend,
+		intent: ForwardingIntent{
+			PublishedForwards:     []PublishedForward{published},
+			WorkingDirectoryRules: []string{"/workspace/**"},
+		},
+		retryDelay: 5 * time.Millisecond,
+	})
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	wantTarget(t, backend.started, desiredPublishedForward(published).preferred)
+	backend.listeners <- []Listener{{
+		Port: published.RemotePort, App: "sshd", WorkingDirectory: "/workspace/app",
+	}}
+	eventually(t, func() bool {
+		status := managerStatus(t, manager)
+		return status.Discovery.State == DiscoveryActive && len(status.Listeners) == 0 &&
+			len(status.Forwards) == 1 && status.Forwards[0].Direction == LocalToRemote &&
+			status.Forwards[0].LocalPort == published.LocalPort &&
+			status.Forwards[0].RemotePort == published.RemotePort &&
+			status.Forwards[0].PreferredRemotePort == published.RemotePort &&
+			status.Forwards[0].State == ForwardActive
+	})
+	wantNoEvent(t, backend.started)
+}
+
+func TestPublishedLocalPortIsSkippedByRememberedFallback(t *testing.T) {
+	backend := newFakeBackend()
+	backend.forwardError = func(target ForwardTarget) error {
+		if target.Direction == RemoteToLocal && target.LocalPort == 13000 {
+			return &BackendError{Diagnostic: "local_port_conflict"}
+		}
+		return nil
+	}
+	remembered := RememberedForward{
+		RemotePort: 3000, LocalPort: 13000, AllowFallback: true,
+	}
+	published := PublishedForward{LocalPort: 13001, RemotePort: 19001}
+	manager := newManager(managerOptions{
+		host: "dev", backend: backend,
+		intent: ForwardingIntent{
+			RememberedForwards: []RememberedForward{remembered},
+			PublishedForwards:  []PublishedForward{published},
+		},
+		retryDelay: 5 * time.Millisecond,
+	})
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	preferred := desiredRememberedForward(remembered).preferred
+	fallback := preferred
+	fallback.LocalPort = 13002
+	wantTargets(t, backend.started,
+		desiredPublishedForward(published).preferred,
+		preferred,
+		fallback,
+	)
+	eventually(t, func() bool {
+		status := managerStatus(t, manager)
+		return len(status.Forwards) == 2 &&
+			status.Forwards[0].Direction == RemoteToLocal && status.Forwards[0].LocalPort == 13002 &&
+			status.Forwards[1].Direction == LocalToRemote && status.Forwards[1].LocalPort == 13001
+	})
+}
+
+func TestPublishedForwardWaitsForActiveFallbackBindingToStop(t *testing.T) {
+	backend := newFakeBackend()
+	stopGate := make(chan struct{})
+	backend.stopGate = stopGate
+	backend.forwardError = func(target ForwardTarget) error {
+		if target.Direction == RemoteToLocal && target.LocalPort == 13000 {
+			return &BackendError{Diagnostic: "local_port_conflict"}
+		}
+		return nil
+	}
+	remembered := RememberedForward{
+		RemotePort: 3000, LocalPort: 13000, AllowFallback: true,
+	}
+	manager := newManager(managerOptions{
+		host: "dev", backend: backend,
+		intent:     ForwardingIntent{RememberedForwards: []RememberedForward{remembered}},
+		retryDelay: 5 * time.Millisecond,
+	})
+	closedStopGate := false
+	t.Cleanup(func() {
+		if !closedStopGate {
+			close(stopGate)
+		}
+		_ = manager.Close(context.Background())
+	})
+
+	preferred := desiredRememberedForward(remembered).preferred
+	fallback := preferred
+	fallback.LocalPort = 13001
+	wantTarget(t, backend.started, preferred)
+	wantTarget(t, backend.started, fallback)
+	eventually(t, func() bool {
+		status := managerStatus(t, manager)
+		return len(status.Forwards) == 1 && status.Forwards[0].State == ForwardActive &&
+			status.Forwards[0].LocalPort == fallback.LocalPort
+	})
+
+	published := PublishedForward{LocalPort: fallback.LocalPort, RemotePort: 19001}
+	if err := manager.UpdateIntent(context.Background(), ForwardingIntent{
+		RememberedForwards: []RememberedForward{remembered},
+		PublishedForwards:  []PublishedForward{published},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	wantNoEvent(t, backend.started)
+	if err := manager.UpdateIntent(context.Background(), ForwardingIntent{
+		RememberedForwards: []RememberedForward{remembered},
+		PublishedForwards:  []PublishedForward{published},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	wantNoEvent(t, backend.started)
+	if err := manager.UpdateIntent(context.Background(), ForwardingIntent{
+		RememberedForwards: []RememberedForward{remembered},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, forward := range managerStatus(t, manager).Forwards {
+		if forward.Direction == LocalToRemote {
+			t.Fatalf("unpublished wait-only forward remains in status: %#v", forward)
+		}
+	}
+	if err := manager.UpdateIntent(context.Background(), ForwardingIntent{
+		RememberedForwards: []RememberedForward{remembered},
+		PublishedForwards:  []PublishedForward{published},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	wantNoEvent(t, backend.started)
+
+	close(stopGate)
+	closedStopGate = true
+	wantTarget(t, backend.stopped, fallback)
+	relocated := preferred
+	relocated.LocalPort = 13002
+	wantTargets(t, backend.started,
+		desiredPublishedForward(published).preferred,
+		preferred,
+		relocated,
+	)
+	eventually(t, func() bool {
+		status := managerStatus(t, manager)
+		return len(status.Forwards) == 2 &&
+			status.Forwards[0].Direction == RemoteToLocal &&
+			status.Forwards[0].LocalPort == relocated.LocalPort &&
+			status.Forwards[1].Direction == LocalToRemote &&
+			status.Forwards[1].State == ForwardActive
+	})
+}
+
+func TestStrictRememberedForwardFailsOnPublishedLocalPortReservation(t *testing.T) {
+	backend := newFakeBackend()
+	manager := newManager(managerOptions{
+		host: "dev", backend: backend,
+		intent: ForwardingIntent{
+			RememberedForwards: []RememberedForward{{RemotePort: 3000, LocalPort: 9222}},
+			PublishedForwards:  []PublishedForward{{LocalPort: 9222, RemotePort: 19222}},
+		},
+		retryDelay: time.Second,
+	})
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	wantTarget(t, backend.started, ForwardTarget{
+		Direction: LocalToRemote, LocalPort: 9222, RemotePort: 19222,
+	})
+	wantNoEvent(t, backend.started)
+	eventually(t, func() bool {
+		status := managerStatus(t, manager)
+		return len(status.Forwards) == 2 && status.Forwards[0].State == ForwardFailed &&
+			status.Forwards[0].Diagnostic == "local_port_reserved" &&
+			status.Forwards[1].State == ForwardActive
+	})
 }
 
 func samePortForwards(ports ...uint16) []RememberedForward {
@@ -373,6 +568,25 @@ func wantTarget(t *testing.T, events <-chan ForwardTarget, want ForwardTarget) {
 		}
 	case <-time.After(time.Second):
 		t.Fatalf("timed out waiting for target %#v", want)
+	}
+}
+
+func wantTargets(t *testing.T, events <-chan ForwardTarget, targets ...ForwardTarget) {
+	t.Helper()
+	want := make(map[ForwardTarget]bool, len(targets))
+	for _, target := range targets {
+		want[target] = true
+	}
+	for range targets {
+		select {
+		case got := <-events:
+			if !want[got] {
+				t.Fatalf("unexpected target event %#v; want one of %#v", got, targets)
+			}
+			delete(want, got)
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for targets %#v", targets)
+		}
 	}
 }
 

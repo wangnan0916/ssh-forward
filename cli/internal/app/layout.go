@@ -16,7 +16,10 @@ type Layout struct {
 // SSH_FORWARD_CONFIG_DIR overrides it, then the platform application-support
 // locations.
 func DefaultLayout() Layout {
-	dir := configDir()
+	return layoutForDir(configDir())
+}
+
+func layoutForDir(dir string) Layout {
 	return Layout{
 		Dir:    dir,
 		Config: filepath.Join(dir, "config.jsonc"),

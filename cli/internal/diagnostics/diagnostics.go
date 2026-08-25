@@ -26,6 +26,25 @@ var catalog = map[string]entry{
 	"local_port_conflict": {
 		text: "the same local port is already in use",
 	},
+	"local_port_reserved": {
+		text:      "the local port is reserved by a published forward",
+		doctorFix: "Choose another --local port or remove one intent.",
+	},
+	"remote_port_unavailable": {
+		text:      "the Development Host port could not be opened",
+		doctorFix: "Check whether the remote port is occupied and whether sshd allows TCP forwarding.",
+	},
+	"remote_bind_not_loopback": {
+		text:      "the Development Host forced the published port onto a non-loopback address",
+		doctorFix: "Set sshd GatewayPorts to no or clientspecified before publishing local services.",
+	},
+	"remote_bind_unverified": {
+		text:      "the Development Host loopback bind could not be verified",
+		doctorFix: "Verify that the Development Host is Linux with readable procfs and that sshd GatewayPorts is not yes.",
+	},
+	"invalid_forward_direction": {
+		text: "the forwarding direction is invalid",
+	},
 	"transport_unavailable": {
 		text: "SSH connection unavailable",
 	},
@@ -59,5 +78,13 @@ func DoctorAdvice(diagnostic, host string) (string, string) {
 	if detail == "" {
 		detail = strings.TrimSuffix(entry.text, ".")
 	}
-	return detail, strings.ReplaceAll(entry.doctorFix, "{host}", host)
+	return detail, DoctorFix(diagnostic, host)
+}
+
+func DoctorFix(diagnostic, host string) string {
+	entry, found := catalog[diagnostic]
+	if !found {
+		return ""
+	}
+	return strings.ReplaceAll(entry.doctorFix, "{host}", host)
 }

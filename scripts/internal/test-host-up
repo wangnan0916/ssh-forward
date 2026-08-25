@@ -58,19 +58,24 @@ cp "$state_dir/id_ed25519.pub" "$state_dir/authorized_keys"
 docker --context "$docker_context" compose -p "$project" -f "$compose" up -d --build >/dev/null
 
 port=''
+unsafe_port=''
 attempt=0
 while [ "$attempt" -lt 100 ]; do
     published=$(docker --context "$docker_context" compose -p "$project" -f "$compose" port ssh-host 22 2>/dev/null || true)
+    unsafe_published=$(docker --context "$docker_context" compose -p "$project" -f "$compose" port ssh-host 2222 2>/dev/null || true)
     case "$published" in *:*) port=${published##*:} ;; esac
-    [ -n "$port" ] && break
+    case "$unsafe_published" in *:*) unsafe_port=${unsafe_published##*:} ;; esac
+    [ -n "$port" ] && [ -n "$unsafe_port" ] && break
     attempt=$((attempt + 1))
     sleep 0.1
 done
-[ -n "$port" ] || { printf '%s\n' 'could not determine container SSH port' >&2; exit 1; }
+[ -n "$port" ] && [ -n "$unsafe_port" ] || { printf '%s\n' 'could not determine container SSH ports' >&2; exit 1; }
 
 attempt=0
 while [ "$attempt" -lt 100 ]; do
-    if ssh-keyscan -p "$port" 127.0.0.1 >"$state_dir/known_hosts.tmp" 2>/dev/null && [ -s "$state_dir/known_hosts.tmp" ]; then
+    if ssh-keyscan -p "$port" 127.0.0.1 >"$state_dir/known_hosts.tmp" 2>/dev/null \
+        && ssh-keyscan -p "$unsafe_port" 127.0.0.1 >>"$state_dir/known_hosts.tmp" 2>/dev/null \
+        && [ -s "$state_dir/known_hosts.tmp" ]; then
         mv "$state_dir/known_hosts.tmp" "$state_dir/known_hosts"
         break
     fi
@@ -80,9 +85,8 @@ done
 [ -s "$state_dir/known_hosts" ] || { printf '%s\n' 'container SSH did not become ready' >&2; exit 1; }
 
 cat >"$state_dir/ssh_config" <<EOF
-Host $SSH_FORWARD_TEST_HOST_ALIAS
+Host $SSH_FORWARD_TEST_HOST_ALIAS $SSH_FORWARD_TEST_UNSAFE_HOST_ALIAS
     HostName 127.0.0.1
-    Port $port
     User $SSH_FORWARD_TEST_USER
     IdentityFile $state_dir/id_ed25519
     IdentitiesOnly yes
@@ -102,8 +106,17 @@ Host $SSH_FORWARD_TEST_HOST_ALIAS
     ServerAliveInterval 5
     ServerAliveCountMax 2
     LogLevel ERROR
+
+Host $SSH_FORWARD_TEST_HOST_ALIAS
+    Port $port
+    LocalForward 127.0.0.1:$SSH_FORWARD_FIXTURE_PORT_CONFIG_LOCAL 127.0.0.1:$SSH_FORWARD_FIXTURE_PORT_V4
+    RemoteForward 127.0.0.1:$SSH_FORWARD_FIXTURE_PORT_CONFIG_REMOTE 127.0.0.1:$SSH_FORWARD_FIXTURE_PORT_CONFIG_LOCAL
+
+Host $SSH_FORWARD_TEST_UNSAFE_HOST_ALIAS
+    Port $unsafe_port
 EOF
 chmod 600 "$state_dir/ssh_config"
-/usr/bin/ssh -F "$state_dir/ssh_config" "$SSH_FORWARD_TEST_HOST_ALIAS" true </dev/null
+/usr/bin/ssh -F "$state_dir/ssh_config" -o ClearAllForwardings=yes "$SSH_FORWARD_TEST_HOST_ALIAS" true </dev/null
+/usr/bin/ssh -F "$state_dir/ssh_config" -o ClearAllForwardings=yes "$SSH_FORWARD_TEST_UNSAFE_HOST_ALIAS" true </dev/null
 trap - 0 HUP INT TERM
 printf '%s\n' "$state_dir/ssh_config"

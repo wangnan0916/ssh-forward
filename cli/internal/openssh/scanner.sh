@@ -86,15 +86,28 @@ while :; do
         awk '!seen[$1]++' | head -n "$limit")
 
     printf 'PF2\tB\t%s\n' "$sequence"
-    printf '%s\n' "$listeners" | while IFS=' ' read -r port inode; do
+    # Index owners once instead of scanning every owner for every listener.
+    {
+        printf '%s\n' "$socket_owners"
+        printf '\n'
+        printf '%s\n' "$listeners"
+    } | awk '
+        NF == 0 {
+            reading_listeners = 1
+            next
+        }
+        !reading_listeners {
+            split($0, owner, ":")
+            if (!(owner[1] in owner_by_inode)) {
+                owner_by_inode[owner[1]] = owner[2]
+            }
+            next
+        }
+        NF >= 2 {
+            print $1, owner_by_inode[$2]
+        }
+    ' | while IFS=' ' read -r port pid; do
         [ -n "$port" ] || continue
-        pid=''
-        for socket_owner in $socket_owners; do
-            if [ "${socket_owner%%:*}" = "$inode" ]; then
-                pid=${socket_owner#*:}
-                break
-            fi
-        done
 
         metadata='AA=='
         if [ -n "$pid" ] && [ "$has_metadata_tools" -eq 1 ]; then
