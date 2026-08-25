@@ -14,12 +14,13 @@ fixture_v4_pid=''
 fixture_v6_pid=''
 fixture_dual_stack_pid=''
 sshd_pid=''
+unsafe_sshd_pid=''
 cleanup() {
     trap - HUP INT TERM
-    for pid in "$sshd_pid" "$fixture_v4_pid" "$fixture_v6_pid" "$fixture_dual_stack_pid"; do
+    for pid in "$sshd_pid" "$unsafe_sshd_pid" "$fixture_v4_pid" "$fixture_v6_pid" "$fixture_dual_stack_pid"; do
         [ -z "$pid" ] || kill -TERM "$pid" 2>/dev/null || true
     done
-    for pid in "$sshd_pid" "$fixture_v4_pid" "$fixture_v6_pid" "$fixture_dual_stack_pid"; do
+    for pid in "$sshd_pid" "$unsafe_sshd_pid" "$fixture_v4_pid" "$fixture_v6_pid" "$fixture_dual_stack_pid"; do
         [ -z "$pid" ] || wait "$pid" 2>/dev/null || true
     done
 }
@@ -52,18 +53,26 @@ if [ "$ready" -ne 1 ]; then
     exit 1
 fi
 
-/usr/sbin/sshd -D -e \
-    -o AllowTcpForwarding=yes \
-    -o AllowUsers="$fixture_user" \
-    -o AuthenticationMethods=publickey \
-    -o GatewayPorts=no \
-    -o KbdInteractiveAuthentication=no \
-    -o PasswordAuthentication=no \
-    -o PermitRootLogin=no \
-    -o PubkeyAuthentication=yes \
-    -o UsePAM=no \
-    -o X11Forwarding=no &
+run_sshd() {
+    port=$1
+    gateway_ports=$2
+    exec /usr/sbin/sshd -D -e -p "$port" \
+        -o AllowTcpForwarding=yes \
+        -o AllowUsers="$fixture_user" \
+        -o AuthenticationMethods=publickey \
+        -o GatewayPorts="$gateway_ports" \
+        -o KbdInteractiveAuthentication=no \
+        -o PasswordAuthentication=no \
+        -o PermitRootLogin=no \
+        -o PubkeyAuthentication=yes \
+        -o UsePAM=no \
+        -o X11Forwarding=no
+}
+
+run_sshd 22 no &
 sshd_pid=$!
+run_sshd 2222 yes &
+unsafe_sshd_pid=$!
 set +e
 wait "$sshd_pid"
 status=$?

@@ -2,7 +2,9 @@ package openssh
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"os/exec"
 	"time"
@@ -10,9 +12,14 @@ import (
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
-const controlSocketTemplate = "master-%C"
-
 var errAdapterClosed = errors.New("OpenSSH adapter is closed")
+
+const legacyControlSocketTemplate = "master-%C"
+
+type controlForward struct {
+	flag string
+	spec string
+}
 
 type sshMaster struct {
 	command *exec.Cmd
@@ -46,8 +53,12 @@ func (a *Adapter) ensureMaster(ctx context.Context, host core.HostAlias) (*sshMa
 	}
 
 	// A previous Manager may have died before closing its product-owned master.
-	// Ask that stale master to exit before creating the replacement.
-	_ = a.runControl(ctx, host, "exit", "")
+	// Stop the pre-alias-hash master first, then ask any current-format stale
+	// master to exit before creating the replacement.
+	if err := a.stopLegacyMaster(ctx, host); err != nil {
+		return nil, err
+	}
+	_ = a.runControl(ctx, host, "exit", nil)
 	master, err := a.startMaster(host)
 	if err != nil {
 		return nil, err
@@ -61,7 +72,8 @@ func (a *Adapter) ensureMaster(ctx context.Context, host core.HostAlias) (*sshMa
 
 func (a *Adapter) startMaster(host core.HostAlias) (*sshMaster, error) {
 	arguments := append(a.configArguments(),
-		"-M", "-N", "-T", "-S", controlSocketTemplate,
+		"-M", "-N", "-T", "-S", a.controlPath(host),
+		"-o", "ClearAllForwardings=yes",
 		"-o", "ControlMaster=yes", "-o", "ControlPersist=no",
 		string(host),
 	)
@@ -94,19 +106,39 @@ func (a *Adapter) waitForMaster(ctx context.Context, host core.HostAlias, master
 			_ = a.stopMaster(ctx, master)
 			return backendError("master_start_timeout")
 		case <-ticker.C:
-			if err := a.runControl(ctx, host, "check", ""); err == nil {
+			if err := a.runControl(ctx, host, "check", nil); err == nil {
 				return nil
 			}
 		}
 	}
 }
 
-func (a *Adapter) runControl(ctx context.Context, host core.HostAlias, operation, forward string) error {
-	arguments := append(a.configArguments(), "-S", controlSocketTemplate, "-O", operation)
-	if forward != "" {
-		arguments = append(arguments, "-o", "ExitOnForwardFailure=yes", "-L", forward)
+func (a *Adapter) runControl(
+	ctx context.Context,
+	host core.HostAlias,
+	operation string,
+	forward *controlForward,
+) error {
+	arguments := append(a.masterClientArguments(host), "-O", operation)
+	if forward != nil {
+		arguments = append(arguments, "-o", "ExitOnForwardFailure=yes", forward.flag, forward.spec)
 	}
 	arguments = append(arguments, string(host))
+	return a.runControlCommand(ctx, arguments)
+}
+
+func (a *Adapter) runLegacyControl(
+	ctx context.Context,
+	host core.HostAlias,
+	operation string,
+) error {
+	arguments := append(
+		a.configArguments(), "-S", legacyControlSocketTemplate, "-O", operation, string(host),
+	)
+	return a.runControlCommand(ctx, arguments)
+}
+
+func (a *Adapter) runControlCommand(ctx context.Context, arguments []string) error {
 	command := a.commandContext(ctx, arguments...)
 	stderr := &boundedBuffer{limit: maxStderrTailBytes}
 	command.Stdout = io.Discard
@@ -117,10 +149,58 @@ func (a *Adapter) runControl(ctx context.Context, host core.HostAlias, operation
 	return nil
 }
 
-func (a *Adapter) cancelForward(host core.HostAlias, forward string) {
+func (a *Adapter) stopLegacyMaster(ctx context.Context, host core.HostAlias) error {
+	cleanupCtx, cancel := context.WithTimeout(ctx, a.waitDelay)
+	defer cancel()
+	if err := a.runLegacyControl(cleanupCtx, host, "exit"); err != nil {
+		return legacyCleanupError(ctx, cleanupCtx)
+	}
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-cleanupCtx.Done():
+			return legacyCleanupError(ctx, cleanupCtx)
+		case <-ticker.C:
+			if err := a.runLegacyControl(cleanupCtx, host, "check"); err != nil {
+				return legacyCleanupError(ctx, cleanupCtx)
+			}
+		}
+	}
+}
+
+func legacyCleanupError(parent, cleanup context.Context) error {
+	if err := parent.Err(); err != nil {
+		return err
+	}
+	if cleanup.Err() != nil {
+		return backendError("master_start_timeout")
+	}
+	return nil
+}
+
+func (a *Adapter) cancelForward(
+	host core.HostAlias,
+	master *sshMaster,
+	forward controlForward,
+) {
 	ctx, cancel := context.WithTimeout(context.Background(), a.waitDelay)
 	defer cancel()
-	_ = a.runControl(ctx, host, "cancel", forward)
+	if err := a.runControl(ctx, host, "cancel", &forward); err != nil {
+		_ = a.stopMaster(context.Background(), master)
+	}
+}
+
+func (a *Adapter) controlPath(host core.HostAlias) string {
+	digest := sha256.Sum256([]byte(host))
+	// Commands run inside the private control directory. A bounded relative
+	// path avoids the short Unix-domain socket path limit on macOS while still
+	// ignoring any user-configured ControlPath.
+	return fmt.Sprintf("master-%x", digest[:12])
+}
+
+func (a *Adapter) masterClientArguments(host core.HostAlias) []string {
+	return []string{"-F", "/dev/null", "-S", a.controlPath(host)}
 }
 
 func (m *sshMaster) wait() {

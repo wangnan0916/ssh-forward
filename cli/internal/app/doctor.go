@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -99,6 +100,9 @@ func diagnoseConfig(path string) DoctorCheck {
 		for _, forwards := range config.RememberedForwards {
 			intentCount += len(forwards)
 		}
+		for _, forwards := range config.PublishedForwards {
+			intentCount += len(forwards)
+		}
 		for _, rules := range config.WorkingDirectoryRules {
 			intentCount += len(rules)
 		}
@@ -171,28 +175,68 @@ func diagnoseManager(ctx context.Context, opts Options, selectedHost string) []D
 		)
 	}
 
-	failedPorts := make([]int, 0)
-	for _, forward := range status.Forwards {
-		if forward.State == core.ForwardFailed {
-			failedPorts = append(failedPorts, int(forward.LocalPort))
-		}
-	}
-	if len(failedPorts) == 0 {
-		checks = append(checks, okDoctorCheck(
-			"forwards", fmt.Sprintf("%d forward(s), none failed", len(status.Forwards)),
-		))
-	} else {
-		slices.Sort(failedPorts)
-		ports := make([]string, len(failedPorts))
-		for index, port := range failedPorts {
-			ports[index] = fmt.Sprint(port)
-		}
-		checks = append(checks, failedDoctorCheck(
-			"forwards", "failed local port(s): "+strings.Join(ports, ", "),
-			"Run ssh-forward status for the per-port issue.",
-		))
-	}
+	checks = append(checks, diagnoseForwards(status))
 	return checks
+}
+
+func diagnoseForwards(status core.Status) DoctorCheck {
+	failedLocalPorts := make([]int, 0)
+	failedRemotePorts := make([]int, 0)
+	fixes := make([]string, 0)
+	needsPerPortStatus := false
+	for _, forward := range status.Forwards {
+		if forward.State != core.ForwardFailed {
+			continue
+		}
+		if forward.Direction == core.LocalToRemote {
+			failedRemotePorts = append(failedRemotePorts, int(forward.RemotePort))
+			_, fix := diagnostics.DoctorAdvice(forward.Diagnostic, string(status.Host))
+			if !slices.Contains(fixes, fix) {
+				fixes = append(fixes, fix)
+			}
+		} else {
+			failedLocalPorts = append(failedLocalPorts, int(forward.LocalPort))
+			fix := diagnostics.DoctorFix(forward.Diagnostic, string(status.Host))
+			if fix == "" {
+				needsPerPortStatus = true
+			} else if !slices.Contains(fixes, fix) {
+				fixes = append(fixes, fix)
+			}
+		}
+	}
+	if len(failedLocalPorts) == 0 && len(failedRemotePorts) == 0 {
+		return okDoctorCheck(
+			"forwards", fmt.Sprintf("%d forward(s), none failed", len(status.Forwards)),
+		)
+	}
+	if needsPerPortStatus {
+		fixes = append([]string{"Run ssh-forward status for the per-port issue."}, fixes...)
+	}
+	return failedDoctorCheck(
+		"forwards", failedForwardDetail(failedLocalPorts, failedRemotePorts),
+		strings.Join(fixes, " "),
+	)
+}
+
+func failedForwardDetail(localPorts, remotePorts []int) string {
+	slices.Sort(localPorts)
+	slices.Sort(remotePorts)
+	parts := make([]string, 0, 2)
+	if len(localPorts) != 0 {
+		parts = append(parts, "local port(s): "+joinedPorts(localPorts))
+	}
+	if len(remotePorts) != 0 {
+		parts = append(parts, "Development Host port(s): "+joinedPorts(remotePorts))
+	}
+	return "failed " + strings.Join(parts, "; ")
+}
+
+func joinedPorts(ports []int) string {
+	values := make([]string, len(ports))
+	for index, port := range ports {
+		values[index] = strconv.Itoa(port)
+	}
+	return strings.Join(values, ", ")
 }
 
 func unavailableManagerChecks(managerCheck DoctorCheck) []DoctorCheck {

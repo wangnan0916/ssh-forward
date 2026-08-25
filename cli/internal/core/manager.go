@@ -2,15 +2,16 @@ package core
 
 import (
 	"context"
-	"path"
 	"slices"
 	"sync"
 	"time"
-
-	"github.com/bmatcuk/doublestar/v4"
 )
 
-const defaultRetryDelay = time.Second
+const (
+	defaultRetryDelay      = time.Second
+	maxTemporaryPortOffset = 20
+	maximumTCPPort         = 1<<16 - 1
+)
 
 type managerOptions struct {
 	host       HostAlias
@@ -20,9 +21,9 @@ type managerOptions struct {
 }
 
 type forwardWorker struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	target ForwardTarget
+	ctx     context.Context
+	cancel  context.CancelFunc
+	desired desiredForward
 }
 
 type manager struct {
@@ -33,10 +34,12 @@ type manager struct {
 
 	discovery             DiscoveryStatus
 	listeners             map[uint16]Listener
-	states                map[uint16]ForwardStatus
+	states                map[forwardKey]ForwardStatus
 	remembered            []RememberedForward
+	published             []PublishedForward
+	reservedLocalPorts    map[uint16]struct{}
 	workingDirectoryRules []string
-	forwardWorkers        map[uint16]*forwardWorker
+	forwardWorkers        map[forwardKey]*forwardWorker
 
 	retryDelay time.Duration
 	ctx        context.Context
@@ -47,7 +50,8 @@ type manager struct {
 	closeErr   error
 }
 
-// NewManager observes host and reconciles remembered and automatic forwards.
+// NewManager observes host and reconciles remembered, automatic, and
+// published forwards.
 func NewManager(host HostAlias, backend Backend, intent ForwardingIntent) Manager {
 	return newManager(managerOptions{host: host, backend: backend, intent: intent})
 }
@@ -63,64 +67,33 @@ func newManager(options managerOptions) *manager {
 		backend:               options.backend,
 		discovery:             DiscoveryStatus{State: DiscoveryConnecting},
 		listeners:             make(map[uint16]Listener),
-		states:                make(map[uint16]ForwardStatus),
+		states:                make(map[forwardKey]ForwardStatus),
 		remembered:            intent.RememberedForwards,
+		published:             intent.PublishedForwards,
+		reservedLocalPorts:    reservedLocalPorts(intent.PublishedForwards),
 		workingDirectoryRules: intent.WorkingDirectoryRules,
-		forwardWorkers:        make(map[uint16]*forwardWorker),
+		forwardWorkers:        make(map[forwardKey]*forwardWorker),
 		retryDelay:            options.retryDelay,
 		ctx:                   ctx,
 		cancel:                cancel,
 		closeDone:             make(chan struct{}),
 	}
+
 	if m.backend == nil || m.host == "" {
 		m.discovery = DiscoveryStatus{State: DiscoveryFailed, Diagnostic: "not_configured"}
-		for _, forward := range m.remembered {
-			m.states[forward.RemotePort] = m.forwardStatus(
-				forward.RemotePort, ForwardFailed, "not_configured",
-			)
+		desiredForwards := buildDesiredForwards(
+			m.remembered, m.published, m.listeners, m.workingDirectoryRules,
+		)
+		for key, desired := range desiredForwards {
+			m.states[key] = forwardStatus(desired, ForwardFailed, "not_configured", desired.preferred)
 		}
 		return m
 	}
-
 	m.mu.Lock()
-	for _, forward := range m.remembered {
-		m.startForwardLocked(forwardTarget(forward))
-	}
+	m.reconcileForwardsLocked()
 	m.mu.Unlock()
 	m.tasks.Go(m.observe)
 	return m
-}
-
-func normalizedForwardingIntent(intent ForwardingIntent) ForwardingIntent {
-	intent.RememberedForwards = normalizedManagerForwards(intent.RememberedForwards)
-	patterns := make([]string, 0, len(intent.WorkingDirectoryRules))
-	for _, pattern := range intent.WorkingDirectoryRules {
-		if path.IsAbs(pattern) && doublestar.ValidatePattern(pattern) {
-			patterns = append(patterns, pattern)
-		}
-	}
-	slices.Sort(patterns)
-	intent.WorkingDirectoryRules = slices.Compact(patterns)
-	return intent
-}
-
-func normalizedManagerForwards(forwards []RememberedForward) []RememberedForward {
-	byRemotePort := make(map[uint16]RememberedForward, len(forwards))
-	for _, forward := range forwards {
-		if forward.RemotePort == 0 {
-			continue
-		}
-		forward = forward.WithDefaults()
-		byRemotePort[forward.RemotePort] = forward
-	}
-	normalized := make([]RememberedForward, 0, len(byRemotePort))
-	for _, forward := range byRemotePort {
-		normalized = append(normalized, forward)
-	}
-	slices.SortFunc(normalized, func(left, right RememberedForward) int {
-		return int(left.RemotePort) - int(right.RemotePort)
-	})
-	return normalized
 }
 
 func (m *manager) Status(ctx context.Context) (Status, error) {
@@ -132,9 +105,17 @@ func (m *manager) Status(ctx context.Context) (Status, error) {
 	if m.closed {
 		return Status{}, ErrManagerClosed
 	}
+	activePublishedPorts := make(map[uint16]struct{})
+	for key, status := range m.states {
+		if key.direction == LocalToRemote && status.State == ForwardActive {
+			activePublishedPorts[status.RemotePort] = struct{}{}
+		}
+	}
 	listeners := make([]Listener, 0, len(m.listeners))
-	for _, listener := range m.listeners {
-		listeners = append(listeners, listener)
+	for port, listener := range m.listeners {
+		if _, published := activePublishedPorts[port]; !published {
+			listeners = append(listeners, listener)
+		}
 	}
 	slices.SortFunc(listeners, func(left, right Listener) int {
 		return int(left.Port) - int(right.Port)
@@ -143,9 +124,7 @@ func (m *manager) Status(ctx context.Context) (Status, error) {
 	for _, status := range m.states {
 		forwards = append(forwards, status)
 	}
-	slices.SortFunc(forwards, func(left, right ForwardStatus) int {
-		return int(left.RemotePort) - int(right.RemotePort)
-	})
+	slices.SortFunc(forwards, compareForwardStatus)
 	return Status{
 		Host:                  m.host,
 		Discovery:             m.discovery,
@@ -153,6 +132,19 @@ func (m *manager) Status(ctx context.Context) (Status, error) {
 		Forwards:              forwards,
 		WorkingDirectoryRules: slices.Clone(m.workingDirectoryRules),
 	}, nil
+}
+
+func compareForwardStatus(left, right ForwardStatus) int {
+	if left.Direction != right.Direction {
+		if left.Direction == RemoteToLocal {
+			return -1
+		}
+		return 1
+	}
+	if left.Direction == LocalToRemote {
+		return int(left.LocalPort) - int(right.LocalPort)
+	}
+	return int(left.RemotePort) - int(right.RemotePort)
 }
 
 // UpdateIntent reconciles new persistent intent without disturbing forwards
@@ -171,15 +163,10 @@ func (m *manager) UpdateIntent(ctx context.Context, intent ForwardingIntent) err
 		return ErrManagerClosed
 	}
 	m.remembered = intent.RememberedForwards
+	m.published = intent.PublishedForwards
+	m.reservedLocalPorts = reservedLocalPorts(intent.PublishedForwards)
 	m.workingDirectoryRules = intent.WorkingDirectoryRules
 	m.reconcileForwardsLocked()
-	for remotePort, status := range m.states {
-		updated := m.forwardStatus(remotePort, status.State, status.Diagnostic)
-		if status.State == ForwardActive {
-			updated.LocalPort = status.LocalPort
-		}
-		m.states[remotePort] = updated
-	}
 	return nil
 }
 
@@ -222,165 +209,133 @@ func (m *manager) setListeners(listeners []Listener) {
 }
 
 func (m *manager) reconcileForwardsLocked() {
-	for remotePort, worker := range m.forwardWorkers {
-		desired, found := m.desiredForward(remotePort)
-		if found && worker.target == desired {
-			continue
-		}
-		worker.cancel()
-		if found {
-			m.states[remotePort] = m.forwardStatus(remotePort, ForwardStarting, "")
-		} else {
-			delete(m.states, remotePort)
+	desiredForwards := buildDesiredForwards(
+		m.remembered, m.published, m.listeners, m.workingDirectoryRules,
+	)
+	for key := range m.states {
+		_, desired := desiredForwards[key]
+		_, running := m.forwardWorkers[key]
+		if !desired && !running {
+			delete(m.states, key)
 		}
 	}
-	for _, forward := range m.remembered {
-		m.ensureForwardLocked(forwardTarget(forward))
+	workers := make(map[forwardKey]workerSnapshot, len(m.forwardWorkers))
+	for key, worker := range m.forwardWorkers {
+		workers[key] = workerSnapshot{desired: worker.desired, status: m.states[key]}
 	}
-	for remotePort, listener := range m.listeners {
-		if !m.isRemembered(remotePort) && matchesWorkingDirectory(m.workingDirectoryRules, listener.WorkingDirectory) {
-			m.ensureForwardLocked(automaticForwardTarget(remotePort))
-		}
+	plan := planReconciliation(desiredForwards, workers, m.reservedLocalPorts)
+	for _, desired := range plan.keep {
+		key := desired.key()
+		status := m.states[key]
+		status.Automatic = desired.automatic
+		m.states[key] = status
+	}
+	for _, key := range plan.stop {
+		m.forwardWorkers[key].cancel()
+	}
+	for _, desired := range plan.wait {
+		m.states[desired.key()] = forwardStatus(
+			desired, ForwardStarting, "", desired.preferred,
+		)
+	}
+	for _, desired := range plan.start {
+		m.startForwardLocked(desired)
 	}
 }
 
-func (m *manager) desiredForward(remotePort uint16) (ForwardTarget, bool) {
-	if remembered, found := m.rememberedForward(remotePort); found {
-		return forwardTarget(remembered), true
-	}
-	listener, found := m.listeners[remotePort]
-	if found && matchesWorkingDirectory(m.workingDirectoryRules, listener.WorkingDirectory) {
-		return automaticForwardTarget(remotePort), true
-	}
-	return ForwardTarget{}, false
-}
-
-func matchesWorkingDirectory(patterns []string, directory string) bool {
-	if directory == "" || !path.IsAbs(directory) {
-		return false
-	}
-	for _, pattern := range patterns {
-		if matched, _ := doublestar.Match(pattern, directory); matched {
-			return true
-		}
-	}
-	return false
-}
-
-func (m *manager) ensureForwardLocked(target ForwardTarget) {
-	if worker := m.forwardWorkers[target.RemotePort]; worker != nil {
-		if worker.ctx.Err() != nil {
-			m.states[target.RemotePort] = m.forwardStatus(target.RemotePort, ForwardStarting, "")
-		}
-		return
-	}
-	m.startForwardLocked(target)
-}
-
-func (m *manager) startForwardLocked(target ForwardTarget) {
+func (m *manager) startForwardLocked(desired desiredForward) {
 	ctx, cancel := context.WithCancel(m.ctx)
-	worker := &forwardWorker{ctx: ctx, cancel: cancel, target: target}
-	m.forwardWorkers[target.RemotePort] = worker
-	m.states[target.RemotePort] = m.forwardStatus(target.RemotePort, ForwardStarting, "")
+	worker := &forwardWorker{ctx: ctx, cancel: cancel, desired: desired}
+	key := desired.key()
+	m.forwardWorkers[key] = worker
+	m.states[key] = forwardStatus(desired, ForwardStarting, "", desired.preferred)
 	m.tasks.Go(func() { m.runForward(worker) })
 }
 
 func (m *manager) runForward(worker *forwardWorker) {
-	remotePort := worker.target.RemotePort
-	defer m.forwardStopped(remotePort, worker)
+	key := worker.desired.key()
+	defer m.forwardStopped(key, worker)
 	for {
-		m.setForwardState(remotePort, worker, ForwardStarting, "", 0)
-		err := m.backend.Forward(worker.ctx, m.host, worker.target, func(localPort uint16) {
-			m.setForwardState(remotePort, worker, ForwardActive, "", localPort)
-		})
+		err := m.forwardOnce(worker)
 		if worker.ctx.Err() != nil {
 			return
 		}
-		m.setForwardState(remotePort, worker, ForwardFailed, ErrorDiagnostic(err), 0)
+		m.setForwardState(key, worker, ForwardFailed, ErrorDiagnostic(err), worker.desired.preferred)
 		if !wait(worker.ctx, m.retryDelay) {
 			return
 		}
 	}
 }
 
-func (m *manager) forwardStopped(remotePort uint16, worker *forwardWorker) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.forwardWorkers[remotePort] != worker {
-		return
+func (m *manager) forwardOnce(worker *forwardWorker) error {
+	preferred := worker.desired.preferred
+	key := worker.desired.key()
+	maximumOffset := 0
+	if preferred.Direction == RemoteToLocal && worker.desired.allowFallback {
+		maximumOffset = maxTemporaryPortOffset
 	}
-	delete(m.forwardWorkers, remotePort)
-	if m.closed {
-		return
-	}
-	if target, found := m.desiredForward(remotePort); found {
-		m.startForwardLocked(target)
-	} else {
-		delete(m.states, remotePort)
-	}
-}
-
-func (m *manager) setForwardState(
-	remotePort uint16,
-	worker *forwardWorker,
-	state ForwardState,
-	diagnostic string,
-	actualLocalPort uint16,
-) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if !m.closed && worker.ctx.Err() == nil && m.forwardWorkers[remotePort] == worker {
-		status := m.forwardStatus(remotePort, state, diagnostic)
-		if state == ForwardActive {
-			status.LocalPort = actualLocalPort
+	var lastErr error
+	for offset := 0; offset <= maximumOffset; offset++ {
+		if int(preferred.LocalPort)+offset > maximumTCPPort {
+			break
 		}
-		m.states[remotePort] = status
+		candidate := preferred
+		candidate.LocalPort += uint16(offset)
+		if candidate.Direction == RemoteToLocal && m.localPortReserved(candidate.LocalPort) {
+			lastErr = &BackendError{Diagnostic: "local_port_reserved"}
+			continue
+		}
+		m.setForwardState(key, worker, ForwardStarting, "", candidate)
+		err := m.backend.Forward(worker.ctx, m.host, candidate, func() {
+			m.setForwardState(key, worker, ForwardActive, "", candidate)
+		})
+		if worker.ctx.Err() != nil {
+			return worker.ctx.Err()
+		}
+		lastErr = err
+		if !worker.desired.allowFallback || ErrorDiagnostic(err) != "local_port_conflict" {
+			return err
+		}
 	}
+	return lastErr
 }
 
-func (m *manager) forwardStatus(remotePort uint16, state ForwardState, diagnostic string) ForwardStatus {
-	target := automaticForwardTarget(remotePort)
-	automatic := true
-	if remembered, found := m.rememberedForward(remotePort); found {
-		target = forwardTarget(remembered)
-		automatic = false
-	}
-	return ForwardStatus{
-		RemotePort:         target.RemotePort,
-		PreferredLocalPort: target.LocalPort,
-		LocalPort:          target.LocalPort,
-		State:              state,
-		Diagnostic:         diagnostic,
-		Automatic:          automatic,
-		AllowFallback:      target.AllowFallback,
-	}
-}
-
-func automaticForwardTarget(port uint16) ForwardTarget {
-	return ForwardTarget{RemotePort: port, LocalPort: port, AllowFallback: true}
-}
-
-func forwardTarget(forward RememberedForward) ForwardTarget {
-	return ForwardTarget{
-		RemotePort:    forward.RemotePort,
-		LocalPort:     forward.LocalPort,
-		AllowFallback: forward.AllowFallback,
-	}
-}
-
-func (m *manager) isRemembered(remotePort uint16) bool {
-	_, found := m.rememberedForward(remotePort)
+func (m *manager) localPortReserved(port uint16) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	_, found := m.reservedLocalPorts[port]
 	return found
 }
 
-func (m *manager) rememberedForward(remotePort uint16) (RememberedForward, bool) {
-	index, found := slices.BinarySearchFunc(m.remembered, remotePort, func(forward RememberedForward, remotePort uint16) int {
-		return int(forward.RemotePort) - int(remotePort)
-	})
-	if !found {
-		return RememberedForward{}, false
+func (m *manager) forwardStopped(key forwardKey, worker *forwardWorker) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.forwardWorkers[key] != worker {
+		return
 	}
-	return m.remembered[index], true
+	delete(m.forwardWorkers, key)
+	delete(m.states, key)
+	if m.closed {
+		return
+	}
+	m.reconcileForwardsLocked()
+}
+
+func (m *manager) setForwardState(
+	key forwardKey,
+	worker *forwardWorker,
+	state ForwardState,
+	diagnostic string,
+	target ForwardTarget,
+) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || worker.ctx.Err() != nil || m.forwardWorkers[key] != worker {
+		return
+	}
+	status := forwardStatus(worker.desired, state, diagnostic, target)
+	status.Automatic = m.states[key].Automatic
+	m.states[key] = status
 }
 
 func wait(ctx context.Context, delay time.Duration) bool {

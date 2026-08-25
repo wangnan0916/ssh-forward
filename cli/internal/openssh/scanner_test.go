@@ -2,10 +2,10 @@ package openssh
 
 import (
 	"encoding/base64"
-	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
@@ -24,8 +24,8 @@ func TestScanListenerFrames(t *testing.T) {
 		{Port: 5173, App: "node", WorkingDirectory: "/workspace/app"},
 		{Port: 8080},
 	}, {}}
-	if !reflect.DeepEqual(observations, want) {
-		t.Fatalf("observations = %#v, want %#v", observations, want)
+	if diff := cmp.Diff(want, observations); diff != "" {
+		t.Fatalf("observations mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -59,8 +59,8 @@ func TestScanListenerFramesSanitizesTerminalControlCharacters(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []core.Listener{{Port: 8080, App: "node�[31m", WorkingDirectory: "/work�app"}}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("listeners = %#v, want %#v", got, want)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("listeners mismatch (-want +got):\n%s", diff)
 	}
 }
 

@@ -3,8 +3,9 @@ package app
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func writeSSHConfig(t *testing.T, dir, content string) string {
@@ -35,8 +36,8 @@ host casesensitive
 		t.Fatalf("ConfiguredHosts: %v", err)
 	}
 	want := []string{"ubuntu", "devbox", "casesensitive"}
-	if !reflect.DeepEqual(hosts, want) {
-		t.Fatalf("hosts = %v, want %v", hosts, want)
+	if diff := cmp.Diff(want, hosts); diff != "" {
+		t.Fatalf("hosts mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -63,8 +64,8 @@ Include missing-file.conf
 		t.Fatalf("ConfiguredHosts: %v", err)
 	}
 	want := []string{"first", "extra"}
-	if !reflect.DeepEqual(hosts, want) {
-		t.Fatalf("hosts = %v, want %v", hosts, want)
+	if diff := cmp.Diff(want, hosts); diff != "" {
+		t.Fatalf("hosts mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -88,7 +89,7 @@ func TestConfiguredHostsDeduplicatesAndGuardsCycles(t *testing.T) {
 		t.Fatalf("ConfiguredHosts: %v", err)
 	}
 	want := []string{"a", "loop"}
-	if !reflect.DeepEqual(hosts, want) {
-		t.Fatalf("hosts = %v, want %v", hosts, want)
+	if diff := cmp.Diff(want, hosts); diff != "" {
+		t.Fatalf("hosts mismatch (-want +got):\n%s", diff)
 	}
 }

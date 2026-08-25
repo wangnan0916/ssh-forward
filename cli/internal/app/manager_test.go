@@ -5,10 +5,9 @@ import (
 	"errors"
 	"net/http"
 	"path/filepath"
-	"reflect"
-	"slices"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
@@ -22,8 +21,8 @@ func TestServiceConfigIsUserScopedAndAutomatic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(config.Arguments, []string{"manager", "serve", "--host", "dev"}) {
-		t.Fatalf("arguments = %v", config.Arguments)
+	if diff := cmp.Diff([]string{"manager", "serve", "--host", "dev"}, config.Arguments); diff != "" {
+		t.Fatalf("service arguments mismatch (-want +got):\n%s", diff)
 	}
 	for _, option := range []string{"UserService", "KeepAlive", "RunAtLoad"} {
 		if enabled, _ := config.Option[option].(bool); !enabled {
@@ -69,21 +68,22 @@ func TestManagerIPCRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("status = %#v, want %#v", got, want)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("status mismatch (-want +got):\n%s", diff)
 	}
 	wantIntent := core.ForwardingIntent{
 		RememberedForwards: []core.RememberedForward{
 			{RemotePort: 3000, LocalPort: 13000},
 			{RemotePort: 5173, LocalPort: 5173},
 		},
+		PublishedForwards:     []core.PublishedForward{{LocalPort: 9222, RemotePort: 19222}},
 		WorkingDirectoryRules: []string{"/workspace/**"},
 	}
 	if err := manager.UpdateIntent(context.Background(), wantIntent); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(backend.intent, wantIntent) {
-		t.Fatalf("intent = %#v, want %#v", backend.intent, wantIntent)
+	if diff := cmp.Diff(wantIntent, backend.intent); diff != "" {
+		t.Fatalf("intent mismatch (-want +got):\n%s", diff)
 	}
 	if _, err := dialManager(context.Background(), path, "other-version"); !errors.Is(err, ErrIncompatibleManager) {
 		t.Fatalf("version mismatch error = %v", err)
@@ -98,6 +98,7 @@ func TestManagerMatchesSelectedHostAndForwardingIntent(t *testing.T) {
 			{RemotePort: 3000, PreferredLocalPort: 13000, LocalPort: 13001, State: core.ForwardActive, AllowFallback: true},
 			{RemotePort: 5173, PreferredLocalPort: 5173, LocalPort: 5173, State: core.ForwardFailed},
 			{RemotePort: 12000, PreferredLocalPort: 12000, LocalPort: 12000, State: core.ForwardActive, Automatic: true, AllowFallback: true},
+			{Direction: core.LocalToRemote, LocalPort: 9222, PreferredRemotePort: 19222, RemotePort: 19222, State: core.ForwardActive},
 		},
 	}
 	intent := core.ForwardingIntent{
@@ -105,6 +106,7 @@ func TestManagerMatchesSelectedHostAndForwardingIntent(t *testing.T) {
 			{RemotePort: 3000, LocalPort: 13000, AllowFallback: true},
 			{RemotePort: 5173, LocalPort: 5173},
 		},
+		PublishedForwards:     []core.PublishedForward{{LocalPort: 9222, RemotePort: 19222}},
 		WorkingDirectoryRules: []string{"/workspace/**"},
 	}
 	if !managerMatches(status, "dev", intent) {
@@ -125,6 +127,11 @@ func TestManagerMatchesSelectedHostAndForwardingIntent(t *testing.T) {
 		t.Fatal("manager with a stale local port was accepted")
 	}
 	intent.RememberedForwards[0].LocalPort = 13000
+	intent.PublishedForwards[0].RemotePort = 29222
+	if managerMatches(status, "dev", intent) {
+		t.Fatal("manager with a stale published port was accepted")
+	}
+	intent.PublishedForwards[0].RemotePort = 19222
 	intent.WorkingDirectoryRules = []string{"/srv/**"}
 	if managerMatches(status, "dev", intent) {
 		t.Fatal("manager with stale working-directory rules was accepted")

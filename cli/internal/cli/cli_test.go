@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"slices"
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/wangnan0916/ssh-forward/cli/internal/app"
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
@@ -40,11 +40,11 @@ func TestAddWritesRemoteToLocalForward(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := core.RememberedForward{RemotePort: 5173, LocalPort: 15173}
-	if len(intent.RememberedForwards) != 1 || intent.RememberedForwards[0] != want {
-		t.Fatalf("forwards = %v", intent.RememberedForwards)
+	if diff := cmp.Diff([]core.RememberedForward{want}, intent.RememberedForwards); diff != "" {
+		t.Fatalf("remembered forwards mismatch (-want +got):\n%s", diff)
 	}
-	if len(manager.intent.RememberedForwards) != 1 || manager.intent.RememberedForwards[0] != want {
-		t.Fatalf("manager intent = %#v", manager.intent)
+	if diff := cmp.Diff([]core.RememberedForward{want}, manager.intent.RememberedForwards); diff != "" {
+		t.Fatalf("manager remembered forwards mismatch (-want +got):\n%s", diff)
 	}
 	if !strings.Contains(stdout.String(), "Remembered remote 5173 at 127.0.0.1:15173 for dev") {
 		t.Fatalf("output = %q", stdout.String())
@@ -69,11 +69,100 @@ func TestAddWithoutLocalPortAllowsTemporaryFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(intent.RememberedForwards, []core.RememberedForward{want}) {
-		t.Fatalf("intent = %#v", intent)
+	if diff := cmp.Diff([]core.RememberedForward{want}, intent.RememberedForwards); diff != "" {
+		t.Fatalf("remembered forwards mismatch (-want +got):\n%s", diff)
 	}
 	if !strings.Contains(stdout.String(), "prefers 127.0.0.1:5173; falls back if busy") {
 		t.Fatalf("output = %q", stdout.String())
+	}
+}
+
+func TestPublishWritesLocalToRemoteForward(t *testing.T) {
+	configPath := t.TempDir() + "/config.jsonc"
+	var stdout bytes.Buffer
+	manager := &fakeManager{status: core.Status{Host: "dev"}}
+	surface := &App{
+		Manager: manager,
+		Options: app.Options{ConfigPath: configPath, Stdout: &stdout},
+	}
+	if err := surface.Run(context.Background(), []string{"publish", "9222", "--remote", "19222"}); err != nil {
+		t.Fatal(err)
+	}
+	want := core.PublishedForward{LocalPort: 9222, RemotePort: 19222}
+	intent, err := app.HostIntent(configPath, "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantForwards := []core.PublishedForward{want}
+	if diff := cmp.Diff(wantForwards, intent.PublishedForwards); diff != "" {
+		t.Fatalf("published forwards mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(wantForwards, manager.intent.PublishedForwards); diff != "" {
+		t.Fatalf("manager published forwards mismatch (-want +got):\n%s", diff)
+	}
+	if !strings.Contains(stdout.String(), "Publishing local 127.0.0.1:9222 at dev 127.0.0.1:19222") {
+		t.Fatalf("output = %q", stdout.String())
+	}
+}
+
+func TestUnpublishJSONReportsRemovedMapping(t *testing.T) {
+	configPath := t.TempDir() + "/config.jsonc"
+	if _, err := app.SetPublishedForward(configPath, "dev", core.PublishedForward{
+		LocalPort: 9222, RemotePort: 19222,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	manager := &fakeManager{status: core.Status{Host: "dev"}}
+	surface := &App{
+		Manager: manager,
+		Options: app.Options{ConfigPath: configPath, Stdout: &stdout},
+	}
+	if err := surface.Run(context.Background(), []string{"unpublish", "9222", "--json"}); err != nil {
+		t.Fatal(err)
+	}
+	want := "{\"host\":\"dev\",\"local_port\":9222,\"remote_port\":19222,\"removed\":true}\n"
+	if stdout.String() != want {
+		t.Fatalf("output = %q, want %q", stdout.String(), want)
+	}
+	if len(manager.intent.PublishedForwards) != 0 {
+		t.Fatalf("manager intent = %#v", manager.intent)
+	}
+}
+
+func TestPublishCommandsReportInvalidLocalPort(t *testing.T) {
+	for _, command := range []string{"publish", "unpublish"} {
+		t.Run(command, func(t *testing.T) {
+			surface := &App{
+				Manager: &fakeManager{status: core.Status{Host: "dev"}},
+				Options: app.Options{ConfigPath: t.TempDir() + "/config.jsonc"},
+			}
+			err := surface.Run(context.Background(), []string{command, "invalid"})
+			if !errors.Is(err, ErrUsage) {
+				t.Fatalf("error = %v, want usage error", err)
+			}
+			want := command + " requires one local port 1..65535"
+			if err.Error() != want {
+				t.Fatalf("error = %q, want %q", err, want)
+			}
+		})
+	}
+}
+
+func TestNoCommandPrimerIncludesPublishedForwards(t *testing.T) {
+	var stdout bytes.Buffer
+	surface := &App{Options: app.Options{Stdout: &stdout}}
+	if err := surface.Run(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{
+		"publish LOCAL",
+		"unpublish LOCAL",
+		"publish a local port on the Development Host",
+	} {
+		if !strings.Contains(stdout.String(), text) {
+			t.Fatalf("primer = %q, missing %q", stdout.String(), text)
+		}
 	}
 }
 
@@ -183,6 +272,18 @@ func TestStatusJSONIncludesFallbackMapping(t *testing.T) {
 	}
 }
 
+func TestStatusJSONIncludesExplicitPublishedForward(t *testing.T) {
+	got := renderForwardStatusJSON(t, core.ForwardStatus{
+		Direction: core.LocalToRemote, LocalPort: 9222,
+		PreferredRemotePort: 19222, RemotePort: 19222,
+		State: core.ForwardActive,
+	})
+	want := "{\"host\":\"dev\",\"discovery\":{\"state\":\"active\"},\"listeners\":[{\"port\":631}],\"forwards\":[{\"direction\":\"local_to_remote\",\"local_port\":9222,\"preferred_remote_port\":19222,\"remote_port\":19222,\"state\":\"active\",\"kind\":\"published\"}]}\n"
+	if got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
 func renderForwardStatusJSON(t *testing.T, forward core.ForwardStatus) string {
 	t.Helper()
 	var stdout bytes.Buffer
@@ -218,6 +319,14 @@ func TestRootHasNoPolicyOrDirectorySurface(t *testing.T) {
 	}
 	if add.Flags().Lookup("local") == nil {
 		t.Fatal("add --local is missing")
+	}
+	publish, _, err := root.Find([]string{"publish"})
+	if err != nil || publish.Flags().Lookup("remote") == nil {
+		t.Fatal("publish --remote is missing")
+	}
+	unpublish, _, err := root.Find([]string{"unpublish"})
+	if err != nil || unpublish.Flags().Lookup("remote") != nil {
+		t.Fatal("unpublish command surface is invalid")
 	}
 	remove, _, err := root.Find([]string{"remove"})
 	if err != nil {

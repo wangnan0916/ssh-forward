@@ -25,19 +25,28 @@ const (
 	ForwardFailed   ForwardState = "failed"
 )
 
+type ForwardDirection string
+
+const (
+	RemoteToLocal ForwardDirection = "remote_to_local"
+	LocalToRemote ForwardDirection = "local_to_remote"
+)
+
 type DiscoveryStatus struct {
 	State      DiscoveryState `json:"state"`
 	Diagnostic string         `json:"diagnostic,omitempty"`
 }
 
 type ForwardStatus struct {
-	RemotePort         uint16       `json:"remote_port"`
-	PreferredLocalPort uint16       `json:"preferred_local_port"`
-	LocalPort          uint16       `json:"local_port"`
-	State              ForwardState `json:"state"`
-	Diagnostic         string       `json:"diagnostic,omitempty"`
-	Automatic          bool         `json:"automatic,omitempty"`
-	AllowFallback      bool         `json:"allow_fallback,omitempty"`
+	Direction           ForwardDirection `json:"direction"`
+	RemotePort          uint16           `json:"remote_port"`
+	PreferredRemotePort uint16           `json:"preferred_remote_port,omitempty"`
+	PreferredLocalPort  uint16           `json:"preferred_local_port,omitempty"`
+	LocalPort           uint16           `json:"local_port"`
+	State               ForwardState     `json:"state"`
+	Diagnostic          string           `json:"diagnostic,omitempty"`
+	Automatic           bool             `json:"automatic,omitempty"`
+	AllowFallback       bool             `json:"allow_fallback,omitempty"`
 }
 
 // Listener is a remote TCP listener reachable through the IPv4 loopback
@@ -73,17 +82,31 @@ func (forward RememberedForward) WithDefaults() RememberedForward {
 	return forward
 }
 
+type PublishedForward struct {
+	LocalPort  uint16 `json:"local_port"`
+	RemotePort uint16 `json:"remote_port"`
+}
+
+func (forward PublishedForward) WithDefaults() PublishedForward {
+	if forward.RemotePort == 0 {
+		forward.RemotePort = forward.LocalPort
+	}
+	return forward
+}
+
 type ForwardTarget struct {
-	RemotePort    uint16
-	LocalPort     uint16
-	AllowFallback bool
+	Direction  ForwardDirection
+	RemotePort uint16
+	LocalPort  uint16
 }
 
 // ForwardingIntent is the persistent intent a Manager reconciles. Remembered
-// Forwards stay live independently of listener state. Working Directory Rules
-// create Automatic Forwards only for currently matching listeners.
+// and Published Forwards stay live independently of listener state. Working
+// Directory Rules create Automatic Forwards only for currently matching
+// listeners.
 type ForwardingIntent struct {
 	RememberedForwards    []RememberedForward `json:"remembered_forwards"`
+	PublishedForwards     []PublishedForward  `json:"published_forwards"`
 	WorkingDirectoryRules []string            `json:"working_directory_rules"`
 }
 
@@ -91,12 +114,12 @@ var ErrManagerClosed = errors.New("manager is closed")
 
 // Backend is the true-external OpenSSH seam. Observe blocks while a fixed
 // remote scanner is alive and emits complete listener sets. Forward blocks
-// while one logical local forward exists and calls ready with the actual local
-// port after it binds. Close releases the shared transport after observation
-// and forwards have stopped.
+// while one exact logical forward exists and calls ready after its listening
+// endpoint binds. Close releases the shared transport after observation and
+// forwards have stopped.
 type Backend interface {
 	Observe(context.Context, HostAlias, func([]Listener)) error
-	Forward(context.Context, HostAlias, ForwardTarget, func(localPort uint16)) error
+	Forward(context.Context, HostAlias, ForwardTarget, func()) error
 	Close(context.Context) error
 }
 

@@ -2,9 +2,9 @@ package app
 
 import (
 	"errors"
-	"slices"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/kardianos/service"
 )
 
@@ -80,7 +80,7 @@ func TestUninstallServiceReportsStatusFailure(t *testing.T) {
 
 func wantServiceEvents(t *testing.T, got []string, want ...string) {
 	t.Helper()
-	if !slices.Equal(got, want) {
-		t.Fatalf("events = %v, want %v", got, want)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("service events mismatch (-want +got):\n%s", diff)
 	}
 }

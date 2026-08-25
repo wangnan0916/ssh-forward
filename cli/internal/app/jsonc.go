@@ -18,11 +18,7 @@ func writeAtomic(path string, data []byte) error {
 	return renameio.WriteFile(path, data, 0o600, renameio.WithStaticPermissions(0o600))
 }
 
-func readJSONC(path, label string, dest any) error {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
+func decodeJSONC(content []byte, label string, dest any) error {
 	plain, err := hujson.Standardize(content)
 	if err != nil {
 		return err

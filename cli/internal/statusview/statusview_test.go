@@ -124,6 +124,43 @@ func TestRenderShowsActualAndPreferredFallbackPorts(t *testing.T) {
 	}
 }
 
+func TestRenderSeparatesPublishedForwardsWithoutRemoteMetadataOrHyperlinks(t *testing.T) {
+	status := core.Status{
+		Host:      "dev",
+		Discovery: core.DiscoveryStatus{State: core.DiscoveryActive},
+		Listeners: []core.Listener{{
+			Port: 19222, App: "sshd", WorkingDirectory: "/should/not/appear",
+		}},
+		Forwards: []core.ForwardStatus{
+			{
+				Direction: core.LocalToRemote, LocalPort: 9222,
+				PreferredRemotePort: 19222, RemotePort: 19222,
+				State: core.ForwardActive,
+			},
+			{
+				Direction: core.LocalToRemote, LocalPort: 9333,
+				PreferredRemotePort: 19333, RemotePort: 19333,
+				State: core.ForwardFailed, Diagnostic: "remote_port_unavailable",
+			},
+		},
+	}
+	output := renderStatus(t, status, Options{Hyperlinks: true})
+	for _, text := range []string{
+		"PUBLISHED",
+		"LOCAL  REMOTE TARGET    KIND",
+		" 9222  127.0.0.1:19222  published",
+		"PUBLISH NEEDS ATTENTION",
+		"9333  127.0.0.1:19333  published  the Development Host port could not be opened",
+	} {
+		if !strings.Contains(output, text) {
+			t.Fatalf("output = %q, missing %q", output, text)
+		}
+	}
+	if strings.Contains(output, "/should/not/appear") || strings.Contains(output, "http://127.0.0.1:19222") {
+		t.Fatalf("published output leaked listener metadata or a hyperlink: %q", output)
+	}
+}
+
 func TestRenderColorIsExplicit(t *testing.T) {
 	status := core.Status{
 		Host:      "dev",
