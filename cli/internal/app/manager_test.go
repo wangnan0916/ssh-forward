@@ -18,7 +18,10 @@ type fixedManager struct {
 }
 
 func TestServiceConfigIsUserScopedAndAutomatic(t *testing.T) {
-	config := serviceConfig(Options{Layout: Layout{Dir: t.TempDir()}}, "dev", func() {})
+	config, err := serviceConfig(Options{Layout: Layout{Dir: t.TempDir()}}, "dev", func() {})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !slices.Equal(config.Arguments, []string{"manager", "serve", "--host", "dev"}) {
 		t.Fatalf("arguments = %v", config.Arguments)
 	}

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -125,11 +126,18 @@ func uninstallService(svc serviceUninstaller, layout Layout) error {
 
 func newManagerService(ctx context.Context, opts Options, host string) (service.Service, error) {
 	program := newManagerProgram(ctx, opts, host)
-	return service.New(program, serviceConfig(opts, host, program.wait))
+	config, err := serviceConfig(opts, host, program.wait)
+	if err != nil {
+		return nil, err
+	}
+	return service.New(program, config)
 }
 
-func serviceConfig(opts Options, host string, wait func()) *service.Config {
-	executable, _ := os.Executable()
+func serviceConfig(opts Options, host string, wait func()) (*service.Config, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("resolve manager executable: %w", err)
+	}
 	arguments := []string{"manager", "serve"}
 	if host != "" {
 		arguments = append(arguments, "--host", host)
@@ -157,7 +165,7 @@ func serviceConfig(opts Options, host string, wait func()) *service.Config {
 			"LogDirectory": opts.Layout.Dir,
 			"RunWait":      wait,
 		},
-	}
+	}, nil
 }
 
 type managerProgram struct {
