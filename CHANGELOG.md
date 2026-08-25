@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/wangnan0916/ssh-forward/compare/v0.4.0...v0.5.0) (2026-08-25)
+
+
+### Features
+
+* improve forwarding reliability and diagnostics ([#11](https://github.com/wangnan0916/ssh-forward/issues/11)) ([8a3484a](https://github.com/wangnan0916/ssh-forward/commit/8a3484afa6594f3d38997997b07725cc59592cf1))
+
 ## [0.4.0](https://github.com/wangnan0916/ssh-forward/compare/v0.3.0...v0.4.0) (2026-08-24)
 
 
