@@ -24,6 +24,18 @@ ports and working-directory globs you choose, and keeps the required local SSH
 port forwards running in the background. It does not install a remote agent or
 store SSH credentials.
 
+## Compared with `ssh -L`, autossh, and editor port forwarding
+
+Manual `ssh -L` is a good fit for one known, stable port mapping. autossh can
+monitor and restart a predefined SSH tunnel. Editor-integrated port forwarding
+is convenient when a remote development session owns the workflow.
+
+`ssh-forward` is for development services on the same Linux SSH host that need
+to remain available at localhost across terminals and editors. It automatically
+discovers loopback dev-server ports, keeps remembered or working-directory
+matched forwards active in a user background process, and delegates transport,
+authentication, jump hosts, and connection options to system OpenSSH.
+
 ## Automatically forward project services
 
 Forward short-lived development servers whose working directories are anywhere
