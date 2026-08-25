@@ -51,7 +51,7 @@ func LoadConfig(path string) (configFile, error) {
 		for _, port := range normalizedLegacyPorts(ports) {
 			config.RememberedForwards[host] = append(
 				config.RememberedForwards[host],
-				core.RememberedForward{RemotePort: port, LocalPort: port, AllowFallback: true},
+				core.RememberedForward{RemotePort: port}.WithDefaults(),
 			)
 		}
 	}

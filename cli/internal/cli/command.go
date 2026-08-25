@@ -83,9 +83,7 @@ func (a *App) rememberCommand(adding bool) *cobra.Command {
 			if err != nil {
 				return UsageError(err)
 			}
-			forward := core.RememberedForward{
-				RemotePort: remotePort, LocalPort: remotePort, AllowFallback: true,
-			}
+			forward := core.RememberedForward{RemotePort: remotePort}.WithDefaults()
 			if adding && cmd.Flags().Changed("local") {
 				localPort, _ := cmd.Flags().GetUint16("local")
 				if localPort == 0 {
