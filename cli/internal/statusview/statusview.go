@@ -13,6 +13,7 @@ import (
 	"charm.land/lipgloss/v2/table"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/diagnostics"
 )
 
 const (
@@ -20,6 +21,7 @@ const (
 	portWidth              = 5
 	missing                = "—"
 	portHeader             = "PORT"
+	remotePortHeader       = "REMOTE"
 	targetHeader           = "TARGET"
 	appHeader              = "APP"
 	kindHeader             = "KIND"
@@ -44,7 +46,7 @@ func Render(writer io.Writer, status core.Status, options Options) error {
 		listenersByPort[listener.Port] = listener
 	}
 	for _, forward := range status.Forwards {
-		forwardedPorts[forward.Port] = struct{}{}
+		forwardedPorts[forward.RemotePort] = struct{}{}
 	}
 
 	for _, state := range []core.ForwardState{core.ForwardActive, core.ForwardStarting, core.ForwardFailed} {
@@ -86,7 +88,7 @@ func renderSummary(status core.Status, options Options) string {
 	summary := fmt.Sprintf("%s  %s    %s  %s", hostLabel, host, discoveryLabel, state)
 	if status.Discovery.Diagnostic != "" {
 		detailLabel := "Discovery detail"
-		detail := diagnosticText(status.Discovery.Diagnostic)
+		detail := diagnostics.Text(status.Discovery.Diagnostic)
 		if options.Color {
 			detailLabel = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.BrightRed).Render(detailLabel)
 			detail = lipgloss.NewStyle().Foreground(lipgloss.BrightRed).Render(detail)
@@ -116,15 +118,15 @@ func renderForwards(
 		rows := make([][]string, 0, len(forwards))
 		for _, forward := range forwards {
 			rows = append(rows, []string{
-				strconv.Itoa(int(forward.Port)),
-				localTarget(forward.Port, false),
+				strconv.Itoa(int(forward.RemotePort)),
+				forwardTarget(forward, false),
 				forwardKind(forward),
-				diagnosticText(forward.Diagnostic),
+				diagnostics.Text(forward.Diagnostic),
 			})
 		}
 		return renderSection(
 			"NEEDS ATTENTION",
-			[]string{portHeader, targetHeader, kindHeader, issueHeader},
+			[]string{remotePortHeader, targetHeader, kindHeader, issueHeader},
 			rows,
 			stateColor(state),
 			options,
@@ -133,10 +135,10 @@ func renderForwards(
 
 	rows := make([][]string, 0, len(forwards))
 	for _, forward := range forwards {
-		listener := listeners[forward.Port]
+		listener := listeners[forward.RemotePort]
 		rows = append(rows, []string{
-			strconv.Itoa(int(forward.Port)),
-			localTarget(forward.Port, options.Hyperlinks && state == core.ForwardActive),
+			strconv.Itoa(int(forward.RemotePort)),
+			forwardTarget(forward, options.Hyperlinks && state == core.ForwardActive),
 			forwardKind(forward),
 			valueOrMissing(listener.App),
 			valueOrMissing(listener.WorkingDirectory),
@@ -148,7 +150,7 @@ func renderForwards(
 	}
 	return renderSection(
 		title,
-		[]string{portHeader, targetHeader, kindHeader, appHeader, workingDirectoryHeader},
+		[]string{remotePortHeader, targetHeader, kindHeader, appHeader, workingDirectoryHeader},
 		rows,
 		stateColor(state),
 		options,
@@ -216,7 +218,8 @@ func tableStyle(colored bool, accent color.Color, headers []string, workingDirec
 	return func(row, column int) lipgloss.Style {
 		style := lipgloss.NewStyle()
 		if column == 0 {
-			style = style.Width(portWidth + columnGap).Align(lipgloss.Right)
+			width := max(portWidth, lipgloss.Width(headers[0]))
+			style = style.Width(width + columnGap).Align(lipgloss.Right)
 		}
 		if column < len(headers)-1 {
 			style = style.PaddingRight(columnGap)
@@ -329,6 +332,14 @@ func localTarget(port uint16, hyperlink bool) string {
 	return "\x1b]8;;http://" + target + "\x1b\\" + target + "\x1b]8;;\x1b\\"
 }
 
+func forwardTarget(forward core.ForwardStatus, hyperlink bool) string {
+	target := localTarget(forward.LocalPort, hyperlink)
+	if preferred := forward.PreferredLocalPort; preferred != 0 && preferred != forward.LocalPort {
+		target += " (preferred " + strconv.Itoa(int(preferred)) + ")"
+	}
+	return target
+}
+
 func valueOrMissing(value string) string {
 	if value == "" {
 		return missing
@@ -355,26 +366,5 @@ func stateColor(state core.ForwardState) color.Color {
 		return lipgloss.BrightRed
 	default:
 		return lipgloss.BrightYellow
-	}
-}
-
-func diagnosticText(diagnostic string) string {
-	switch diagnostic {
-	case "invalid_alias":
-		return "SSH does not know this host alias."
-	case "authentication_failed":
-		return "SSH authentication failed."
-	case "host_key_failed":
-		return "SSH host key verification failed."
-	case "local_port_conflict":
-		return "the same local port is already in use"
-	case "transport_unavailable":
-		return "SSH connection unavailable"
-	case "discovery_invalid":
-		return "the remote listener scan returned invalid data"
-	case "forward_start_timeout":
-		return "OpenSSH did not open the local port in time"
-	default:
-		return diagnostic
 	}
 }

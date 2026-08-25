@@ -76,8 +76,18 @@ func Connect(ctx context.Context, opts Options) (core.Manager, error) {
 	replace := dialErr != nil && socketLive(opts.Layout.Socket)
 	if dialErr == nil {
 		status, statusErr := client.Status(ctx)
-		if statusErr == nil && managerMatches(status, host, intent) {
-			return client, nil
+		if statusErr == nil && status.Host == core.HostAlias(host) {
+			if managerMatches(status, host, intent) {
+				return client, nil
+			}
+			updateErr := client.UpdateIntent(ctx, intent)
+			if updateErr == nil {
+				return client, nil
+			}
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				_ = client.Close(context.Background())
+				return nil, ctxErr
+			}
 		}
 		_ = client.Close(context.Background())
 		replace = true
@@ -112,13 +122,17 @@ func managerMatches(status core.Status, host string, intent core.ForwardingInten
 	if status.Host != core.HostAlias(host) || !slices.Equal(status.WorkingDirectoryRules, intent.WorkingDirectoryRules) {
 		return false
 	}
-	rememberedPorts := make([]uint16, 0, len(status.Forwards))
+	rememberedForwards := make([]core.RememberedForward, 0, len(status.Forwards))
 	for _, forward := range status.Forwards {
 		if !forward.Automatic {
-			rememberedPorts = append(rememberedPorts, forward.Port)
+			rememberedForwards = append(rememberedForwards, core.RememberedForward{
+				RemotePort:    forward.RemotePort,
+				LocalPort:     forward.PreferredLocalPort,
+				AllowFallback: forward.AllowFallback,
+			})
 		}
 	}
-	return slices.Equal(rememberedPorts, intent.RememberedPorts)
+	return slices.Equal(rememberedForwards, intent.RememberedForwards)
 }
 
 // Serve runs the Manager in the current process. Installed service definitions

@@ -21,9 +21,12 @@ import (
 func TestDiscoversReachableListenersAndForwardsRemotePort(t *testing.T) {
 	environment := loadTestEnvironment(t)
 	port := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_V4", 38080)
+	localPort := availableLocalPort(t)
 	dualStackPort := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_DUAL_STACK", 38082)
 	ipv6OnlyPort := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_V6", 38081)
-	manager := core.NewManager(core.HostAlias(environment.host), environment.adapter, core.ForwardingIntent{RememberedPorts: []uint16{port}})
+	manager := core.NewManager(core.HostAlias(environment.host), environment.adapter, core.ForwardingIntent{
+		RememberedForwards: []core.RememberedForward{{RemotePort: port, LocalPort: localPort}},
+	})
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 
 	status := waitForStatus(t, manager, func(status core.Status) bool {
@@ -46,7 +49,52 @@ func TestDiscoversReachableListenersAndForwardsRemotePort(t *testing.T) {
 		t.Fatal("the root-owned wildcard SSH listener should not be discovered")
 	}
 
-	wantForwardedEcho(t, port, "hello")
+	wantForwardedEcho(t, localPort, "hello")
+}
+
+func TestFallsBackToTemporaryLocalPortWhenPreferredPortIsBusy(t *testing.T) {
+	environment := loadTestEnvironment(t)
+	remotePort := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_V4", 38080)
+	preferredPort, blocker := occupiedLocalPort(t)
+	t.Cleanup(func() { _ = blocker.Close() })
+	manager := core.NewManager(core.HostAlias(environment.host), environment.adapter, core.ForwardingIntent{
+		RememberedForwards: []core.RememberedForward{{
+			RemotePort: remotePort, LocalPort: preferredPort, AllowFallback: true,
+		}},
+	})
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	status := waitForStatus(t, manager, func(status core.Status) bool {
+		return len(status.Forwards) == 1 && status.Forwards[0].State == core.ForwardActive
+	})
+	forward := status.Forwards[0]
+	if forward.PreferredLocalPort != preferredPort || forward.LocalPort <= preferredPort {
+		t.Fatalf("forward status = %#v", forward)
+	}
+	wantForwardedEcho(t, forward.LocalPort, "fallback")
+}
+
+func TestStrictPreferredLocalPortReportsConflict(t *testing.T) {
+	environment := loadTestEnvironment(t)
+	remotePort := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_V4", 38080)
+	preferredPort, blocker := occupiedLocalPort(t)
+	t.Cleanup(func() { _ = blocker.Close() })
+	manager := core.NewManager(core.HostAlias(environment.host), environment.adapter, core.ForwardingIntent{
+		RememberedForwards: []core.RememberedForward{{
+			RemotePort: remotePort, LocalPort: preferredPort,
+		}},
+	})
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	status := waitForStatus(t, manager, func(status core.Status) bool {
+		return len(status.Forwards) == 1 &&
+			status.Forwards[0].State == core.ForwardFailed &&
+			status.Forwards[0].Diagnostic == "local_port_conflict"
+	})
+	forward := status.Forwards[0]
+	if forward.PreferredLocalPort != preferredPort || forward.LocalPort != preferredPort {
+		t.Fatalf("forward status = %#v", forward)
+	}
 }
 
 func TestAutomaticallyForwardsMatchingWorkingDirectoryWhileListenerExists(t *testing.T) {
@@ -80,7 +128,7 @@ printf '%%s\n' "$!"
 
 	waitForStatus(t, manager, func(status core.Status) bool {
 		listeners := listenersByPort(status.Listeners)
-		return len(status.Forwards) == 1 && status.Forwards[0].Port == port &&
+		return len(status.Forwards) == 1 && status.Forwards[0].RemotePort == port &&
 			status.Forwards[0].State == core.ForwardActive && status.Forwards[0].Automatic &&
 			listeners[port].WorkingDirectory == "/home/"+user+"/Workspace/project"
 	})
@@ -101,6 +149,46 @@ printf '%%s\n' "$!"
 	})
 }
 
+func TestCancelingOneForwardKeepsAnotherForwardOnSharedConnection(t *testing.T) {
+	environment := loadTestEnvironment(t)
+	first := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_V4", 38080)
+	second := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_DUAL_STACK", 38082)
+	manager := core.NewManager(core.HostAlias(environment.host), environment.adapter, core.ForwardingIntent{
+		RememberedForwards: []core.RememberedForward{
+			{RemotePort: first, LocalPort: first},
+			{RemotePort: second, LocalPort: second},
+		},
+	})
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+
+	waitForStatus(t, manager, func(status core.Status) bool {
+		return len(status.Forwards) == 2 &&
+			status.Forwards[0].State == core.ForwardActive &&
+			status.Forwards[1].State == core.ForwardActive
+	})
+	wantForwardedEcho(t, first, "first")
+	wantForwardedEcho(t, second, "second")
+
+	if err := manager.UpdateIntent(context.Background(), core.ForwardingIntent{
+		RememberedForwards: []core.RememberedForward{{RemotePort: second, LocalPort: second}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitForStatus(t, manager, func(status core.Status) bool {
+		if len(status.Forwards) != 1 || status.Forwards[0].RemotePort != second ||
+			status.Forwards[0].State != core.ForwardActive {
+			return false
+		}
+		connection, err := net.DialTimeout("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(first))), 50*time.Millisecond)
+		if err != nil {
+			return true
+		}
+		_ = connection.Close()
+		return false
+	})
+	wantForwardedEcho(t, second, "still-active")
+}
+
 type testEnvironment struct {
 	ssh     string
 	config  string
@@ -118,7 +206,9 @@ func loadTestEnvironment(t *testing.T) testEnvironment {
 	if err != nil {
 		t.Fatal(err)
 	}
-	adapter, err := openssh.New(openssh.Options{Executable: ssh, ConfigFile: config})
+	adapter, err := openssh.New(openssh.Options{
+		Executable: ssh, ConfigFile: config, ControlDirectory: t.TempDir(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,6 +285,36 @@ func fixturePort(t *testing.T, name string, fallback uint16) uint16 {
 		t.Fatal(err)
 	}
 	return uint16(parsed)
+}
+
+func availableLocalPort(t *testing.T) uint16 {
+	t.Helper()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := uint16(listener.Addr().(*net.TCPAddr).Port)
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return port
+}
+
+func occupiedLocalPort(t *testing.T) (uint16, net.Listener) {
+	t.Helper()
+	for range 100 {
+		blocker, err := net.Listen("tcp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := blocker.Addr().(*net.TCPAddr).Port
+		if port < 65535 {
+			return uint16(port), blocker
+		}
+		_ = blocker.Close()
+	}
+	t.Fatal("could not reserve an occupied port below 65535")
+	return 0, nil
 }
 
 func listenersByPort(listeners []core.Listener) map[uint16]core.Listener {

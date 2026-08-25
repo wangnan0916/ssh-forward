@@ -26,7 +26,7 @@ func BenchmarkManagerStatus(b *testing.B) {
 		for index := range test.ports {
 			port := uint16(10_000 + index)
 			subject.listeners[port] = Listener{Port: port, App: "node", WorkingDirectory: "/workspace/app"}
-			subject.states[port] = ForwardStatus{Port: port, State: ForwardActive}
+			subject.states[port] = ForwardStatus{RemotePort: port, LocalPort: port, State: ForwardActive}
 		}
 		b.Run(test.name, func(b *testing.B) {
 			ctx := context.Background()

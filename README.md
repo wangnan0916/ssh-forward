@@ -2,7 +2,9 @@
 
 Discover services reachable through IPv4 loopback on a Linux SSH host and keep
 selected ports—or ports whose process working directory matches a configured
-glob—available on the same port at `localhost` through system OpenSSH.
+glob—available at `localhost` through system OpenSSH. Remembered forwards may
+use a different preferred local port and choose whether to fall back when it
+is busy. Automatic forwards always allow temporary fallback.
 
 [![CI](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml/badge.svg)](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -32,9 +34,10 @@ ssh-forward add --pwd '/home/me/Workspace/**'
 ```
 
 When a matching remote process starts listening, its port becomes available on
-the same port at `localhost`. When the listener stops, the automatic SSH
-forward disappears. This works well for development servers, preview tools,
-notebooks, and OAuth callback servers that use temporary ports.
+the same port at `localhost`, or the next available port if that port is busy.
+When the listener stops, the automatic SSH forward disappears. This works well
+for development servers, preview tools, notebooks, and OAuth callback servers
+that use temporary ports.
 
 ## Lightweight
 
@@ -49,11 +52,13 @@ Measured with `v0.1.0` on an Apple M1 Pro running macOS 26.6.2:
 | Idle CPU, ten one-second samples | 0.0% |
 | Warm `ssh-forward --version` startup | 7.4 ms average |
 
-The runtime totals include the Manager and its system OpenSSH children: one
-`ssh` process for discovery and one more per active forward. RSS can count
-shared pages more than once. At the 256-port observation limit, a complete
-Manager status snapshot takes about 28–30 µs with two allocations, and parsing
-a complete scanner frame takes about 44–49 µs.
+The v0.1.0 runtime totals include the Manager and the system OpenSSH process
+layout used by that release. Current Managers use one product-owned OpenSSH
+master connection and add or cancel forwards through its control socket, so
+the number of SSH transports no longer grows with the number of ports. RSS can
+count shared pages more than once. At the 256-port observation limit, a
+complete Manager status snapshot takes about 28–30 µs with two allocations,
+and parsing a complete scanner frame takes about 44–49 µs.
 
 These numbers are a reproducible baseline rather than a performance guarantee.
 Run the benchmarks with:
@@ -100,7 +105,8 @@ Then choose the host and remember the ports you want locally:
 ```bash
 ssh-forward default my-dev
 ssh-forward status              # see remote loopback listeners
-ssh-forward add 5173            # keep remote 5173 on localhost:5173
+ssh-forward add 5173            # prefer localhost:5173; temporarily fall back if busy
+ssh-forward add 8443 --local 18443  # require remote 8443 on localhost:18443
 ssh-forward add --pwd '/home/me/Workspace/**'  # forward matching live services
 ssh-forward status --watch      # follow changes
 ssh-forward remove 5173
@@ -114,11 +120,12 @@ next command automatically replaces an older Manager.
 ## Commands
 
 ```text
-ssh-forward add PORT
+ssh-forward add PORT [--local PORT]
 ssh-forward add --pwd GLOB
 ssh-forward remove PORT
 ssh-forward remove --pwd GLOB
 ssh-forward status [--json] [--watch]
+ssh-forward doctor [--json]
 ssh-forward host [--json]
 ssh-forward default [ALIAS]
 ssh-forward uninstall
@@ -138,23 +145,35 @@ Global options are `--host ALIAS` and `--ssh-config PATH`. Set
    because the forwarding target cannot reach them. Executable names and
    working directories are collected on a best-effort basis when `ss` and the
    relevant procfs links are available. No remote agent is installed.
-3. For each remembered port, the Manager supervises one
-   `ssh -N -L 127.0.0.1:PORT:127.0.0.1:PORT HOST` process. The local port stays
-   available while the remote process restarts; individual connections fail
-   until the remote listener returns.
+3. The Manager owns one product-private OpenSSH master connection and uses
+   OpenSSH control commands to add and cancel each desired remote-to-local
+   forward. The local port stays available while the remote process restarts;
+   individual connections fail until the remote listener returns. Stopping one
+   Forward does not disturb the shared connection or other ports.
 4. Absolute working-directory globs create Automatic Forwards for matching
    Remote Listeners. `*` matches within one path segment and `**` crosses path
    segments. When a listener disappears or stops matching, its Automatic
    Forward stops. Quote globs so the local shell does not expand them.
-5. HTTP over a user-only Unix socket lets later CLI calls read Manager status.
+5. Remembered Forwards created without `--local` and Automatic Forwards try up
+   to 20 higher local ports when the preferred port is busy. The actual port
+   appears in status but is temporary and is never written to configuration.
+   Explicit `--local` mappings are strict by default.
+6. HTTP over a user-only Unix socket lets later CLI calls read Manager status.
    `status --watch` polls that status.
 
 The OS user service manager (launchd on macOS, the detected init system on
 Linux) owns process startup, restart, and logs. Installation and startup happen
 automatically when a command first needs the Manager.
 
-There is no alternate local-port allocation. If the same local port is in use,
-status reports the conflict and retries later.
+Run `ssh-forward doctor` for a read-only check of config files, OpenSSH, Host
+selection, Manager health, Forward failures, and a real remote listener scan.
+It does not install, restart, or change the Manager. Use `--json` for
+automation.
+
+Use `add REMOTE --local LOCAL` when a stable local address is required. The
+command creates a strict mapping: if another process owns that port, status
+reports the conflict and retries later. Remembered preferred ports for one
+Host must be distinct.
 
 ## Configuration
 
@@ -162,10 +181,13 @@ All persistent intent is in one `config.jsonc`:
 
 ```jsonc
 {
-  "schema_version": 2,
+  "schema_version": 4,
   "default_host": "my-dev",
-  "forwards": {
-    "my-dev": [5173, 8080]
+  "remembered_forwards": {
+    "my-dev": [
+      {"remote_port": 5173, "local_port": 5173, "allow_fallback": true},
+      {"remote_port": 8443, "local_port": 18443}
+    ]
   },
   "working_directory_rules": {
     "my-dev": ["/home/me/Workspace/**"]
@@ -173,11 +195,18 @@ All persistent intent is in one `config.jsonc`:
 }
 ```
 
-Commands compare this file with the running Manager and restart it when the
-selected host, remembered ports, working-directory rules, or binary version
-changes. Schema 1 files remain readable and upgrade to schema 2 on the next
-write. Runtime observations, automatically selected ports, and process IDs are
-not persisted.
+`allow_fallback` is authoritative whether or not the remote and local ports
+differ. `add REMOTE` enables it, while `add REMOTE --local LOCAL` leaves it
+disabled. A manually edited schema-4 entry may explicitly choose either
+policy.
+
+Commands send remembered-forward and working-directory-rule changes to the
+running Manager, which reconciles only the affected forwards. Unchanged
+forwards stay connected. A selected-host, protocol, or binary-version change
+still replaces the Manager. Schema 1–3 files remain readable; during migration,
+legacy same-port mappings gain temporary fallback and legacy custom mappings
+remain strict. The file upgrades to schema 4 on the next write. Runtime
+observations, temporary actual ports, and process IDs are not persisted.
 
 Default directories:
 
@@ -210,7 +239,6 @@ selected Host and ports.
 - one active SSH host per Manager
 - TCP listeners reachable through remote `127.0.0.1`; IPv6-only listeners are
   excluded
-- same local and remote port only
 - Automatic Forwards require best-effort process working-directory metadata;
   listeners without that metadata cannot match a rule
 

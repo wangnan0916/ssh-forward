@@ -156,6 +156,7 @@ const primerText = `ssh-forward — expose Development Host ports on localhost
 
 Daily
   status          what is forwarded right now
+  doctor          diagnose configuration, SSH, and Manager health
   add PORT        remember a remote port
   add --pwd GLOB  auto-forward matching working directories
   remove PORT     forget a remembered port
@@ -166,6 +167,7 @@ Host
   default ALIAS   pin the default host
 
 Use status --watch for live updates.
+Run doctor when SSH or forwarding is unhealthy.
 Run uninstall before removing the binary.
 
 ssh-forward COMMAND --help for details.

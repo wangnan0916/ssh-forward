@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,7 +17,8 @@ import (
 
 const (
 	managerStatusPath      = "/v1/status"
-	managerProtocolVersion = 2
+	managerIntentPath      = "/v1/intent"
+	managerProtocolVersion = 3
 )
 
 var ErrIncompatibleManager = errors.New("the running manager is incompatible")
@@ -48,22 +50,48 @@ type managerStatus struct {
 
 func managerHandler(manager core.Manager, version string) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodGet || request.URL.Path != managerStatusPath {
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == managerStatusPath:
+			handleManagerStatus(writer, request, manager, version)
+		case request.Method == http.MethodPut && request.URL.Path == managerIntentPath:
+			handleManagerIntentUpdate(writer, request, manager)
+		default:
 			http.NotFound(writer, request)
-			return
 		}
-		status, err := manager.Status(request.Context())
-		if err != nil {
-			http.Error(writer, "manager unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		writer.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(writer).Encode(managerStatus{
-			ProtocolVersion: managerProtocolVersion,
-			ManagerVersion:  version,
-			Status:          status,
-		})
 	})
+}
+
+func handleManagerStatus(writer http.ResponseWriter, request *http.Request, manager core.Manager, version string) {
+	status, err := manager.Status(request.Context())
+	if err != nil {
+		http.Error(writer, "manager unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(writer).Encode(managerStatus{
+		ProtocolVersion: managerProtocolVersion,
+		ManagerVersion:  version,
+		Status:          status,
+	})
+}
+
+func handleManagerIntentUpdate(writer http.ResponseWriter, request *http.Request, manager core.Manager) {
+	decoder := json.NewDecoder(io.LimitReader(request.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	var intent core.ForwardingIntent
+	if err := decoder.Decode(&intent); err != nil {
+		http.Error(writer, "invalid forwarding intent", http.StatusBadRequest)
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		http.Error(writer, "invalid forwarding intent", http.StatusBadRequest)
+		return
+	}
+	if err := manager.UpdateIntent(request.Context(), intent); err != nil {
+		http.Error(writer, "manager unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
 }
 
 type managerClient struct {
@@ -88,6 +116,30 @@ func dialManager(ctx context.Context, socket, version string) (core.Manager, err
 
 func (c *managerClient) Status(ctx context.Context) (core.Status, error) {
 	return c.readStatus(ctx, "")
+}
+
+func (c *managerClient) UpdateIntent(ctx context.Context, intent core.ForwardingIntent) error {
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(intent); err != nil {
+		return err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, "http://manager"+managerIntentPath, &body)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := c.client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound {
+		return ErrIncompatibleManager
+	}
+	if response.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("manager intent update: %s", response.Status)
+	}
+	return nil
 }
 
 func (c *managerClient) readStatus(ctx context.Context, version string) (core.Status, error) {

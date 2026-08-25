@@ -21,22 +21,35 @@ import (
 
 var ErrInvalidAlias = errors.New("invalid Development Host alias")
 
-const maxStderrTailBytes = 64 << 10
+const (
+	maxStderrTailBytes     = 64 << 10
+	maxTemporaryPortOffset = 20
+	forwardProbeInterval   = 25 * time.Millisecond
+	forwardDialTimeout     = 50 * time.Millisecond
+	maximumTCPPort         = 1<<16 - 1
+)
 
 type Options struct {
-	Executable   string
-	ConfigFile   string
-	ReadyTimeout time.Duration
-	WaitDelay    time.Duration
+	Executable       string
+	ConfigFile       string
+	ControlDirectory string
+	ReadyTimeout     time.Duration
+	WaitDelay        time.Duration
 }
 
-// Adapter observes remote listeners and keeps one OpenSSH local forward
-// alive. OpenSSH owns the forwarding data plane.
+// Adapter observes remote listeners and reconciles local forwards through one
+// product-private OpenSSH master per host. OpenSSH owns the forwarding data
+// plane.
 type Adapter struct {
-	executable   string
-	configFile   string
-	readyTimeout time.Duration
-	waitDelay    time.Duration
+	executable       string
+	configFile       string
+	controlDirectory string
+	readyTimeout     time.Duration
+	waitDelay        time.Duration
+
+	mu      sync.Mutex
+	closed  bool
+	masters map[core.HostAlias]*sshMaster
 }
 
 func New(options Options) (*Adapter, error) {
@@ -46,6 +59,19 @@ func New(options Options) (*Adapter, error) {
 	if options.ConfigFile != "" && !filepath.IsAbs(options.ConfigFile) {
 		return nil, errors.New("OpenSSH config path is not absolute")
 	}
+	if !filepath.IsAbs(options.ControlDirectory) {
+		return nil, errors.New("OpenSSH control directory path is not absolute")
+	}
+	if err := os.MkdirAll(options.ControlDirectory, 0o700); err != nil {
+		return nil, fmt.Errorf("create OpenSSH control directory: %w", err)
+	}
+	info, err := os.Stat(options.ControlDirectory)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() || info.Mode().Perm()&0o022 != 0 {
+		return nil, errors.New("OpenSSH control directory must not be writable by other users")
+	}
 	if options.ReadyTimeout <= 0 {
 		options.ReadyTimeout = 10 * time.Second
 	}
@@ -53,8 +79,12 @@ func New(options Options) (*Adapter, error) {
 		options.WaitDelay = 2 * time.Second
 	}
 	return &Adapter{
-		executable: options.Executable, configFile: options.ConfigFile,
-		readyTimeout: options.ReadyTimeout, waitDelay: options.WaitDelay,
+		executable:       options.Executable,
+		configFile:       options.ConfigFile,
+		controlDirectory: options.ControlDirectory,
+		readyTimeout:     options.ReadyTimeout,
+		waitDelay:        options.WaitDelay,
+		masters:          make(map[core.HostAlias]*sshMaster),
 	}, nil
 }
 
@@ -66,11 +96,15 @@ func (a *Adapter) Observe(ctx context.Context, host core.HostAlias, emit func([]
 		}
 		return backendError("invalid_alias")
 	}
+	master, err := a.ensureMaster(ctx, host)
+	if err != nil {
+		return err
+	}
 	arguments := append(a.configArguments(),
-		"-T", "-o", "ControlMaster=no", "-o", "ControlPath=none",
+		"-S", controlSocketTemplate, "-T", "-o", "ControlMaster=no",
 		alias, "sh", "-s",
 	)
-	command := exec.Command(a.executable, arguments...)
+	command := a.command(arguments...)
 	stderr := &boundedBuffer{limit: maxStderrTailBytes}
 	stdout, err := command.StdoutPipe()
 	if err != nil {
@@ -78,21 +112,33 @@ func (a *Adapter) Observe(ctx context.Context, host core.HostAlias, emit func([]
 	}
 	command.Stdin = strings.NewReader(scannerScript)
 	command.Stderr = stderr
-	command.Env = approvedEnvironment()
-	command.WaitDelay = a.waitDelay
 	configureProcess(command)
 	if err := command.Start(); err != nil {
 		return err
 	}
-	stop := context.AfterFunc(ctx, func() { _ = terminateProcess(command) })
+	stopContextWatch := context.AfterFunc(ctx, func() { _ = terminateProcess(command) })
+	defer stopContextWatch()
+	stopMasterWatch := make(chan struct{})
+	defer close(stopMasterWatch)
+	go func() {
+		select {
+		case <-master.done:
+			_ = terminateProcess(command)
+		case <-stopMasterWatch:
+		}
+	}()
 	scanErr := scanListenerFrames(stdout, emit)
 	if scanErr != nil {
 		_ = terminateProcess(command)
 	}
 	waitErr := command.Wait()
-	stop()
 	if ctx.Err() != nil {
 		return ctx.Err()
+	}
+	select {
+	case <-master.done:
+		return master.failure()
+	default:
 	}
 	if scanErr != nil {
 		return backendError("discovery_invalid")
@@ -100,71 +146,107 @@ func (a *Adapter) Observe(ctx context.Context, host core.HostAlias, emit func([]
 	return classifyError(waitErr, stderr.String())
 }
 
-func (a *Adapter) Forward(ctx context.Context, host core.HostAlias, port uint16, ready func()) error {
+func (a *Adapter) Forward(
+	ctx context.Context,
+	host core.HostAlias,
+	target core.ForwardTarget,
+	ready func(localPort uint16),
+) error {
 	alias := string(host)
 	if !validAlias(alias) {
 		return backendError("invalid_alias")
 	}
-	forward := fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", port, port)
-	arguments := append(a.configArguments(),
-		"-N", "-T", "-o", "ControlMaster=no", "-o", "ControlPath=none",
-		"-o", "ExitOnForwardFailure=yes", "-L", forward, alias,
-	)
-	command := exec.Command(a.executable, arguments...)
-	stderr := &boundedBuffer{limit: maxStderrTailBytes}
-	command.Stderr = stderr
-	command.Stdout = io.Discard
-	command.Env = approvedEnvironment()
-	command.WaitDelay = a.waitDelay
-	configureProcess(command)
-	if err := command.Start(); err != nil {
+	master, err := a.ensureMaster(ctx, host)
+	if err != nil {
 		return err
 	}
-	done := make(chan error, 1)
-	go func() { done <- command.Wait() }()
+	localPort, forward, err := a.startForward(ctx, host, target)
+	if err != nil {
+		return err
+	}
+	defer a.cancelForward(host, forward)
+	if err := a.waitForForward(ctx, master, localPort); err != nil {
+		return err
+	}
+	ready(localPort)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-master.done:
+		return master.failure()
+	}
+}
 
+func (a *Adapter) startForward(
+	ctx context.Context,
+	host core.HostAlias,
+	target core.ForwardTarget,
+) (uint16, string, error) {
+	for offset := 0; ; offset++ {
+		localPort := target.LocalPort + uint16(offset)
+		forward := fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", localPort, target.RemotePort)
+		err := a.runControl(ctx, host, "forward", forward)
+		if err == nil {
+			return localPort, forward, nil
+		}
+		// The mux client reports only a generic failure for local bind errors;
+		// OpenSSH writes the useful detail to the long-lived master process.
+		if core.ErrorDiagnostic(err) == "transport_unavailable" {
+			if checkErr := a.runControl(ctx, host, "check", ""); checkErr == nil {
+				err = backendError("local_port_conflict")
+			}
+		}
+		a.cancelForward(host, forward)
+		if !target.AllowFallback ||
+			core.ErrorDiagnostic(err) != "local_port_conflict" ||
+			offset == maxTemporaryPortOffset || localPort == maximumTCPPort {
+			return 0, "", err
+		}
+	}
+}
+
+func (a *Adapter) waitForForward(ctx context.Context, master *sshMaster, port uint16) error {
 	deadline := time.NewTimer(a.readyTimeout)
-	probe := time.NewTicker(25 * time.Millisecond)
+	probe := time.NewTicker(forwardProbeInterval)
 	defer deadline.Stop()
 	defer probe.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			stopProcess(command, done, a.waitDelay)
 			return ctx.Err()
-		case err := <-done:
-			return classifyError(err, stderr.String())
+		case <-master.done:
+			return master.failure()
 		case <-deadline.C:
-			stopProcess(command, done, a.waitDelay)
 			return backendError("forward_start_timeout")
 		case <-probe.C:
-			connection, err := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", port), 50*time.Millisecond)
+			connection, err := net.DialTimeout(
+				"tcp4", fmt.Sprintf("127.0.0.1:%d", port), forwardDialTimeout,
+			)
 			if err != nil {
 				continue
 			}
 			_ = connection.Close()
-			ready()
-			select {
-			case <-ctx.Done():
-				stopProcess(command, done, a.waitDelay)
-				return ctx.Err()
-			case err := <-done:
-				return classifyError(err, stderr.String())
-			}
+			return nil
 		}
 	}
 }
 
-func stopProcess(command *exec.Cmd, done <-chan error, delay time.Duration) {
-	_ = terminateProcess(command)
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-done:
-	case <-timer.C:
-		_ = killProcess(command)
-		<-done
-	}
+func (a *Adapter) command(arguments ...string) *exec.Cmd {
+	command := exec.Command(a.executable, arguments...)
+	a.configureCommand(command)
+	return command
+}
+
+func (a *Adapter) commandContext(ctx context.Context, arguments ...string) *exec.Cmd {
+	command := exec.CommandContext(ctx, a.executable, arguments...)
+	a.configureCommand(command)
+	return command
+}
+
+func (a *Adapter) configureCommand(command *exec.Cmd) {
+	command.Dir = a.controlDirectory
+	command.Env = approvedEnvironment()
+	command.WaitDelay = a.waitDelay
 }
 
 func (a *Adapter) validateAlias(ctx context.Context, alias string) error {
@@ -172,11 +254,9 @@ func (a *Adapter) validateAlias(ctx context.Context, alias string) error {
 		return ErrInvalidAlias
 	}
 	arguments := append(a.configArguments(), "-G", alias)
-	command := exec.CommandContext(ctx, a.executable, arguments...)
+	command := a.commandContext(ctx, arguments...)
 	command.Stdout = io.Discard
 	command.Stderr = io.Discard
-	command.Env = approvedEnvironment()
-	command.WaitDelay = a.waitDelay
 	return command.Run()
 }
 

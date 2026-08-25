@@ -17,7 +17,13 @@ import (
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
-func ensureService(svc service.Service, layout Layout) error {
+type managerService interface {
+	serviceUninstaller
+	Start() error
+	Install() error
+}
+
+func ensureService(svc managerService, layout Layout) error {
 	status, err := svc.Status()
 	switch {
 	case errors.Is(err, service.ErrNotInstalled):
@@ -36,7 +42,7 @@ func ensureService(svc service.Service, layout Layout) error {
 	}
 }
 
-func installAndStart(svc service.Service) error {
+func installAndStart(svc managerService) error {
 	if err := svc.Install(); err != nil {
 		status, statusErr := svc.Status()
 		if statusErr != nil {
@@ -55,7 +61,7 @@ func installAndStart(svc service.Service) error {
 	return nil
 }
 
-func reinstallService(svc service.Service, layout Layout) error {
+func reinstallService(svc managerService, layout Layout) error {
 	status, err := svc.Status()
 	if err == nil {
 		if status == service.StatusRunning {
@@ -176,7 +182,7 @@ func (p *managerProgram) Start(service.Service) error {
 	if err != nil {
 		return err
 	}
-	manager, err := inProcess(p.host, p.opts.SSHConfigPath, p.opts.ConfigPath)
+	manager, err := inProcess(p.host, p.opts.SSHConfigPath, p.opts.ConfigPath, p.opts.Layout.Dir)
 	if err != nil {
 		_ = listener.Close()
 		_ = os.Remove(p.opts.Layout.Socket)
