@@ -46,6 +46,7 @@ type Adapter struct {
 	controlDirectory string
 	readyTimeout     time.Duration
 	waitDelay        time.Duration
+	environment      []string
 
 	mu      sync.Mutex
 	closed  bool
@@ -84,6 +85,7 @@ func New(options Options) (*Adapter, error) {
 		controlDirectory: options.ControlDirectory,
 		readyTimeout:     options.ReadyTimeout,
 		waitDelay:        options.WaitDelay,
+		environment:      approvedEnvironment(),
 		masters:          make(map[core.HostAlias]*sshMaster),
 	}, nil
 }
@@ -245,7 +247,7 @@ func (a *Adapter) commandContext(ctx context.Context, arguments ...string) *exec
 
 func (a *Adapter) configureCommand(command *exec.Cmd) {
 	command.Dir = a.controlDirectory
-	command.Env = approvedEnvironment()
+	command.Env = a.environment
 	command.WaitDelay = a.waitDelay
 }
 
