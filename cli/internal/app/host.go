@@ -45,14 +45,11 @@ func resolution(err error) error {
 // prompts and pins the choice as default_host; a non-terminal run lists
 // the candidates. An injected PickHost does not pin.
 func ResolveHost(opts Options) (string, error) {
+	opts = opts.WithDefaults()
 	if opts.HostFlag != "" {
 		return opts.HostFlag, nil
 	}
-	configPath := opts.ConfigPath
-	if configPath == "" {
-		configPath = DefaultLayout().Config
-	}
-	if host, err := PinnedHost(configPath); err == nil {
+	if host, err := PinnedHost(opts.ConfigPath); err == nil {
 		return host, nil
 	} else if !errors.Is(err, ErrNoHost) {
 		return "", resolution(err)
@@ -77,12 +74,8 @@ func ResolveHost(opts Options) (string, error) {
 				return "", resolution(err)
 			}
 			if opts.PickHost == nil {
-				if err := SetDefaultHost(configPath, host); err == nil {
-					out := opts.Stdout
-					if out == nil {
-						out = io.Discard
-					}
-					fmt.Fprintf(out, "default host set to %s\n", host)
+				if err := SetDefaultHost(opts.ConfigPath, host); err == nil {
+					fmt.Fprintf(opts.Stdout, "default host set to %s\n", host)
 				}
 			}
 			return host, nil

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"slices"
 	"time"
 
@@ -39,11 +38,12 @@ func (o Options) WithDefaults() Options {
 	if o.Layout.Dir == "" {
 		o.Layout = DefaultLayout()
 	} else {
+		filled := layoutForDir(o.Layout.Dir)
 		if o.Layout.Config == "" {
-			o.Layout.Config = filepath.Join(o.Layout.Dir, "config.jsonc")
+			o.Layout.Config = filled.Config
 		}
 		if o.Layout.Socket == "" {
-			o.Layout.Socket = filepath.Join(o.Layout.Dir, "manager.sock")
+			o.Layout.Socket = filled.Socket
 		}
 	}
 	if o.ConfigPath == "" {

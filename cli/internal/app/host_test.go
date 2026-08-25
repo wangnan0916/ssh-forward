@@ -176,6 +176,20 @@ func TestResolveHostFlagWins(t *testing.T) {
 	}
 }
 
+func TestResolveHostUsesLayoutConfig(t *testing.T) {
+	directory := t.TempDir()
+	if err := SetDefaultHost(filepath.Join(directory, "config.jsonc"), "layout-dev"); err != nil {
+		t.Fatal(err)
+	}
+	host, err := ResolveHost(Options{Layout: Layout{Dir: directory}})
+	if err != nil {
+		t.Fatalf("ResolveHost: %v", err)
+	}
+	if host != "layout-dev" {
+		t.Fatalf("host = %q, want layout-dev", host)
+	}
+}
+
 func TestSSHConfigPathUsesFlag(t *testing.T) {
 	if got := SSHConfigPath("/explicit/config"); got != "/explicit/config" {
 		t.Fatalf("SSHConfigPath = %q", got)
