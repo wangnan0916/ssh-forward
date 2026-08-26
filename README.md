@@ -155,6 +155,20 @@ ssh-forward remove --pwd '/home/me/Workspace/**'
 ssh-forward unpublish 9222
 ```
 
+For a connection that works with OpenSSH's defaults, `--host` also accepts a
+hostname, IP address, or `user@host` without adding an SSH config alias:
+
+```bash
+ssh-forward --host 192.168.1.20 status
+ssh-forward --host ubuntu@192.168.1.20 publish 9222
+```
+
+`--host` names the SSH target; it does not accept a complete `ssh` command or
+forward OpenSSH flags such as `-p`, `-i`, `-J`, or `-o`. Keep custom ports,
+identities, jump hosts, and other connection options in SSH config, optionally
+selected with `--ssh-config PATH`. `default ALIAS` only pins a literal `Host`
+alias from that config.
+
 The first command that needs a connection automatically installs and starts a
 user-scoped background manager. Later commands reuse it. After an upgrade, the
 next command automatically replaces an older Manager.
@@ -175,7 +189,7 @@ ssh-forward default [ALIAS]
 ssh-forward uninstall
 ```
 
-Global options are `--host ALIAS` and `--ssh-config PATH`. Set
+Global options are `--host TARGET` and `--ssh-config PATH`. Set
 `SSH_FORWARD_CONFIG_DIR` to move product state.
 
 ## How it works

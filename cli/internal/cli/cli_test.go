@@ -302,6 +302,14 @@ func renderForwardStatusJSON(t *testing.T, forward core.ForwardStatus) string {
 	return stdout.String()
 }
 
+func TestRootDescribesDirectHostTargets(t *testing.T) {
+	root := (&App{}).RootCommand()
+	hostFlag := root.PersistentFlags().Lookup("host")
+	if hostFlag == nil || !strings.Contains(hostFlag.Usage, "hostname, IP, or user@host") {
+		t.Fatal("--host does not describe direct SSH targets")
+	}
+}
+
 func TestRootHasNoPolicyOrDirectorySurface(t *testing.T) {
 	root := (&App{}).RootCommand()
 	if _, _, err := root.Find([]string{"policy"}); err == nil {
