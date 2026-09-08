@@ -15,7 +15,7 @@ func grouped(id string, command *cobra.Command) *cobra.Command {
 func (a *App) RootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use: "ssh-forward", Short: "forward ports through OpenSSH",
-		Long: `ssh-forward shows loopback TCP listeners on one SSH host, keeps remembered forwards available on localhost, and publishes explicit local services to the host.
+		Long: `ssh-forward shows loopback TCP listeners on one SSH host, keeps remembered forwards available on all local IPv4 interfaces, and publishes explicit local services to the host.
 
 Select an alias, hostname, IP, or user@host with --host TARGET (-h is help).
 Pin a configured alias with: ssh-forward default ALIAS`,

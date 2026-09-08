@@ -72,7 +72,7 @@ func (a *Adapter) ensureMaster(ctx context.Context, host core.HostAlias) (*sshMa
 
 func (a *Adapter) startMaster(host core.HostAlias) (*sshMaster, error) {
 	arguments := append(a.configArguments(),
-		"-M", "-N", "-T", "-S", a.controlPath(host),
+		"-M", "-N", "-T", "-g", "-S", a.controlPath(host),
 		"-o", "ClearAllForwardings=yes",
 		"-o", "ControlMaster=yes", "-o", "ControlPersist=no",
 		string(host),

@@ -18,9 +18,9 @@ Render human status as compact, borderless tables with explicit columns:
 Host  ubuntu    Discovery  active
 
 FORWARDS
-REMOTE  TARGET           KIND        APP   WORKING DIRECTORY
-  5173  127.0.0.1:15173  remembered  —     —
- 12000  127.0.0.1:12000  automatic   node  …/console.cli.im
+REMOTE  TARGET         KIND        APP   WORKING DIRECTORY
+  5173  0.0.0.0:15173  remembered  —     —
+ 12000  0.0.0.0:12000  automatic   node  …/console.cli.im
 
 AVAILABLE
  PORT  APP           WORKING DIRECTORY
@@ -103,7 +103,8 @@ The compatibility projection does not affect Manager IPC.
    the terminal or become a full-screen TUI.
 10. `Connecting to HOST...` remains a stderr progress message and is outside
    the table.
-11. In an ANSI-enabled TTY, active forward targets use OSC 8 hyperlinks to
+11. In an ANSI-enabled TTY, active imported targets display the actual
+    `0.0.0.0:PORT` listener while using OSC 8 hyperlinks to
     `http://127.0.0.1:PORT`. Starting and failed targets remain plain text, as
     does all piped or redirected output.
 

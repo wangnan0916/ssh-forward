@@ -28,7 +28,7 @@ the MCP process remains on the Development Host.
 The current product imports a Development Host service onto the local machine:
 
 ```text
-local 127.0.0.1:LOCAL ── ssh -L ──> Development Host 127.0.0.1:REMOTE
+local 0.0.0.0:LOCAL ── ssh -g -L ──> Development Host 127.0.0.1:REMOTE
 ```
 
 Remote development also needs the inverse operation. An agent or tool running
@@ -420,7 +420,7 @@ Formatting remains private to the Adapter:
 
 ```text
 remote_to_local:
-  -L 127.0.0.1:LOCAL:127.0.0.1:REMOTE
+  -L 0.0.0.0:LOCAL:127.0.0.1:REMOTE
 
 local_to_remote:
   -R 127.0.0.1:REMOTE:127.0.0.1:LOCAL
@@ -430,7 +430,7 @@ The same `controlForward` value must be used for `-O forward` and deferred
 `-O cancel`. All values remain an argument vector; no shell interpolation is
 introduced.
 
-The master is still started once with `-M -N -T`, and each Forward remains a
+The master is still started once with `-M -N -T -g`, and each Forward remains a
 logical worker over that transport. Do not create one SSH process per Published
 Forward.
 

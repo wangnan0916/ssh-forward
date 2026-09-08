@@ -7,10 +7,11 @@
   and dual-stack IPv6 wildcard sockets, but not IPv6-only sockets.
 - **Remote Port**: the port number of a Remote Listener or remembered endpoint
   on the Development Host.
-- **Preferred Local Port**: the persistent first-choice local loopback port for
+- **Preferred Local Port**: the persistent first-choice local wildcard port for
   a Forward.
-- **Local Port**: the port actually bound on local loopback by a Forward. It may
-  temporarily differ from both the Remote Port and Preferred Local Port.
+- **Local Port**: the port actually bound at local `0.0.0.0` by an imported
+  Forward. It may temporarily differ from both the Remote Port and Preferred
+  Local Port.
 - **Local Service**: an explicitly configured TCP endpoint reachable at
   `127.0.0.1:PORT` on the local machine. It is the target of a Published
   Forward and is not discovered by the Manager.
@@ -29,9 +30,10 @@
   different Published Port.
 - **Forward Direction**: `remote_to_local` for Remembered and Automatic
   Forwards, or `local_to_remote` for Published Forwards.
-- **Forward**: one live directional mapping between a local loopback port and
-  a Development Host loopback port, implemented through the shared OpenSSH
-  connection.
+- **Forward**: one live directional mapping between a local endpoint and a
+  Development Host loopback port, implemented through the shared OpenSSH
+  connection. Imported endpoints bind local `0.0.0.0`; Published Forward local
+  targets remain at `127.0.0.1`.
 - **Available Port**: an observed Remote Listener that has no Forward.
   Process name and working directory are best-effort volatile metadata.
 - **Discovery**: the live remote scan, in `connecting`, `active`, or `failed`

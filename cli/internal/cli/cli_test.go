@@ -46,7 +46,7 @@ func TestAddWritesRemoteToLocalForward(t *testing.T) {
 	if diff := cmp.Diff([]core.RememberedForward{want}, manager.intent.RememberedForwards); diff != "" {
 		t.Fatalf("manager remembered forwards mismatch (-want +got):\n%s", diff)
 	}
-	if !strings.Contains(stdout.String(), "Remembered remote 5173 at 127.0.0.1:15173 for dev") {
+	if !strings.Contains(stdout.String(), "Remembered remote 5173 at 0.0.0.0:15173 for dev") {
 		t.Fatalf("output = %q", stdout.String())
 	}
 }
@@ -72,7 +72,7 @@ func TestAddWithoutLocalPortAllowsTemporaryFallback(t *testing.T) {
 	if diff := cmp.Diff([]core.RememberedForward{want}, intent.RememberedForwards); diff != "" {
 		t.Fatalf("remembered forwards mismatch (-want +got):\n%s", diff)
 	}
-	if !strings.Contains(stdout.String(), "prefers 127.0.0.1:5173; falls back if busy") {
+	if !strings.Contains(stdout.String(), "prefers 0.0.0.0:5173; falls back if busy") {
 		t.Fatalf("output = %q", stdout.String())
 	}
 }
@@ -236,8 +236,8 @@ func TestStatusSeparatesForwardedAndAvailablePorts(t *testing.T) {
 	output := stdout.String()
 	for _, text := range []string{
 		"Host  dev    Discovery  active",
-		" 5173  127.0.0.1:15173  remembered  node  /workspace/app",
-		"12000  127.0.0.1:12000  remembered  node  /workspace/api",
+		" 5173  0.0.0.0:15173  remembered  node  /workspace/app",
+		"12000  0.0.0.0:12000  remembered  node  /workspace/api",
 		"  631  —     —",
 		" 3000  vite  /workspace/web",
 	} {

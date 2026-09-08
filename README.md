@@ -2,10 +2,11 @@
 
 Discover services reachable through IPv4 loopback on a Linux SSH host and keep
 selected ports—or ports whose process working directory matches a configured
-glob—available at `localhost` through system OpenSSH. Explicit local services
-can also be published on the Development Host's loopback. Remembered forwards
-may use a different preferred local port and choose whether to fall back when
-it is busy. Automatic forwards always allow temporary fallback.
+glob—available on all local IPv4 interfaces through system OpenSSH. Explicit
+local services can also be published on the Development Host's loopback.
+Remembered forwards may use a different preferred local port and choose
+whether to fall back when it is busy. Automatic forwards always allow
+temporary fallback.
 
 [![CI](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml/badge.svg)](https://github.com/wangnan0916/ssh-forward/actions/workflows/integration.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -22,7 +23,9 @@ start the tunnel, and recreate it after the SSH connection changes.
 
 `ssh-forward` shows remote listeners reachable at `127.0.0.1`, remembers the
 ports and working-directory globs you choose, and keeps the required local SSH
-port forwards running in the background. It can also publish an explicit local
+port forwards listening at `0.0.0.0` in the background. Imported services are
+therefore reachable from local virtual machines such as UTM and from other
+networks that can reach the local machine. It can also publish an explicit local
 port back to remote `127.0.0.1` without requiring an inbound connection to the
 local machine. It does not install a remote agent or store SSH credentials.
 
@@ -33,10 +36,11 @@ monitor and restart a predefined SSH tunnel. Editor-integrated port forwarding
 is convenient when a remote development session owns the workflow.
 
 `ssh-forward` is for development services on the same Linux SSH host that need
-to remain available at localhost across terminals and editors. It automatically
-discovers loopback dev-server ports, keeps remembered or working-directory
-matched forwards active in a user background process, and delegates transport,
-authentication, jump hosts, and connection options to system OpenSSH.
+to remain available across terminals, editors, and local virtual machines. It
+automatically discovers loopback dev-server ports and keeps remembered or
+working-directory matched forwards active in a user background process, and
+delegates transport, authentication, jump hosts, and connection options to
+system OpenSSH.
 
 ## Automatically forward project services
 
@@ -48,10 +52,17 @@ ssh-forward add --pwd '/home/me/Workspace/**'
 ```
 
 When a matching remote process starts listening, its port becomes available on
-the same port at `localhost`, or the next available port if that port is busy.
+the same port at local `0.0.0.0`, or the next available port if that port is
+busy.
 When the listener stops, the automatic SSH forward disappears. This works well
 for development servers, preview tools, notebooks, and OAuth callback servers
 that use temporary ports.
+
+Imported ports accept connections on every local IPv4 interface. From a UTM
+guest, connect to the macOS host address and the reported port, not guest
+`127.0.0.1`. Other machines on a reachable LAN may also connect, so expose only
+trusted development services and use application authentication or a host
+firewall when needed.
 
 ## Publish a local service to the Development Host
 
@@ -145,8 +156,8 @@ Then choose the host and remember the ports you want locally:
 ```bash
 ssh-forward default my-dev
 ssh-forward status              # see remote loopback listeners
-ssh-forward add 5173            # prefer localhost:5173; temporarily fall back if busy
-ssh-forward add 8443 --local 18443  # require remote 8443 on localhost:18443
+ssh-forward add 5173            # prefer 0.0.0.0:5173; temporarily fall back if busy
+ssh-forward add 8443 --local 18443  # require remote 8443 on 0.0.0.0:18443
 ssh-forward add --pwd '/home/me/Workspace/**'  # forward matching live services
 ssh-forward publish 9222       # expose local 9222 at remote 127.0.0.1:9222
 ssh-forward status --watch      # follow changes
@@ -205,10 +216,11 @@ Global options are `--host TARGET` and `--ssh-config PATH`. Set
    relevant procfs links are available. No remote agent is installed.
 3. The Manager owns one product-private OpenSSH master connection and uses
    OpenSSH control commands to add and cancel each desired remote-to-local or
-   local-to-remote forward. The local port stays available while the remote
-   process restarts; individual connections fail until the remote listener
-   returns. Stopping one Forward does not disturb the shared connection or
-   other ports.
+   local-to-remote forward. Remote-to-local forwards bind `0.0.0.0`, including
+   Remembered and Automatic Forwards, so local virtual machines can reach them.
+   The local port stays available while the remote process restarts; individual
+   connections fail until the remote listener returns. Stopping one Forward
+   does not disturb the shared connection or other ports.
 4. Absolute working-directory globs create Automatic Forwards for matching
    Remote Listeners. `*` matches within one path segment and `**` crosses path
    segments. When a listener disappears or stops matching, its Automatic
@@ -312,6 +324,8 @@ selected Host and ports.
 - one active SSH host per Manager
 - TCP listeners reachable through remote `127.0.0.1`; IPv6-only listeners are
   excluded
+- Imported ports bind local `0.0.0.0` and may be reachable from virtual
+  machines, containers, and other connected networks
 - Published services use TCP and IPv4 loopback at both ends; remote wildcard
   binding, UDP, Unix sockets, and dynamic remote ports are not supported.
   Development Host sshd must use `GatewayPorts no` or `clientspecified`;

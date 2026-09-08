@@ -33,10 +33,10 @@ func TestRenderPlainStatus(t *testing.T) {
 	want := `Host  ubuntu    Discovery  active
 
 FORWARDS
-REMOTE  TARGET           KIND        APP   WORKING DIRECTORY
-   631  127.0.0.1:10631  remembered  —     —
-  5173  127.0.0.1:15173  remembered  —     —
- 12000  127.0.0.1:12000  remembered  node  /home/shampoo/Workspace/project/console.cli.im
+REMOTE  TARGET         KIND        APP   WORKING DIRECTORY
+   631  0.0.0.0:10631  remembered  —     —
+  5173  0.0.0.0:15173  remembered  —     —
+ 12000  0.0.0.0:12000  remembered  node  /home/shampoo/Workspace/project/console.cli.im
 
 AVAILABLE
  PORT  APP           WORKING DIRECTORY
@@ -99,9 +99,9 @@ func TestRenderForwardStatesAndDiagnostics(t *testing.T) {
 		"Discovery  failed",
 		"Discovery detail  SSH authentication failed.",
 		"STARTING",
-		"3000  127.0.0.1:13000  remembered",
+		"3000  0.0.0.0:13000  remembered",
 		"NEEDS ATTENTION",
-		"8080  127.0.0.1:8080  automatic  the same local port is already in use",
+		"8080  0.0.0.0:8080  automatic  the same local port is already in use",
 	} {
 		if !strings.Contains(output, text) {
 			t.Fatalf("output = %q, missing %q", output, text)
@@ -119,7 +119,7 @@ func TestRenderShowsActualAndPreferredFallbackPorts(t *testing.T) {
 		}},
 	}
 	output := renderStatus(t, status, Options{})
-	if !strings.Contains(output, "127.0.0.1:3001 (preferred 3000)") {
+	if !strings.Contains(output, "0.0.0.0:3001 (preferred 3000)") {
 		t.Fatalf("output = %q", output)
 	}
 }
@@ -201,7 +201,7 @@ func TestRenderHyperlinksActiveForwardTargets(t *testing.T) {
 		},
 	}
 	output := renderStatus(t, status, Options{Width: 80, Color: true, Hyperlinks: true})
-	link := "\x1b]8;;http://127.0.0.1:13000\x1b\\127.0.0.1:13000\x1b]8;;\x1b\\"
+	link := "\x1b]8;;http://127.0.0.1:13000\x1b\\0.0.0.0:13000\x1b]8;;\x1b\\"
 	if !strings.Contains(output, link) {
 		t.Fatalf("output = %q, missing active forward hyperlink %q", output, link)
 	}

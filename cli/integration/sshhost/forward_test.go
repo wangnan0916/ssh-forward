@@ -50,6 +50,11 @@ func TestDiscoversReachableListenersAndForwardsRemotePort(t *testing.T) {
 	}
 
 	wantForwardedEcho(t, localPort, "hello")
+	if address, found := firstNonLoopbackIPv4(t); found {
+		wantForwardedEchoAt(t, address, localPort, "hello-from-non-loopback")
+	} else {
+		t.Log("no active non-loopback IPv4 address; external-interface assertion skipped")
+	}
 }
 
 func TestPrivateMasterReusesAliasWithoutConfiguredForwards(t *testing.T) {
@@ -612,9 +617,14 @@ func allForwardsActive(forwards []core.ForwardStatus) bool {
 
 func wantForwardedEcho(t *testing.T, port uint16, message string) {
 	t.Helper()
-	connection, err := net.DialTimeout("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(int(port))), time.Second)
+	wantForwardedEchoAt(t, "127.0.0.1", port, message)
+}
+
+func wantForwardedEchoAt(t *testing.T, address string, port uint16, message string) {
+	t.Helper()
+	connection, err := net.DialTimeout("tcp4", net.JoinHostPort(address, strconv.Itoa(int(port))), time.Second)
 	if err != nil {
-		t.Fatalf("dial forwarded port: %v", err)
+		t.Fatalf("dial forwarded port at %s: %v", address, err)
 	}
 	tcp := connection.(*net.TCPConn)
 	defer tcp.Close()
@@ -631,6 +641,30 @@ func wantForwardedEcho(t *testing.T, port uint16, message string) {
 	if string(reply) != message {
 		t.Fatalf("reply = %q, want %q", reply, message)
 	}
+}
+
+func firstNonLoopbackIPv4(t *testing.T) (string, bool) {
+	t.Helper()
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, networkInterface := range interfaces {
+		if networkInterface.Flags&net.FlagUp == 0 || networkInterface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addresses, err := networkInterface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, address := range addresses {
+			ip, _, err := net.ParseCIDR(address.String())
+			if err == nil && ip.To4() != nil && ip.IsGlobalUnicast() {
+				return ip.String(), true
+			}
+		}
+	}
+	return "", false
 }
 
 func waitForStatus(t *testing.T, manager core.Manager, condition func(core.Status) bool) core.Status {

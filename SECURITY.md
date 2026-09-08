@@ -17,20 +17,24 @@ and expected impact.
   procfs. When available, `ss` associates sockets with same-user processes.
 - Remote process metadata is bounded, UTF-8 repaired, and stripped of terminal
   control characters before it reaches status output. It is never persisted.
-- Every Forward uses explicit `127.0.0.1` endpoints. Imported services listen
-  on local loopback. After creating a Published Forward, the Adapter verifies
-  the actual Development Host socket through procfs before reporting it active;
-  wildcard binds forced by `GatewayPorts yes` are canceled and reported. If
-  cancellation of an installed forward fails, the product-owned SSH master is
-  stopped so its listeners cannot remain reachable.
+- Imported services target Development Host `127.0.0.1` but listen on local
+  `0.0.0.0`, allowing virtual machines, containers, and other connected
+  networks to reach them. Published Forwards use explicit `127.0.0.1`
+  endpoints at both ends. After creating a Published Forward, the Adapter
+  verifies the actual Development Host socket through procfs before reporting
+  it active; wildcard binds forced by `GatewayPorts yes` are canceled and
+  reported. If cancellation of an installed forward fails, the product-owned
+  SSH master is stopped so its listeners cannot remain reachable.
 - The manager socket and state files are accessible only to the current OS
   user.
 - Remote scanner frames, stderr retention, and observed listener counts are
   bounded.
 
-The Manager can expose a remote service to local processes, or a local service
-to processes and users on the Development Host. Loopback is machine-local, not
-user-private. Configure only ports you intend to make reachable in that scope.
+The Manager exposes an imported remote service on every local IPv4 interface,
+or a local service to processes and users on the Development Host. Imported
+ports may be reachable from the local network; loopback-published ports are
+machine-local but not user-private. Configure only ports you intend to make
+reachable in that scope and use a host firewall on untrusted networks.
 TCP forwarding adds no application authentication; the forwarded service's own
 authentication and trust model still apply. The local Manager can connect to a
 configured Local Service even when that service is otherwise reachable only on
