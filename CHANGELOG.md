@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.7.0](https://github.com/wangnan0916/ssh-forward/compare/v0.6.0...v0.7.0) (2026-09-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* imported ports now listen on 0.0.0.0 instead of loopback only.
+
+### Features
+
+* expose imported ports on local networks ([ac5cea8](https://github.com/wangnan0916/ssh-forward/commit/ac5cea80724de1fdf438dc453b1140976bb29bd9))
+
 ## [0.6.0](https://github.com/wangnan0916/ssh-forward/compare/v0.5.0...v0.6.0) (2026-08-25)
 
 
