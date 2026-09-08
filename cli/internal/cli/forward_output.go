@@ -53,13 +53,13 @@ func (a *App) writeRemember(
 	case adding && changed && forward.AllowFallback:
 		fmt.Fprintf(
 			a.Options.Stdout,
-			"Remembered remote %d for %s (prefers 127.0.0.1:%d; falls back if busy).\n",
+			"Remembered remote %d for %s (prefers 0.0.0.0:%d; falls back if busy).\n",
 			forward.RemotePort, host, forward.LocalPort,
 		)
 	case adding && changed:
 		fmt.Fprintf(
 			a.Options.Stdout,
-			"Remembered remote %d at 127.0.0.1:%d for %s.\n",
+			"Remembered remote %d at 0.0.0.0:%d for %s.\n",
 			forward.RemotePort, forward.LocalPort, host,
 		)
 	case adding:

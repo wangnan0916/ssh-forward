@@ -32,6 +32,10 @@ func (a *Adapter) Forward(
 	if err != nil {
 		return err
 	}
+	if target.Direction == core.RemoteToLocal &&
+		a.localPortAvailable != nil && !a.localPortAvailable(target.LocalPort) {
+		return backendError("local_port_conflict")
+	}
 	if err := a.startForward(ctx, host, target.Direction, forward); err != nil {
 		return err
 	}
@@ -53,6 +57,15 @@ func (a *Adapter) Forward(
 	case <-master.done:
 		return master.failure()
 	}
+}
+
+func localLoopbackPortAvailable(port uint16) bool {
+	listener, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return false
+	}
+	_ = listener.Close()
+	return true
 }
 
 func (a *Adapter) startForward(
@@ -83,7 +96,7 @@ func controlForwardFor(target core.ForwardTarget) (controlForward, error) {
 	case core.RemoteToLocal:
 		return controlForward{
 			flag: "-L",
-			spec: fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", target.LocalPort, target.RemotePort),
+			spec: fmt.Sprintf("0.0.0.0:%d:127.0.0.1:%d", target.LocalPort, target.RemotePort),
 		}, nil
 	case core.LocalToRemote:
 		return controlForward{

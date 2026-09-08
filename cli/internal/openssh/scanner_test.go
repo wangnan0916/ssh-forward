@@ -84,7 +84,9 @@ type assertError struct{}
 func (assertError) Error() string { return "failed" }
 
 func TestValidAlias(t *testing.T) {
-	for _, alias := range []string{"dev", "user@host", "dev.example"} {
+	for _, alias := range []string{
+		"dev", "user@host", "dev.example", "192.168.1.20", "ubuntu@192.168.1.20",
+	} {
 		if !validAlias(alias) {
 			t.Errorf("validAlias(%q) = false", alias)
 		}

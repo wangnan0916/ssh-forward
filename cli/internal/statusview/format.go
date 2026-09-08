@@ -11,24 +11,25 @@ import (
 
 const missing = "—"
 
-func loopbackTarget(port uint16, hyperlink bool) string {
-	target := "127.0.0.1:" + strconv.Itoa(int(port))
+func localTarget(address string, port uint16, hyperlink bool) string {
+	target := address + ":" + strconv.Itoa(int(port))
 	if !hyperlink {
 		return target
 	}
-	return "\x1b]8;;http://" + target + "\x1b\\" + target + "\x1b]8;;\x1b\\"
+	url := "127.0.0.1:" + strconv.Itoa(int(port))
+	return "\x1b]8;;http://" + url + "\x1b\\" + target + "\x1b]8;;\x1b\\"
 }
 
 func forwardTarget(forward core.ForwardStatus, hyperlink bool) string {
-	return targetWithPreferred(forward.LocalPort, forward.PreferredLocalPort, hyperlink)
+	return targetWithPreferred("0.0.0.0", forward.LocalPort, forward.PreferredLocalPort, hyperlink)
 }
 
 func publishedTarget(forward core.ForwardStatus) string {
-	return targetWithPreferred(forward.RemotePort, forward.PreferredRemotePort, false)
+	return targetWithPreferred("127.0.0.1", forward.RemotePort, forward.PreferredRemotePort, false)
 }
 
-func targetWithPreferred(port, preferred uint16, hyperlink bool) string {
-	target := loopbackTarget(port, hyperlink)
+func targetWithPreferred(address string, port, preferred uint16, hyperlink bool) string {
+	target := localTarget(address, port, hyperlink)
 	if preferred != 0 && preferred != port {
 		target += " (preferred " + strconv.Itoa(int(preferred)) + ")"
 	}

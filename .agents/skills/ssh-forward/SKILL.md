@@ -3,7 +3,7 @@ name: ssh-forward
 description: >-
   Operates ssh-forward between a local development machine and a Linux SSH
   host: import remote loopback services to localhost, publish local TCP services
-  to remote loopback, maintain forwarding intent, select the SSH alias, inspect
+  to remote loopback, maintain forwarding intent, select an SSH target, inspect
   directional status, or trigger Manager recovery. Use when either machine
   needs to reach a loopback TCP service on the other through SSH.
 ---
@@ -22,21 +22,27 @@ ssh-forward host --json
 ssh-forward default
 ```
 
-Use an alias returned by `host`. If no default is set, pin one:
+Use `--host TARGET` to select an alias, hostname, IP address, or `user@host`
+for a command. Direct targets use OpenSSH's default connection and
+authentication settings. Without `--host`, use an alias returned by `host`.
+If no default is set, pin one:
 
 ```bash
 ssh-forward default ALIAS
 ```
 
-`--host ALIAS` selects an alias for a command; `-h` shows help. If the binary
-is missing, report these installation choices and stop:
+`TARGET` is one OpenSSH destination. Keep custom ports, identities, jump
+hosts, and other SSH options in SSH config. `default ALIAS` only pins a literal
+alias from SSH config. `-h` shows help. If the binary is missing, report these
+installation choices and stop:
 
 ```bash
 brew install --HEAD wangnan0916/ssh-forward/ssh-forward
 go install github.com/wangnan0916/ssh-forward/cli/cmd/ssh-forward@main
 ```
 
-This step is complete when an existing alias is pinned or explicitly selected.
+This step is complete when an existing alias is pinned or a target is
+explicitly selected.
 
 ## 2. Inspect directional state
 

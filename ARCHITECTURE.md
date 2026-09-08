@@ -4,9 +4,9 @@ The product contract is:
 
 > Select one SSH alias, see TCP listeners reachable through its IPv4 loopback,
 > and keep remembered remote-to-local forwards plus live listeners matching
-> configured working-directory globs available on localhost, while keeping
-> explicitly published local services available on the Development Host's
-> IPv4 loopback.
+> configured working-directory globs available on all local IPv4 interfaces,
+> while keeping explicitly published local services available on the
+> Development Host's IPv4 loopback.
 
 Anything that does not serve this sentence is outside the current design.
 
@@ -73,8 +73,8 @@ Volatile state is rebuilt after restart:
 - current remote listeners;
 - best-effort listener executable names and working directories;
 - ports currently selected by working-directory rules;
-- each active Forward's actual local port, which may temporarily differ from
-  its preferred port;
+- each active Forward's actual local wildcard port, which may temporarily
+  differ from its preferred port;
 - each Published Forward's strict remote listening endpoint;
 - discovery health;
 - each forward's starting, active, or failed state.
@@ -99,9 +99,9 @@ Forward selection.
 
 The OpenSSH adapter translates directions to exact `-L` and `-R` control
 requests on the same product-owned master. The master honors the selected Host
-alias for connection setup but starts with `ClearAllForwardings=yes`; later
-discovery and multiplexing commands use the explicit private control socket
-with `/dev/null` as client config. This prevents `LocalForward`,
+alias for connection setup but starts with `-g` and `ClearAllForwardings=yes`;
+later discovery and multiplexing commands use the explicit private control
+socket with `/dev/null` as client config. This prevents `LocalForward`,
 `RemoteForward`, or `ControlPath` entries in user configuration from being
 silently duplicated while preserving authentication, jump-host, and connection
 settings on the master. A successful `-R` request is not sufficient readiness:
@@ -111,6 +111,16 @@ and fails closed when the bind cannot be verified. Failed cancellation of an
 installed forward tears down the product-owned master; a rejected forward
 request does not. Reconciliation rebuilds affected forwards on a fresh
 connection after teardown.
+
+Every imported `-L` request explicitly binds local `0.0.0.0`, including both
+Remembered and Automatic Forwards, and targets Development Host
+`127.0.0.1`. This lets local virtual machines and containers reach imported
+services but also makes them reachable from other connected networks unless a
+host firewall blocks that access. Published `-R` requests remain loopback-only
+on both machines. Before opening an imported Forward, the Adapter verifies that
+its loopback port is unoccupied so macOS cannot silently split one port between
+a loopback listener and the wildcard SSH listener; Core then applies the normal
+strict or fallback policy.
 
 Before creating an alias-hash master, the Adapter also checks the legacy
 `master-%C` path using the selected SSH config. If an older product-owned

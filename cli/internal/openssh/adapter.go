@@ -27,12 +27,13 @@ type Options struct {
 // through one product-private OpenSSH master per host. OpenSSH owns the
 // forwarding data plane.
 type Adapter struct {
-	executable       string
-	configFile       string
-	controlDirectory string
-	readyTimeout     time.Duration
-	waitDelay        time.Duration
-	environment      []string
+	executable         string
+	configFile         string
+	controlDirectory   string
+	readyTimeout       time.Duration
+	waitDelay          time.Duration
+	environment        []string
+	localPortAvailable func(uint16) bool
 
 	mu      sync.Mutex
 	closed  bool
@@ -66,12 +67,13 @@ func New(options Options) (*Adapter, error) {
 		options.WaitDelay = 2 * time.Second
 	}
 	return &Adapter{
-		executable:       options.Executable,
-		configFile:       options.ConfigFile,
-		controlDirectory: options.ControlDirectory,
-		readyTimeout:     options.ReadyTimeout,
-		waitDelay:        options.WaitDelay,
-		environment:      approvedEnvironment(),
-		masters:          make(map[core.HostAlias]*sshMaster),
+		executable:         options.Executable,
+		configFile:         options.ConfigFile,
+		controlDirectory:   options.ControlDirectory,
+		readyTimeout:       options.ReadyTimeout,
+		waitDelay:          options.WaitDelay,
+		environment:        approvedEnvironment(),
+		localPortAvailable: localLoopbackPortAvailable,
+		masters:            make(map[core.HostAlias]*sshMaster),
 	}, nil
 }

@@ -166,13 +166,14 @@ func TestResolveHostUsesPickHost(t *testing.T) {
 	}
 }
 
-func TestResolveHostFlagWins(t *testing.T) {
-	host, err := ResolveHost(Options{HostFlag: "devbox"})
+func TestResolveHostFlagAcceptsDirectTarget(t *testing.T) {
+	const target = "ubuntu@192.168.1.20"
+	host, err := ResolveHost(Options{HostFlag: target})
 	if err != nil {
 		t.Fatalf("ResolveHost: %v", err)
 	}
-	if host != "devbox" {
-		t.Fatalf("host = %q, want devbox", host)
+	if host != target {
+		t.Fatalf("host = %q, want %q", host, target)
 	}
 }
 

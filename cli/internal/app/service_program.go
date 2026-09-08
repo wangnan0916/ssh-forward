@@ -42,7 +42,7 @@ func serviceConfig(opts Options, host string, wait func()) (*service.Config, err
 	return &service.Config{
 		Name:             managerServiceName,
 		DisplayName:      "ssh-forward manager",
-		Description:      "Keeps selected Development Host ports available on localhost.",
+		Description:      "Keeps selected Development Host ports available on local IPv4 networks.",
 		Executable:       executable,
 		Arguments:        arguments,
 		WorkingDirectory: opts.Layout.Dir,

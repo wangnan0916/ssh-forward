@@ -26,6 +26,26 @@ func TestNewRejectsSharedWritableControlDirectory(t *testing.T) {
 	}
 }
 
+func TestRemoteToLocalForwardRejectsOccupiedLoopbackPortBeforeOpenSSH(t *testing.T) {
+	adapter, logPath := newLoggingAdapter(t, "")
+	adapter.masters["dev"] = &sshMaster{done: make(chan struct{})}
+	adapter.localPortAvailable = func(uint16) bool { return false }
+
+	err := adapter.Forward(context.Background(), "dev", core.ForwardTarget{
+		Direction: core.RemoteToLocal, LocalPort: 15173, RemotePort: 5173,
+	}, func() { t.Fatal("occupied local port became ready") })
+	if diagnostic := core.ErrorDiagnostic(err); diagnostic != "local_port_conflict" {
+		t.Fatalf("Forward diagnostic = %q; want local_port_conflict", diagnostic)
+	}
+	commands, readErr := os.ReadFile(logPath)
+	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+		t.Fatal(readErr)
+	}
+	if strings.Contains(string(commands), "-O forward") {
+		t.Fatalf("occupied local port reached OpenSSH: %q", commands)
+	}
+}
+
 func TestCloseHonorsCanceledContext(t *testing.T) {
 	readyPath := filepath.Join(t.TempDir(), "ready")
 	command := exec.Command("/bin/sh", "-c", `
@@ -122,7 +142,7 @@ esac
 		if line == legacyExit {
 			legacyIndex = index
 		}
-		if strings.Contains(line, " -M -N -T -S "+adapter.controlPath("dev")+" ") {
+		if strings.Contains(line, " -M -N -T -g -S "+adapter.controlPath("dev")+" ") {
 			startIndex = index
 		}
 	}
@@ -134,7 +154,7 @@ esac
 	}
 }
 
-func TestControlForwardForUsesDirectionSpecificLoopbackEndpoints(t *testing.T) {
+func TestControlForwardForUsesDirectionSpecificEndpoints(t *testing.T) {
 	tests := []struct {
 		name   string
 		target core.ForwardTarget
@@ -145,7 +165,7 @@ func TestControlForwardForUsesDirectionSpecificLoopbackEndpoints(t *testing.T) {
 			target: core.ForwardTarget{
 				Direction: core.RemoteToLocal, RemotePort: 5173, LocalPort: 15173,
 			},
-			want: controlForward{flag: "-L", spec: "127.0.0.1:15173:127.0.0.1:5173"},
+			want: controlForward{flag: "-L", spec: "0.0.0.0:15173:127.0.0.1:5173"},
 		},
 		{
 			name: "local to remote",
@@ -366,7 +386,7 @@ func TestStartMasterClearsConfiguredForwards(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := strings.Join([]string{
-		"-F", adapter.configFile, "-M -N -T -S", adapter.controlPath("dev"),
+		"-F", adapter.configFile, "-M -N -T -g -S", adapter.controlPath("dev"),
 		"-o ClearAllForwardings=yes -o ControlMaster=yes -o ControlPersist=no dev",
 	}, " ")
 	if got := strings.TrimSpace(string(commands)); got != want {
