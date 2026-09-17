@@ -31,6 +31,7 @@ type Adapter struct {
 	configFile         string
 	controlDirectory   string
 	readyTimeout       time.Duration
+	controlTimeout     time.Duration
 	waitDelay          time.Duration
 	environment        []string
 	localPortAvailable func(uint16) bool
@@ -71,6 +72,7 @@ func New(options Options) (*Adapter, error) {
 		configFile:         options.ConfigFile,
 		controlDirectory:   options.ControlDirectory,
 		readyTimeout:       options.ReadyTimeout,
+		controlTimeout:     10 * time.Second,
 		waitDelay:          options.WaitDelay,
 		environment:        approvedEnvironment(),
 		localPortAvailable: localLoopbackPortAvailable,

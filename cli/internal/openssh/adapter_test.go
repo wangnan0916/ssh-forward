@@ -387,7 +387,8 @@ func TestStartMasterClearsConfiguredForwards(t *testing.T) {
 	}
 	want := strings.Join([]string{
 		"-F", adapter.configFile, "-M -N -T -g -S", adapter.controlPath("dev"),
-		"-o ClearAllForwardings=yes -o ControlMaster=yes -o ControlPersist=no dev",
+		"-o ClearAllForwardings=yes -o ControlMaster=yes -o ControlPersist=no",
+		"-o ServerAliveInterval=5 -o ServerAliveCountMax=3 -o ConnectTimeout=10 -o ConnectionAttempts=1 dev",
 	}, " ")
 	if got := strings.TrimSpace(string(commands)); got != want {
 		t.Fatalf("command = %q, want %q", got, want)
@@ -409,6 +410,7 @@ printf '%s\n' "$*" >> "$SSH_FORWARD_TEST_LOG"
 		executable:       executable,
 		controlDirectory: directory,
 		readyTimeout:     time.Second,
+		controlTimeout:   time.Second,
 		waitDelay:        time.Second,
 		environment:      append(approvedEnvironment(), "SSH_FORWARD_TEST_LOG="+logPath),
 		masters:          make(map[core.HostAlias]*sshMaster),
@@ -454,4 +456,28 @@ func waitForFile(t *testing.T, path string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", path)
+}
+
+func TestOldForwardCleanupDoesNotCancelReplacementMaster(t *testing.T) {
+	adapter, logPath := newLoggingAdapter(t, "")
+	old := &sshMaster{done: make(chan struct{})}
+	close(old.done)
+	replacement := &sshMaster{done: make(chan struct{})}
+	adapter.masters["dev"] = replacement
+	adapter.cancelForward("dev", old, controlForward{flag: "-L", spec: "0.0.0.0:5173:127.0.0.1:5173"})
+	if commands, err := os.ReadFile(logPath); err == nil && len(commands) != 0 {
+		t.Fatalf("old worker touched replacement: %s", commands)
+	}
+}
+
+func TestControlCommandTimeoutDoesNotHangReconnect(t *testing.T) {
+	adapter, _ := newLoggingAdapter(t, "exec sleep 30\n")
+	adapter.controlTimeout = 30 * time.Millisecond
+	start := time.Now()
+	if err := adapter.runControl(context.Background(), "dev", "check", nil); err == nil {
+		t.Fatal("hung control command succeeded")
+	}
+	if time.Since(start) > time.Second {
+		t.Fatal("control command exceeded timeout")
+	}
 }

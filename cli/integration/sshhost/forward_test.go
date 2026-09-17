@@ -667,9 +667,13 @@ func firstNonLoopbackIPv4(t *testing.T) (string, bool) {
 	return "", false
 }
 
-func waitForStatus(t *testing.T, manager core.Manager, condition func(core.Status) bool) core.Status {
+func waitForStatus(t *testing.T, manager core.Manager, condition func(core.Status) bool, timeout ...time.Duration) core.Status {
 	t.Helper()
-	deadline := time.Now().Add(15 * time.Second)
+	limit := 15 * time.Second
+	if len(timeout) > 0 {
+		limit = timeout[0]
+	}
+	deadline := time.Now().Add(limit)
 	var status core.Status
 	for time.Now().Before(deadline) {
 		var err error
