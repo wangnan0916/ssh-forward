@@ -36,6 +36,7 @@ type manager struct {
 	listeners             map[uint16]Listener
 	states                map[forwardKey]ForwardStatus
 	remembered            []RememberedForward
+	autoForwards          []RememberedForward
 	published             []PublishedForward
 	reservedLocalPorts    map[uint16]struct{}
 	workingDirectoryRules []string
@@ -69,8 +70,9 @@ func newManager(options managerOptions) *manager {
 		listeners:             make(map[uint16]Listener),
 		states:                make(map[forwardKey]ForwardStatus),
 		remembered:            intent.RememberedForwards,
+		autoForwards:          intent.AutoForwards,
 		published:             intent.PublishedForwards,
-		reservedLocalPorts:    reservedLocalPorts(intent.PublishedForwards),
+		reservedLocalPorts:    reservedLocalPorts(intent.PublishedForwards, intent.ReservedLocalPorts...),
 		workingDirectoryRules: intent.WorkingDirectoryRules,
 		forwardWorkers:        make(map[forwardKey]*forwardWorker),
 		retryDelay:            options.retryDelay,
@@ -82,7 +84,7 @@ func newManager(options managerOptions) *manager {
 	if m.backend == nil || m.host == "" {
 		m.discovery = DiscoveryStatus{State: DiscoveryFailed, Diagnostic: "not_configured"}
 		desiredForwards := buildDesiredForwards(
-			m.remembered, m.published, m.listeners, m.workingDirectoryRules,
+			m.remembered, m.published, m.listeners, m.workingDirectoryRules, m.autoForwards...,
 		)
 		for key, desired := range desiredForwards {
 			m.states[key] = forwardStatus(desired, ForwardFailed, "not_configured", desired.preferred)
@@ -163,8 +165,9 @@ func (m *manager) UpdateIntent(ctx context.Context, intent ForwardingIntent) err
 		return ErrManagerClosed
 	}
 	m.remembered = intent.RememberedForwards
+	m.autoForwards = intent.AutoForwards
 	m.published = intent.PublishedForwards
-	m.reservedLocalPorts = reservedLocalPorts(intent.PublishedForwards)
+	m.reservedLocalPorts = reservedLocalPorts(intent.PublishedForwards, intent.ReservedLocalPorts...)
 	m.workingDirectoryRules = intent.WorkingDirectoryRules
 	m.reconcileForwardsLocked()
 	return nil
@@ -189,6 +192,10 @@ func (m *manager) setDiscovery(state DiscoveryState, diagnostic string) {
 	defer m.mu.Unlock()
 	if !m.closed {
 		m.discovery = DiscoveryStatus{State: state, Diagnostic: diagnostic}
+		if state == DiscoveryFailed {
+			m.listeners = make(map[uint16]Listener)
+			m.reconcileForwardsLocked()
+		}
 	}
 }
 
@@ -210,7 +217,7 @@ func (m *manager) setListeners(listeners []Listener) {
 
 func (m *manager) reconcileForwardsLocked() {
 	desiredForwards := buildDesiredForwards(
-		m.remembered, m.published, m.listeners, m.workingDirectoryRules,
+		m.remembered, m.published, m.listeners, m.workingDirectoryRules, m.autoForwards...,
 	)
 	for key := range m.states {
 		_, desired := desiredForwards[key]
