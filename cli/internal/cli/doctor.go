@@ -1,38 +1,32 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
-
-	"github.com/spf13/cobra"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/app"
 )
 
 var ErrDoctorFailed = errors.New("doctor found one or more failures")
 
-func (a *App) doctorCommand() *cobra.Command {
-	command := &cobra.Command{
-		Use: "doctor", Short: "diagnose configuration, SSH, and Manager health", Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			report := app.Diagnose(cmd.Context(), a.Options)
-			if jsonFlag(cmd) {
-				if err := a.writeJSON(report); err != nil {
-					return err
-				}
-			} else if err := writeDoctorReport(a.Options.Stdout, report); err != nil {
-				return err
-			}
-			if !report.Healthy {
-				return ErrDoctorFailed
-			}
-			return nil
-		},
+func (c *doctorCommand) Run(a *App, ctx context.Context) error {
+	report := app.Diagnose(ctx, a.Options)
+	var err error
+	if c.JSON {
+		err = a.writeJSON(report)
+	} else {
+		err = writeDoctorReport(a.Options.Stdout, report)
 	}
-	command.Flags().Bool("json", false, "emit JSON")
-	return annotateSkipManager(grouped(groupDaily, command))
+	if err != nil {
+		return err
+	}
+	if !report.Healthy {
+		return ErrDoctorFailed
+	}
+	return nil
 }
 
 func writeDoctorReport(writer io.Writer, report app.DoctorReport) error {
@@ -43,10 +37,7 @@ func writeDoctorReport(writer io.Writer, report app.DoctorReport) error {
 	}
 	output.WriteByte('\n')
 	for _, check := range report.Checks {
-		fmt.Fprintf(
-			&output, "%-7s %-11s %s\n",
-			strings.ToUpper(string(check.State)), check.Name, check.Detail,
-		)
+		fmt.Fprintf(&output, "%-7s %-11s %s\n", strings.ToUpper(string(check.State)), check.Name, check.Detail)
 		if check.Fix != "" {
 			fmt.Fprintf(&output, "        fix: %s\n", check.Fix)
 		}

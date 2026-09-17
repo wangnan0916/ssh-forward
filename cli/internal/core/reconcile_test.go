@@ -1,30 +1,21 @@
 package core
 
 import (
+	"maps"
 	"slices"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPlanReconciliation(t *testing.T) {
-	remembered := desiredRememberedForward(RememberedForward{
-		RemotePort: 3000, LocalPort: 13000, AllowFallback: true,
-	})
-	changedRemembered := desiredRememberedForward(RememberedForward{
-		RemotePort: 3000, LocalPort: 14000, AllowFallback: true,
-	})
-	published := desiredPublishedForward(PublishedForward{
-		LocalPort: 9222, RemotePort: 19222,
-	})
+	remembered := desiredRememberedForward(RememberedForward{RemotePort: 3000, LocalPort: 13000, AllowFallback: true})
+	changedRemembered := desiredRememberedForward(RememberedForward{RemotePort: 3000, LocalPort: 14000, AllowFallback: true})
+	published := desiredPublishedForward(PublishedForward{LocalPort: 9222, RemotePort: 19222})
 	activeRemembered := forwardStatus(remembered, ForwardActive, "", remembered.preferred)
 	activePublished := forwardStatus(published, ForwardActive, "", published.preferred)
-	fallbackPublished := desiredPublishedForward(PublishedForward{
-		LocalPort: 13001, RemotePort: 19001,
-	})
-	activeFallback := forwardStatus(remembered, ForwardActive, "", ForwardTarget{
-		Direction: RemoteToLocal, RemotePort: 3000, LocalPort: 13001,
-	})
+	fallbackPublished := desiredPublishedForward(PublishedForward{LocalPort: 13001, RemotePort: 19001})
+	activeFallback := forwardStatus(remembered, ForwardActive, "", ForwardTarget{Direction: RemoteToLocal, RemotePort: 3000, LocalPort: 13001})
 
 	tests := []struct {
 		name     string
@@ -43,45 +34,30 @@ func TestPlanReconciliation(t *testing.T) {
 			reserved: map[uint16]struct{}{published.preferred.LocalPort: {}},
 			want:     reconciliationPlan{keep: []desiredForward{remembered, published}},
 		},
-		{
-			name:    "start missing worker",
-			desired: desiredForwardMap(published),
-			want:    reconciliationPlan{start: []desiredForward{published}},
-		},
+		{name: "start missing worker", desired: desiredForwardMap(published), want: reconciliationPlan{start: []desiredForward{published}}},
 		{
 			name:    "stop changed worker before replacement",
 			desired: desiredForwardMap(changedRemembered),
-			workers: workerSnapshotMap(
-				workerSnapshot{desired: remembered, status: activeRemembered},
-			),
-			want: reconciliationPlan{stop: []forwardKey{remembered.key()}},
+			workers: workerSnapshotMap(workerSnapshot{desired: remembered, status: activeRemembered}),
+			want:    reconciliationPlan{stop: []forwardKey{remembered.key()}},
 		},
 		{
-			name: "stop obsolete worker",
-			workers: workerSnapshotMap(
-				workerSnapshot{desired: published, status: activePublished},
-			),
-			want: reconciliationPlan{stop: []forwardKey{published.key()}},
+			name:    "stop obsolete worker",
+			workers: workerSnapshotMap(workerSnapshot{desired: published, status: activePublished}),
+			want:    reconciliationPlan{stop: []forwardKey{published.key()}},
 		},
 		{
-			name:    "wait for reserved active worker",
-			desired: desiredForwardMap(remembered, fallbackPublished),
-			workers: workerSnapshotMap(
-				workerSnapshot{desired: remembered, status: activeFallback},
-			),
+			name:     "wait for reserved active worker",
+			desired:  desiredForwardMap(remembered, fallbackPublished),
+			workers:  workerSnapshotMap(workerSnapshot{desired: remembered, status: activeFallback}),
 			reserved: map[uint16]struct{}{fallbackPublished.preferred.LocalPort: {}},
-			want: reconciliationPlan{
-				stop: []forwardKey{remembered.key()},
-				wait: []desiredForward{fallbackPublished},
-			},
+			want:     reconciliationPlan{stop: []forwardKey{remembered.key()}, wait: []desiredForward{fallbackPublished}},
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			got := planReconciliation(test.desired, test.workers, test.reserved)
-			if diff := reconciliationPlanDiff(test.want, got); diff != "" {
-				t.Fatalf("plan mismatch (-want +got):\n%s", diff)
-			}
+			require.Equal(t, test.want, got)
 		})
 	}
 }
@@ -90,28 +66,16 @@ func FuzzPlanReconciliationReservation(f *testing.F) {
 	f.Add(uint16(3000), uint16(13000), uint16(13001), uint16(19001), uint8(0))
 	f.Add(uint16(3000), uint16(13000), uint16(13001), uint16(19001), uint8(1))
 	f.Add(uint16(3000), uint16(13000), uint16(13001), uint16(19001), uint8(2))
-	f.Fuzz(func(
-		t *testing.T,
-		remotePort, preferredLocalPort, actualLocalPort, publishedRemotePort uint16,
-		stateIndex uint8,
-	) {
+	f.Fuzz(func(t *testing.T, remotePort, preferredLocalPort, actualLocalPort, publishedRemotePort uint16, stateIndex uint8) {
 		if remotePort == 0 || preferredLocalPort == 0 ||
 			actualLocalPort == 0 || publishedRemotePort == 0 {
 			return
 		}
-		remembered := desiredRememberedForward(RememberedForward{
-			RemotePort: remotePort, LocalPort: preferredLocalPort, AllowFallback: true,
-		})
-		published := desiredPublishedForward(PublishedForward{
-			LocalPort: actualLocalPort, RemotePort: publishedRemotePort,
-		})
+		remembered := desiredRememberedForward(RememberedForward{RemotePort: remotePort, LocalPort: preferredLocalPort, AllowFallback: true})
+		published := desiredPublishedForward(PublishedForward{LocalPort: actualLocalPort, RemotePort: publishedRemotePort})
 		states := [...]ForwardState{ForwardStarting, ForwardActive, ForwardFailed}
 		state := states[int(stateIndex)%len(states)]
-		status := forwardStatus(remembered, state, "", ForwardTarget{
-			Direction:  RemoteToLocal,
-			RemotePort: remotePort,
-			LocalPort:  actualLocalPort,
-		})
+		status := forwardStatus(remembered, state, "", ForwardTarget{Direction: RemoteToLocal, RemotePort: remotePort, LocalPort: actualLocalPort})
 		got := planReconciliation(
 			desiredForwardMap(remembered, published),
 			workerSnapshotMap(workerSnapshot{desired: remembered, status: status}),
@@ -125,9 +89,7 @@ func FuzzPlanReconciliationReservation(f *testing.F) {
 			want.stop = []forwardKey{remembered.key()}
 			want.wait = []desiredForward{published}
 		}
-		if diff := reconciliationPlanDiff(want, got); diff != "" {
-			t.Fatalf("plan mismatch for state %s (-want +got):\n%s", state, diff)
-		}
+		require.Equal(t, want, got)
 	})
 }
 
@@ -150,21 +112,15 @@ func FuzzReconciliationSequence(f *testing.F) {
 			localPort := uint16(20_000) + uint16(operations[index+2])
 			switch operation {
 			case 0:
-				remembered[servicePort] = RememberedForward{
-					RemotePort: servicePort, LocalPort: localPort, AllowFallback: true,
-				}
+				remembered[servicePort] = RememberedForward{RemotePort: servicePort, LocalPort: localPort, AllowFallback: true}
 			case 1:
 				delete(remembered, servicePort)
 			case 2:
-				published[localPort] = PublishedForward{
-					LocalPort: localPort, RemotePort: servicePort,
-				}
+				published[localPort] = PublishedForward{LocalPort: localPort, RemotePort: servicePort}
 			case 3:
 				delete(published, localPort)
 			case 4:
-				listeners[servicePort] = Listener{
-					Port: servicePort, WorkingDirectory: "/workspace/app",
-				}
+				listeners[servicePort] = Listener{Port: servicePort, WorkingDirectory: "/workspace/app"}
 			case 5:
 				delete(listeners, servicePort)
 			case 6:
@@ -186,16 +142,11 @@ func FuzzReconciliationSequence(f *testing.F) {
 			}
 
 			intent := normalizedForwardingIntent(ForwardingIntent{
-				RememberedForwards:    rememberedForwardValues(remembered),
-				PublishedForwards:     publishedForwardValues(published),
+				RememberedForwards:    slices.Collect(maps.Values(remembered)),
+				PublishedForwards:     slices.Collect(maps.Values(published)),
 				WorkingDirectoryRules: []string{"/workspace/**"},
 			})
-			desired := buildDesiredForwards(
-				intent.RememberedForwards,
-				intent.PublishedForwards,
-				listeners,
-				intent.WorkingDirectoryRules,
-			)
+			desired := buildDesiredForwards(intent.RememberedForwards, intent.PublishedForwards, listeners, intent.WorkingDirectoryRules)
 			plan := planReconciliation(desired, workers, reservedLocalPorts(intent.PublishedForwards))
 			assertReconciliationPlan(t, plan, desired, workers)
 
@@ -211,62 +162,36 @@ func FuzzReconciliationSequence(f *testing.F) {
 			}
 			for _, forward := range plan.start {
 				key := forward.key()
-				workers[key] = workerSnapshot{
-					desired: forward,
-					status:  forwardStatus(forward, ForwardActive, "", forward.preferred),
-				}
+				workers[key] = workerSnapshot{desired: forward, status: forwardStatus(forward, ForwardActive, "", forward.preferred)}
 				delete(stopping, key)
 			}
 		}
 	})
 }
 
-func assertReconciliationPlan(
-	t *testing.T,
-	plan reconciliationPlan,
-	desired map[forwardKey]desiredForward,
-	workers map[forwardKey]workerSnapshot,
-) {
+func assertReconciliationPlan(t *testing.T, plan reconciliationPlan, desired map[forwardKey]desiredForward, workers map[forwardKey]workerSnapshot) {
 	t.Helper()
 	workerActions := make(map[forwardKey]string, len(workers))
 	for _, forward := range plan.keep {
 		key := forward.key()
-		if previous := workerActions[key]; previous != "" {
-			t.Fatalf("worker has duplicate %s and keep actions: %#v", previous, key)
-		}
-		if _, found := workers[key]; !found {
-			t.Fatalf("keep action has no worker: %#v", key)
-		}
-		if wanted, found := desired[key]; !found || wanted != forward {
-			t.Fatalf("keep action is not desired: %#v", forward)
-		}
+		require.EqualValues(t, "", workerActions[key])
+		require.Contains(t, workers, key)
+		require.Equal(t, forward, desired[key])
 		workerActions[key] = "keep"
 	}
 	for _, key := range plan.stop {
-		if _, found := workers[key]; !found {
-			t.Fatalf("stop action has no worker: %#v", key)
-		}
-		if previous := workerActions[key]; previous != "" {
-			t.Fatalf("worker has both %s and stop actions: %#v", previous, key)
-		}
+		require.Contains(t, workers, key)
+		require.EqualValues(t, "", workerActions[key])
 		workerActions[key] = "stop"
 	}
-	if len(workerActions) != len(workers) {
-		t.Fatalf("worker actions = %d, workers = %d", len(workerActions), len(workers))
-	}
+	require.EqualValuesf(t, len(workers), len(workerActions), "worker actions = %d, workers = %d", len(workerActions), len(workers))
 	desiredActions := make(map[forwardKey]string)
 	recordDesiredActions := func(action string, forwards []desiredForward) {
 		for _, forward := range forwards {
 			key := forward.key()
-			if _, found := workers[key]; found {
-				t.Fatalf("%s action already has a worker: %#v", action, key)
-			}
-			if wanted, found := desired[key]; !found || wanted != forward {
-				t.Fatalf("%s action is not desired: %#v", action, forward)
-			}
-			if previous := desiredActions[key]; previous != "" {
-				t.Fatalf("desired forward has both %s and %s actions: %#v", previous, action, key)
-			}
+			require.NotContains(t, workers, key, action)
+			require.Equal(t, forward, desired[key], action)
+			require.EqualValues(t, "", desiredActions[key])
 			desiredActions[key] = action
 		}
 	}
@@ -278,39 +203,17 @@ func assertReconciliationPlan(
 			missingWorkers++
 		}
 	}
-	if len(desiredActions) != missingWorkers {
-		t.Fatalf("desired actions = %d, desired forwards without workers = %d", len(desiredActions), missingWorkers)
-	}
+	require.EqualValuesf(t, missingWorkers, len(desiredActions), "desired actions = %d, desired forwards without workers = %d", len(desiredActions), missingWorkers)
 	for _, forward := range plan.wait {
-		if forward.preferred.Direction != LocalToRemote {
-			t.Fatalf("non-published forward is waiting: %#v", forward)
-		}
+		require.EqualValuesf(t, LocalToRemote, forward.preferred.Direction, "non-published forward is waiting: %#v", forward)
 		blocked := slices.ContainsFunc(plan.stop, func(key forwardKey) bool {
 			worker := workers[key]
 			return key.direction == RemoteToLocal &&
 				(worker.status.State == ForwardStarting || worker.status.State == ForwardActive) &&
 				worker.status.LocalPort == forward.preferred.LocalPort
 		})
-		if !blocked {
-			t.Fatalf("waiting forward has no conflicting stop: %#v", forward)
-		}
+		require.Truef(t, blocked, "waiting forward has no conflicting stop: %#v", forward)
 	}
-}
-
-func rememberedForwardValues(forwards map[uint16]RememberedForward) []RememberedForward {
-	values := make([]RememberedForward, 0, len(forwards))
-	for _, forward := range forwards {
-		values = append(values, forward)
-	}
-	return values
-}
-
-func publishedForwardValues(forwards map[uint16]PublishedForward) []PublishedForward {
-	values := make([]PublishedForward, 0, len(forwards))
-	for _, forward := range forwards {
-		values = append(values, forward)
-	}
-	return values
 }
 
 func desiredForwardMap(forwards ...desiredForward) map[forwardKey]desiredForward {
@@ -327,10 +230,4 @@ func workerSnapshotMap(snapshots ...workerSnapshot) map[forwardKey]workerSnapsho
 		result[snapshot.desired.key()] = snapshot
 	}
 	return result
-}
-
-func reconciliationPlanDiff(want, got reconciliationPlan) string {
-	return cmp.Diff(want, got, cmp.AllowUnexported(
-		reconciliationPlan{}, desiredForward{}, forwardKey{},
-	))
 }

@@ -1,15 +1,10 @@
 package statusview
 
 import (
-	"image/color"
 	"strconv"
-
-	"charm.land/lipgloss/v2"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
-
-const missing = "—"
 
 func localTarget(address string, port uint16, hyperlink bool) string {
 	target := address + ":" + strconv.Itoa(int(port))
@@ -36,31 +31,13 @@ func targetWithPreferred(address string, port, preferred uint16, hyperlink bool)
 	return target
 }
 
-func valueOrMissing(value string) string {
-	if value == "" {
-		return missing
-	}
-	return value
-}
-
-func discoveryColor(state core.DiscoveryState) color.Color {
+func stateColor(state string) string {
 	switch state {
-	case core.DiscoveryActive:
-		return lipgloss.BrightGreen
-	case core.DiscoveryFailed:
-		return lipgloss.BrightRed
+	case "active":
+		return green
+	case "failed":
+		return red
 	default:
-		return lipgloss.BrightYellow
-	}
-}
-
-func stateColor(state core.ForwardState) color.Color {
-	switch state {
-	case core.ForwardActive:
-		return lipgloss.BrightGreen
-	case core.ForwardFailed:
-		return lipgloss.BrightRed
-	default:
-		return lipgloss.BrightYellow
+		return yellow
 	}
 }

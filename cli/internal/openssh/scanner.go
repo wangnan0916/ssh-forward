@@ -81,11 +81,7 @@ func (p *scannerParser) accept(line string) ([]core.Listener, bool, error) {
 		if err != nil {
 			return nil, false, err
 		}
-		p.listeners[uint16(port)] = core.Listener{
-			Port:             uint16(port),
-			App:              app,
-			WorkingDirectory: directory,
-		}
+		p.listeners[uint16(port)] = core.Listener{Port: uint16(port), App: app, WorkingDirectory: directory}
 	case "E":
 		if len(fields) != 3 || !p.active || sequence != p.sequence {
 			return nil, false, errInvalidScannerFrame

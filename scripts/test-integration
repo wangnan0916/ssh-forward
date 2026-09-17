@@ -1,118 +1,137 @@
-#!/bin/sh
+#!/usr/bin/env python3
+"""Run real SSH tests against one disposable, loopback-only Docker project."""
 
-set -eu
+import contextlib
+import os
+from pathlib import Path
+import re
+import secrets
+import signal
+import subprocess
+import sys
+import tempfile
+import time
 
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-random_bytes=$(od -An -N12 -tx1 /dev/urandom) || {
-    printf 'could not generate integration run ID\n' >&2
-    exit 1
-}
-random_id=$(printf '%s' "$random_bytes" | tr -d ' \n')
-if [ "${#random_id}" -ne 24 ]; then
-    printf 'could not generate integration run ID\n' >&2
-    exit 1
-fi
-run_prefix=${SSH_FORWARD_TEST_RUN_ID:-run}
-case "$run_prefix" in
-    *[!a-z0-9_-]*) printf 'invalid SSH_FORWARD_TEST_RUN_ID prefix: %s\n' "$run_prefix" >&2; exit 2 ;;
-esac
-if [ "${#run_prefix}" -gt 32 ]; then
-    printf 'SSH_FORWARD_TEST_RUN_ID prefix is too long\n' >&2
-    exit 2
-fi
-run_id=$run_prefix-$random_id
-if [ "${#run_id}" -gt 57 ]; then
-    printf 'composed integration run ID is too long: %s\n' "$run_id" >&2
-    exit 2
-fi
-export SSH_FORWARD_TEST_RUN_ID=$run_id
-set -a
-. "$root/scripts/internal/harness.env"
-set +a
-docker_context=${SSH_FORWARD_TEST_DOCKER_CONTEXT:-$(docker context show)}
-export SSH_FORWARD_TEST_DOCKER_CONTEXT=$docker_context
+ROOT = Path(__file__).resolve().parent.parent
 
-active_pid=''
-setup_output=''
-host_ready=0
-terminate_child() {
-    child_pid=$1
-    pids=$child_pid
-    frontier=$child_pid
-    depth=0
-    while [ "$depth" -lt 8 ]; do
-        next=''
-        for parent in $frontier; do
-            children=$(pgrep -P "$parent" 2>/dev/null || true)
-            [ -z "$children" ] || next="$next $children"
-        done
-        [ -n "$next" ] || break
-        pids="$pids $next"
-        frontier=$next
-        depth=$((depth + 1))
-    done
-    kill -TERM $pids 2>/dev/null || true
-    attempt=0
-    while kill -0 "$child_pid" 2>/dev/null && [ "$attempt" -lt 50 ]; do
-        attempt=$((attempt + 1))
-        sleep 0.1
-    done
-    survivors=''
-    for pid in $pids; do
-        kill -0 "$pid" 2>/dev/null && survivors="$survivors $pid"
-    done
-    if [ -n "$survivors" ]; then
-        kill -KILL $survivors 2>/dev/null || true
-        sleep 0.1
-    fi
-    remaining=''
-    for pid in $survivors; do
-        kill -0 "$pid" 2>/dev/null && remaining="$remaining $pid"
-    done
-    if [ -n "$remaining" ]; then
-        printf 'managed integration processes survived SIGKILL:%s\n' "$remaining" >&2
-        return 1
-    fi
-    wait "$child_pid" 2>/dev/null || true
-}
-cleanup() {
-    status=$?
-    trap - 0 HUP INT TERM
-    cleanup_failed=0
-    if [ -n "$active_pid" ]; then
-        terminate_child "$active_pid" || cleanup_failed=1
-    fi
-    validation_marker="$root/.tmp/integration/$run_id/context_validated"
-    if [ "$host_ready" -eq 1 ] || [ -f "$validation_marker" ]; then
-        "$root/scripts/internal/test-host-down" || cleanup_failed=1
-    fi
-    [ -z "$setup_output" ] || rm -f "$setup_output"
-    if [ "$status" -eq 0 ] && [ "$cleanup_failed" -ne 0 ]; then status=1; fi
-    exit "$status"
-}
-trap cleanup 0
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
 
-run_managed() {
-    "$@" &
-    active_pid=$!
-    if wait "$active_pid"; then
-        active_pid=''
-        return 0
-    else
-        command_status=$?
-        active_pid=''
-        return "$command_status"
-    fi
-}
+def run(*args, capture=False, timeout=300, **kwargs):
+    """Bound each command and clean its entire process group, including on signals."""
+    with subprocess.Popen(args, start_new_session=True, text=True,
+                          stdout=subprocess.PIPE if capture else None, **kwargs) as process:
+        try:
+            output, _ = process.communicate(timeout=timeout)
+            if process.returncode:
+                raise subprocess.CalledProcessError(process.returncode, args, output)
+            return (output or "").strip()
+        finally:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGTERM)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
 
-setup_output=$(mktemp "${TMPDIR:-/tmp}/ssh-forward-integration-$run_id.XXXXXX")
-run_managed "$root/scripts/internal/test-host-up" >"$setup_output"
-host_ready=1
-export SSH_FORWARD_TEST_SSH_CONFIG=$(cat "$setup_output")
-rm -f "$setup_output"
-setup_output=''
-cd "$root/cli"
-run_managed go test -tags=integration ./...
+
+def retry(operation):
+    deadline = time.monotonic() + 15
+    while True:
+        try:
+            return operation()
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.1)
+
+
+def interrupted(number, _frame):
+    raise SystemExit(128 + number)
+
+
+def main():
+    for number in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+        signal.signal(number, interrupted)
+    prefix = os.environ.get("SSH_FORWARD_TEST_RUN_ID", "run")
+    if not re.fullmatch(r"[a-z0-9_-]{1,32}", prefix):
+        raise ValueError("SSH_FORWARD_TEST_RUN_ID must be a 1–32 character lowercase prefix")
+    for line in (ROOT / "scripts/internal/harness.env").read_text().splitlines():
+        if line and not line.startswith("#"):
+            key, value = line.split("=", 1)
+            os.environ[key] = value
+    run_id = prefix + "-" + secrets.token_hex(12)
+    os.environ["SSH_FORWARD_TEST_RUN_ID"] = run_id
+    context = os.environ.get("SSH_FORWARD_TEST_DOCKER_CONTEXT") or run("docker", "context", "show", capture=True)
+    endpoint = run("docker", "context", "inspect", context, "--format", "{{.Endpoints.docker.Host}}", capture=True)
+    if not endpoint.startswith("unix://"):
+        raise ValueError("integration tests require a local Unix-socket Docker daemon")
+    docker = ("docker", "--context", context)
+    version = run(*docker, "version", "--format", "{{.Server.Version}}", capture=True)
+    if int(version.split(".")[0]) < 28:
+        raise ValueError("Docker Engine 28+ is required for loopback port isolation")
+    compose = (*docker, "compose", "-p", "ssh-forward-integration-" + run_id,
+               "-f", str(ROOT / "test/integration/ssh-host/compose.yaml"))
+    os.umask(0o077)
+    with tempfile.TemporaryDirectory(prefix="ssh-forward-integration-") as directory:
+        state = Path(directory)
+        key = state / "id_ed25519"
+        authorized = state / "authorized_keys"
+        os.environ["SSH_FORWARD_TEST_AUTHORIZED_KEYS"] = str(authorized)
+        run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key))
+        authorized.write_bytes(key.with_suffix(".pub").read_bytes())
+        try:
+            run(*compose, "up", "-d", "--build")
+            ports = [run(*compose, "port", "ssh-host", port, capture=True).rsplit(":", 1)[1]
+                     for port in ("22", "2222")]
+            known_hosts = state / "known_hosts"
+            known_hosts.write_text("\n".join(retry(lambda p=p: run(
+                "ssh-keyscan", "-T", "2", "-p", p, "127.0.0.1", capture=True,
+                stderr=subprocess.DEVNULL, timeout=5)) for p in ports) + "\n")
+            host = os.environ["SSH_FORWARD_TEST_HOST_ALIAS"]
+            unsafe = os.environ["SSH_FORWARD_TEST_UNSAFE_HOST_ALIAS"]
+            config = state / "ssh_config"
+            config.write_text(f"""Host {host} {unsafe}
+    HostName 127.0.0.1
+    User {os.environ['SSH_FORWARD_TEST_USER']}
+    IdentityFile {key}
+    IdentitiesOnly yes
+    IdentityAgent none
+    AddKeysToAgent no
+    ForwardAgent no
+    ProxyCommand none
+    ProxyJump none
+    StrictHostKeyChecking yes
+    UserKnownHostsFile {known_hosts}
+    GlobalKnownHostsFile none
+    BatchMode yes
+    ConnectTimeout 5
+    ConnectionAttempts 1
+    ControlMaster no
+    ControlPath none
+    ServerAliveInterval 5
+    ServerAliveCountMax 2
+    LogLevel ERROR
+Host {host}
+    Port {ports[0]}
+    LocalForward 127.0.0.1:{os.environ['SSH_FORWARD_FIXTURE_PORT_CONFIG_LOCAL']} 127.0.0.1:{os.environ['SSH_FORWARD_FIXTURE_PORT_V4']}
+    RemoteForward 127.0.0.1:{os.environ['SSH_FORWARD_FIXTURE_PORT_CONFIG_REMOTE']} 127.0.0.1:{os.environ['SSH_FORWARD_FIXTURE_PORT_CONFIG_LOCAL']}
+Host {unsafe}
+    Port {ports[1]}
+""")
+            for alias in (host, unsafe):
+                run("ssh", "-F", str(config), "-o", "ClearAllForwardings=yes", alias, "true", stdin=subprocess.DEVNULL)
+            os.environ["SSH_FORWARD_TEST_SSH_CONFIG"] = str(config)
+            run("go", "test", "-count=1", "-tags=integration", "./integration/...", cwd=ROOT / "cli", timeout=600)
+        finally:
+            for number in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+                signal.signal(number, signal.SIG_IGN)
+            run(*compose, "down", "--timeout", "10", "--volumes", "--remove-orphans", "--rmi", "all", timeout=30)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (ValueError, subprocess.SubprocessError) as error:
+        sys.exit(str(error))

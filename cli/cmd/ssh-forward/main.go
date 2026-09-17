@@ -50,7 +50,8 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	surface := &cli.App{Version: versionString()}
+	surface := &cli.App{}
+	surface.Options.Version = versionString()
 	surface.Options.Stdin = stdin
 	surface.Options.Stdout = stdout
 	surface.Options.Stderr = stderr

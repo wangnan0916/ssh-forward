@@ -85,18 +85,16 @@ func literalHost(name string) bool {
 }
 
 func expandInclude(pattern string) ([]string, error) {
-	if strings.HasPrefix(pattern, "~/") {
+	if !filepath.IsAbs(pattern) {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return nil, err
 		}
-		pattern = filepath.Join(home, pattern[2:])
-	} else if !filepath.IsAbs(pattern) {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, err
+		if strings.HasPrefix(pattern, "~/") {
+			pattern = filepath.Join(home, pattern[2:])
+		} else {
+			pattern = filepath.Join(home, ".ssh", pattern)
 		}
-		pattern = filepath.Join(home, ".ssh", pattern)
 	}
 	return filepath.Glob(pattern)
 }

@@ -1,29 +1,19 @@
 package cli
 
 import (
+	"cmp"
 	"fmt"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
-func (a *App) writePublished(
-	jsonOutput, adding, changed bool,
-	host string,
-	forward core.PublishedForward,
-) error {
+func (a *App) writePublished(jsonOutput, adding, changed bool, host string, forward core.PublishedForward) error {
 	if jsonOutput {
-		return a.writeJSON(map[string]any{
-			mutationJSONKey(adding): changed, "host": host,
-			"local_port": forward.LocalPort, "remote_port": forward.RemotePort,
-		})
+		return a.writeJSON(map[string]any{mutationJSONKey(adding): changed, "host": host, "local_port": forward.LocalPort, "remote_port": forward.RemotePort})
 	}
 	switch {
 	case adding && changed:
-		fmt.Fprintf(
-			a.Options.Stdout,
-			"Publishing local 127.0.0.1:%d at %s 127.0.0.1:%d.\n",
-			forward.LocalPort, host, forward.RemotePort,
-		)
+		fmt.Fprintf(a.Options.Stdout, "Publishing local 127.0.0.1:%d at %s 127.0.0.1:%d.\n", forward.LocalPort, host, forward.RemotePort)
 	case adding:
 		fmt.Fprintf(a.Options.Stdout, "Local port %d is already published for %s.\n", forward.LocalPort, host)
 	default:
@@ -32,17 +22,9 @@ func (a *App) writePublished(
 	return nil
 }
 
-func (a *App) writeRemember(
-	jsonOutput, adding, changed bool,
-	host string,
-	forward core.RememberedForward,
-) error {
+func (a *App) writeRemember(jsonOutput, adding, changed bool, host string, forward core.RememberedForward) error {
 	if jsonOutput {
-		output := map[string]any{
-			mutationJSONKey(adding): changed,
-			"host":                  host,
-			"remote_port":           forward.RemotePort,
-		}
+		output := map[string]any{mutationJSONKey(adding): changed, "host": host, "remote_port": forward.RemotePort}
 		if host == "" {
 			delete(output, "host")
 			output["scope"] = "global"
@@ -53,9 +35,7 @@ func (a *App) writeRemember(
 		}
 		return a.writeJSON(output)
 	}
-	if host == "" {
-		host = "all hosts (when listening)"
-	}
+	host = cmp.Or(host, "all hosts (when listening)")
 	switch {
 	case adding && changed && forward.AllowFallback:
 		fmt.Fprintf(
@@ -64,11 +44,7 @@ func (a *App) writeRemember(
 			forward.RemotePort, host, forward.LocalPort,
 		)
 	case adding && changed:
-		fmt.Fprintf(
-			a.Options.Stdout,
-			"Remembered remote %d at 0.0.0.0:%d for %s.\n",
-			forward.RemotePort, forward.LocalPort, host,
-		)
+		fmt.Fprintf(a.Options.Stdout, "Remembered remote %d at 0.0.0.0:%d for %s.\n", forward.RemotePort, forward.LocalPort, host)
 	case adding:
 		fmt.Fprintf(a.Options.Stdout, "Already remembered remote %d for %s.\n", forward.RemotePort, host)
 	default:
@@ -87,9 +63,7 @@ func (a *App) writeRememberWorkingDirectory(jsonOutput, adding, changed bool, ho
 		}
 		return a.writeJSON(output)
 	}
-	if host == "" {
-		host = "all hosts"
-	}
+	host = cmp.Or(host, "all hosts")
 	switch {
 	case adding && changed:
 		fmt.Fprintf(a.Options.Stdout, "Remembered working-directory glob %s for %s.\n", pattern, host)

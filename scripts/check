@@ -11,12 +11,8 @@ run() {
     "$@"
 }
 
-run sh -n \
-    "$root/scripts/check" \
-    "$root/scripts/dev" \
-    "$root/scripts/test-integration" \
-    "$root/scripts/internal/test-host-up" \
-    "$root/scripts/internal/test-host-down"
+run sh -n "$root/scripts/check" "$root/scripts/dev" "$root/test/integration/ssh-host/entrypoint.sh"
+run python3 -c 'import ast, pathlib, sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())' "$root/scripts/test-integration"
 
 cd "$root/cli"
 run go test ./...

@@ -8,25 +8,28 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 type poolBackend struct {
+	host   string
 	starts atomic.Int32
 	stops  atomic.Int32
 	closed atomic.Bool
 }
 
-func (b *poolBackend) Observe(ctx context.Context, host core.HostAlias, emit func([]core.Listener)) error {
-	if host == "offline" {
+func (b *poolBackend) Observe(ctx context.Context, emit func([]core.Listener)) error {
+	if b.host == "offline" {
 		return errors.New("host offline")
 	}
 	emit([]core.Listener{{Port: 8080, WorkingDirectory: "/workspace/app"}})
 	<-ctx.Done()
 	return ctx.Err()
 }
-func (b *poolBackend) Forward(ctx context.Context, host core.HostAlias, _ core.ForwardTarget, ready func()) error {
-	if host == "offline" {
+func (b *poolBackend) Forward(ctx context.Context, _ core.ForwardTarget, ready func()) error {
+	if b.host == "offline" {
 		return errors.New("host offline")
 	}
 	b.starts.Add(1)
@@ -40,13 +43,11 @@ func (b *poolBackend) Close(context.Context) error { b.closed.Store(true); retur
 func testPool(t *testing.T, config configFile) (*managerPool, map[string]*poolBackend) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.jsonc")
-	if err := saveConfig(path, config); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, saveConfig(path, config))
 	backends := make(map[string]*poolBackend)
 	pool := &managerPool{configPath: path, managers: make(map[string]core.Manager)}
 	pool.createTarget = func(host string, _ HostTarget, intent core.ForwardingIntent) (core.Manager, error) {
-		backend := &poolBackend{}
+		backend := &poolBackend{host: host}
 		backends[host] = backend
 		return core.NewManager(core.HostAlias(host), backend, intent), nil
 	}
@@ -55,9 +56,7 @@ func testPool(t *testing.T, config configFile) (*managerPool, map[string]*poolBa
 			t.Error(err)
 		}
 	})
-	if err := pool.reload(context.Background(), ""); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, pool.reload(context.Background(), ""))
 	return pool, backends
 }
 
@@ -68,9 +67,7 @@ func awaitPoolStatus(t *testing.T, pool *managerPool, host string, match func(co
 	for time.Now().Before(deadline) {
 		var err error
 		status, err = pool.lookup(host).Status(context.Background())
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		if match(status) {
 			return status
 		}
@@ -110,94 +107,61 @@ func TestPoolStartsAllConfiguredHostsAndIsolatesChanges(t *testing.T) {
 	}
 	awaitPoolStatus(t, pool, "offline", func(s core.Status) bool { return s.Discovery.State == core.DiscoveryFailed })
 	original := pool.lookup("dev")
-	if _, err := RemoveRememberedForward(pool.configPath, "other", 3000); err != nil {
+	if _, err := EditRememberedForward(pool.configPath, "other", &core.RememberedForward{RemotePort: 3000}, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.reload(ctx, "other"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, pool.reload(ctx, "other"))
 	awaitPoolStatus(t, pool, "other", allPoolForwardsActive(0))
-	if pool.lookup("dev") != original || backends["dev"].starts.Load() != 1 || backends["dev"].stops.Load() != 0 {
-		t.Fatal("changing another host disrupted dev")
-	}
+	require.False(t, pool.lookup("dev") != original || backends["dev"].starts.Load() != 1 || backends["dev"].stops.Load() != 0, "changing another host disrupted dev")
 	// New hosts are added on demand, without requiring a default-host change.
-	if _, err := SetRememberedForward(pool.configPath, "new", core.RememberedForward{RemotePort: 9000}); err != nil {
+	if _, err := EditRememberedForward(pool.configPath, "new", &core.RememberedForward{RemotePort: 9000}, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.reload(ctx, "new"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, pool.reload(ctx, "new"))
 	awaitPoolStatus(t, pool, "new", allPoolForwardsActive(1))
-	if backends["dev"].stops.Load() != 0 {
-		t.Fatal("adding a host stopped dev")
-	}
-	if err := pool.Close(ctx); err != nil {
-		t.Fatal(err)
-	}
+	require.EqualValues(t, 0, backends["dev"].stops.Load(), "adding a host stopped dev")
+	require.NoError(t, pool.Close(ctx))
 	for host, backend := range backends {
 		if !backend.closed.Load() {
 			t.Errorf("backend %s was not closed", host)
 		}
 	}
-	if err := pool.reload(ctx, "new"); !errors.Is(err, core.ErrManagerClosed) {
-		t.Fatalf("reload after Close: %v", err)
-	}
+	require.ErrorIs(t, pool.reload(ctx, "new"), core.ErrManagerClosed)
 }
 
 func TestPoolLoadsWithoutDefaultAndPreservesLiveStateOnInvalidConfig(t *testing.T) {
-	pool, backends := testPool(t, configFile{RememberedForwards: map[string][]core.RememberedForward{
-		"a": {{RemotePort: 3000}}, "b": {{RemotePort: 4000}},
-	}})
+	pool, backends := testPool(t, configFile{RememberedForwards: map[string][]core.RememberedForward{"a": {{RemotePort: 3000}}, "b": {{RemotePort: 4000}}}})
 	for _, host := range []string{"a", "b"} {
 		awaitPoolStatus(t, pool, host, allPoolForwardsActive(1))
 	}
 	statuses, err := pool.AllStatuses(context.Background())
-	if err != nil || len(statuses) != 2 {
-		t.Fatalf("statuses: %+v, %v", statuses, err)
-	}
-	if pool.lookup("unknown") != nil {
-		t.Fatal("unknown host exists")
-	}
-	if len(backends) != 2 {
-		t.Fatal("status created a host runtime")
-	}
-	if err := writeAtomic(pool.configPath, []byte(`{"schema_version":`)); err != nil {
-		t.Fatal(err)
-	}
-	if err := pool.reload(context.Background(), "c"); err == nil {
-		t.Fatal("invalid config accepted")
-	}
+	require.Falsef(t, err != nil || len(statuses) != 2, "statuses: %+v, %v", statuses, err)
+	require.Nil(t, pool.lookup("unknown"), "unknown host exists")
+	require.EqualValues(t, 2, len(backends), "status created a host runtime")
+	require.NoError(t, writeAtomic(pool.configPath, []byte(`{"schema_version":`)))
+	require.Error(t, pool.reload(context.Background(), "c"), "invalid config accepted")
 	for _, host := range []string{"a", "b"} {
 		awaitPoolStatus(t, pool, host, allPoolForwardsActive(1))
-		if backends[host].stops.Load() != 0 {
-			t.Fatalf("invalid config disrupted %s", host)
-		}
+		require.EqualValuesf(t, 0, backends[host].stops.Load(), "invalid config disrupted %s", host)
 	}
 }
 
 func TestPoolReservesPublishedServicePortsAcrossHosts(t *testing.T) {
 	pool, _ := testPool(t, configFile{
-		RememberedForwards: map[string][]core.RememberedForward{
-			"import": {{RemotePort: 9222, AllowFallback: true}},
-			"strict": {{RemotePort: 9222, LocalPort: 9222}},
-		},
-		PublishedForwards: map[string][]core.PublishedForward{"publish": {{LocalPort: 9222}}},
+		RememberedForwards: map[string][]core.RememberedForward{"import": {{RemotePort: 9222, AllowFallback: true}}, "strict": {{RemotePort: 9222, LocalPort: 9222}}},
+		PublishedForwards:  map[string][]core.PublishedForward{"publish": {{LocalPort: 9222}}},
 	})
 	status := awaitPoolStatus(t, pool, "import", allPoolForwardsActive(1))
-	if status.Forwards[0].LocalPort != 9223 {
-		t.Fatalf("import occupied published service port: %+v", status.Forwards)
-	}
+	require.EqualValuesf(t, 9223, status.Forwards[0].LocalPort, "import occupied published service port: %+v", status.Forwards)
 	awaitPoolStatus(t, pool, "publish", allPoolForwardsActive(1))
 	awaitPoolStatus(t, pool, "strict", func(s core.Status) bool {
 		return len(s.Forwards) == 1 && s.Forwards[0].State == core.ForwardFailed && s.Forwards[0].Diagnostic == "local_port_reserved"
 	})
 	// Adding a publish must move an already active import on another host too.
-	if _, err := SetPublishedForward(pool.configPath, "publish", core.PublishedForward{LocalPort: 9223}); err != nil {
+	if _, err := EditPublishedForward(pool.configPath, "publish", &core.PublishedForward{LocalPort: 9223}, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.reload(context.Background(), "publish"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, pool.reload(context.Background(), "publish"))
 	awaitPoolStatus(t, pool, "import", func(s core.Status) bool {
 		return allPoolForwardsActive(1)(s) && s.Forwards[0].LocalPort == 9224
 	})

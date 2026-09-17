@@ -29,9 +29,7 @@ func BenchmarkManagerStatus(b *testing.B) {
 		for index := range test.ports {
 			port := uint16(10_000 + index)
 			subject.listeners[port] = Listener{Port: port, App: "node", WorkingDirectory: "/workspace/app"}
-			subject.states[forwardKey{direction: RemoteToLocal, servicePort: port}] = ForwardStatus{
-				Direction: RemoteToLocal, RemotePort: port, LocalPort: port, State: ForwardActive,
-			}
+			subject.states[forwardKey{direction: RemoteToLocal, servicePort: port}] = ForwardStatus{Direction: RemoteToLocal, RemotePort: port, LocalPort: port, State: ForwardActive}
 		}
 		b.Run(test.name, func(b *testing.B) {
 			ctx := context.Background()
@@ -54,24 +52,14 @@ func BenchmarkPlanReconciliation256(b *testing.B) {
 	for index := range 256 {
 		var desired desiredForward
 		if index%2 == 0 {
-			desired = desiredRememberedForward(RememberedForward{
-				RemotePort:    uint16(10_000 + index),
-				LocalPort:     uint16(20_000 + index),
-				AllowFallback: true,
-			})
+			desired = desiredRememberedForward(RememberedForward{RemotePort: uint16(10_000 + index), LocalPort: uint16(20_000 + index), AllowFallback: true})
 		} else {
-			desired = desiredPublishedForward(PublishedForward{
-				LocalPort:  uint16(20_000 + index),
-				RemotePort: uint16(30_000 + index),
-			})
+			desired = desiredPublishedForward(PublishedForward{LocalPort: uint16(20_000 + index), RemotePort: uint16(30_000 + index)})
 			reservedLocalPorts[desired.preferred.LocalPort] = struct{}{}
 		}
 		key := desired.key()
 		desiredForwards[key] = desired
-		workers[key] = workerSnapshot{
-			desired: desired,
-			status:  forwardStatus(desired, ForwardActive, "", desired.preferred),
-		}
+		workers[key] = workerSnapshot{desired: desired, status: forwardStatus(desired, ForwardActive, "", desired.preferred)}
 	}
 	b.ReportAllocs()
 	for b.Loop() {

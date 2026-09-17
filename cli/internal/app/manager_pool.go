@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -75,12 +76,7 @@ func (p *managerPool) reload(ctx context.Context, host string) error {
 	}
 	slices.Sort(reserved)
 	reserved = slices.Compact(reserved)
-	hosts := make([]string, 0, len(targets))
-	for alias := range targets {
-		hosts = append(hosts, alias)
-	}
-	slices.Sort(hosts)
-	for _, alias := range hosts {
+	for _, alias := range slices.Sorted(maps.Keys(targets)) {
 		intent := effectiveIntent(config, alias)
 		intent.ReservedLocalPorts = reserved
 		if manager := p.managers[alias]; manager != nil {
@@ -134,10 +130,7 @@ func (p *managerPool) AllStatuses(ctx context.Context) ([]core.Status, error) {
 func (p *managerPool) Close(ctx context.Context) error {
 	p.mu.Lock()
 	p.closed = true
-	managers := make([]core.Manager, 0, len(p.managers))
-	for _, manager := range p.managers {
-		managers = append(managers, manager)
-	}
+	managers := slices.Collect(maps.Values(p.managers))
 	p.mu.Unlock()
 	// Cancel all hosts concurrently; a slow SSH shutdown must not keep the
 	// remaining hosts' forwards alive past the service shutdown deadline.
