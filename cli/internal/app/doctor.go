@@ -94,15 +94,9 @@ func diagnoseConfig(path string) DoctorCheck {
 			"config", err.Error(), "Repair or remove the invalid config.jsonc file: "+path,
 		)
 	default:
-		intentCount := len(config.GlobalForwards) + len(config.GlobalWorkingDirectoryRules)
-		for _, forwards := range config.RememberedForwards {
-			intentCount += len(forwards)
-		}
-		for _, forwards := range config.PublishedForwards {
-			intentCount += len(forwards)
-		}
-		for _, rules := range config.WorkingDirectoryRules {
-			intentCount += len(rules)
+		intentCount := 0
+		for _, rules := range config.model().Rules {
+			intentCount += len(rules.Forwards) + len(rules.Published) + len(rules.Directories)
 		}
 		return okDoctorCheck(
 			"config", fmt.Sprintf("%s (%d remembered intent item(s))", path, intentCount),

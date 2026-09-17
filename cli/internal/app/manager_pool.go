@@ -69,7 +69,7 @@ func (p *managerPool) reload(ctx context.Context, host string) error {
 	// so an import cannot occupy an absent service's port and redirect a publish.
 	var reserved []uint16
 	for name := range targets {
-		for _, forward := range config.PublishedForwards[name] {
+		for _, forward := range config.scope(name).Published {
 			reserved = append(reserved, forward.LocalPort)
 		}
 	}

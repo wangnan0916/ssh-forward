@@ -369,3 +369,44 @@ func TestLegacyHostMigrationSurvivesRewrite(t *testing.T) {
 		t.Fatalf("rewrite changed intent: %s", diff)
 	}
 }
+
+func TestConfigurationModelRoundTripPreservesScopes(t *testing.T) {
+	path := writeConfigFile(t, `{
+ "schema_version":6,"hosts":{"dev":{"target":"user@dev","arguments":["-p","2222"]}},"ignored_hosts":["offline"],
+ "global_forwards":[{"remote_port":8080}],"global_working_directory_rules":["/workspace/**"],
+ "remembered_forwards":{"dev":[{"remote_port":8080,"local_port":18080}]},
+ "published_forwards":{"dev":[{"local_port":9222}]},
+ "working_directory_rules":{"other":["/srv/**"]}}`)
+	before, err := loadConfigForWrite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := before.save(path); err != nil {
+		t.Fatal(err)
+	}
+	after, err := loadConfigForWrite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(before, after); diff != "" {
+		t.Fatalf("scope conversion lost data: %s", diff)
+	}
+	// Global edits must never remove the explicit mapping on dev.
+	if removed, err := RemoveRememberedForward(path, "", 8080); err != nil || !removed {
+		t.Fatalf("remove global: %v, %v", removed, err)
+	}
+	dev, err := HostIntent(path, "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dev.AutoForwards) != 0 || len(dev.RememberedForwards) != 1 || dev.RememberedForwards[0].LocalPort != 18080 || len(dev.PublishedForwards) != 1 {
+		t.Fatalf("scope leak: %+v", dev)
+	}
+	if _, err := SetPublishedForward(path, "", core.PublishedForward{LocalPort: 9000}); err == nil {
+		t.Fatal("global publish accepted")
+	}
+	after.scope("").Published = []core.PublishedForward{{LocalPort: 9000}}
+	if err := after.save(path); err == nil {
+		t.Fatal("internal model persisted global publish")
+	}
+}

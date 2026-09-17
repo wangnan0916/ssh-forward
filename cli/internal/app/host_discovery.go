@@ -329,7 +329,7 @@ func SetHost(path, name string, target HostTarget, ignore bool) error {
 		config.Hosts[name] = target
 	}
 	slices.Sort(config.IgnoredHosts)
-	return saveConfig(path, config)
+	return config.save(path)
 }
 
 func HostList(path string) (map[string]HostTarget, []string, error) {
@@ -358,10 +358,10 @@ func EnableHost(path, name string) error {
 		return errors.New("invalid host name")
 	}
 	config.IgnoredHosts = slices.DeleteFunc(config.IgnoredHosts, func(s string) bool { return s == name })
-	return saveConfig(path, config)
+	return config.save(path)
 }
 
-func (config configFile) hostTargets(path string) (map[string]HostTarget, error) {
+func (config configuration) hostTargets(path string) (map[string]HostTarget, error) {
 	targets, err := loadDiscovered(path)
 	if err != nil {
 		return nil, err
