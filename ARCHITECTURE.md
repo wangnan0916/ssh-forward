@@ -69,7 +69,8 @@ Mechanisms are delegated to deep external modules: system OpenSSH handles SSH,
 `kardianos/service` handles resident process lifecycle, `net/http` handles local
 IPC, `ssh_config` parses Host declarations, and `hujson` parses JSONC. Product
 code keeps only their composition and the forwarding state machine. Lip Gloss
-renders human status tables, while `x/term` detects terminal capabilities.
+renders human status tables; `x/ansi` handles grapheme-aware tail truncation,
+while `x/term` detects terminal capabilities.
 `gopsutil/process` enumerates local processes and reads their exact argv;
 `gofrs/flock` provides cancellable registry locking. SSH argument selection,
 process exclusion, and host persistence remain product logic.
@@ -85,6 +86,12 @@ Persistent state consists of:
   fallback policy, per alias;
 - a sorted published local-to-remote mapping list per alias;
 - a sorted absolute working-directory glob list per alias.
+
+The on-disk schema is decoded and migrated at the configuration boundary.
+The internal model groups typed port, publish, and directory rules by scope;
+an empty scope means all hosts. Rule mutations share this model, while encoding
+preserves the existing schema 6 file layout. Published forwards are rejected
+without a named scope both by the command mutation and the model writer.
 
 Volatile state is rebuilt after restart:
 
