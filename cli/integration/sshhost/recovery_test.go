@@ -53,7 +53,7 @@ func TestForwardsRecoverAfterSilentConnectionLoss(t *testing.T) {
 	config := filepath.Join(t.TempDir(), "ssh-config")
 	// Explicitly disable user-config keepalives to prove the product's command
 	// options enforce recovery even when the user's SSH config does not.
-	prefix := fmt.Sprintf("Host %s\n Hostname 127.0.0.1\n Port %d\n ServerAliveInterval 0\n ServerAliveCountMax 999\n", environment.host, proxy.Addr().(*net.TCPAddr).Port)
+	prefix := fmt.Sprintf("Host %s\n Hostname 127.0.0.1\n Port %d\n HostKeyAlias [%s]:%s\n ServerAliveInterval 0\n ServerAliveCountMax 999\n", environment.host, proxy.Addr().(*net.TCPAddr).Port, hostname, port)
 	if err := os.WriteFile(config, append([]byte(prefix), baseConfig...), 0600); err != nil {
 		t.Fatal(err)
 	}
