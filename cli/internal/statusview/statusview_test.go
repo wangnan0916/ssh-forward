@@ -2,6 +2,7 @@ package statusview
 
 import (
 	"bytes"
+	"github.com/charmbracelet/x/ansi"
 	"regexp"
 	"strings"
 	"testing"
@@ -235,6 +236,29 @@ func requireMaxWidth(t *testing.T, output string, maxWidth int) {
 	for _, line := range strings.Split(strings.TrimSuffix(output, "\n"), "\n") {
 		if width := lipgloss.Width(line); width > maxWidth {
 			t.Fatalf("line width = %d, want <= %d: %q", width, maxWidth, line)
+		}
+	}
+}
+
+func TestShortenTailPreservesGraphemesAndWidth(t *testing.T) {
+	for _, test := range []struct {
+		value string
+		width int
+		want  string
+	}{
+		{"/work/api", 5, "…/api"},
+		{"/目录", 2, "…"},
+		{"/work/👨‍👩‍👦", 3, "…👨‍👩‍👦"},
+		{"/work/e\u0301", 2, "…e\u0301"},
+		{"short", 10, "short"},
+		{"\x1b[31m/work/api\x1b[0m", 4, "…api"},
+	} {
+		got := shortenTail(test.value, test.width)
+		if plain := ansi.Strip(got); plain != test.want {
+			t.Errorf("shorten %q: %q, want %q", test.value, plain, test.want)
+		}
+		if ansi.StringWidth(got) > test.width {
+			t.Errorf("overflow: %q", got)
 		}
 	}
 }
