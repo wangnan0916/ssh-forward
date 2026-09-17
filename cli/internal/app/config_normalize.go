@@ -58,7 +58,7 @@ func normalizeConfig(config configFile) (configFile, error) {
 		}
 		config.RememberedForwards[host] = normalized
 	}
-	if config.SchemaVersion < configSchemaVersion {
+	if config.SchemaVersion < 5 {
 		config.PublishedForwards = nil
 	}
 	for host, forwards := range config.PublishedForwards {
@@ -85,6 +85,50 @@ func normalizeConfig(config configFile) (configFile, error) {
 			return configFile{}, err
 		}
 		config.WorkingDirectoryRules[host] = normalized
+	}
+	if config.SchemaVersion < 6 {
+		config.Hosts = nil
+		config.IgnoredHosts = nil
+		config.GlobalForwards = nil
+		config.GlobalWorkingDirectoryRules = nil
+	}
+	var err error
+	if len(config.GlobalForwards) > 0 {
+		config.GlobalForwards, err = normalizedRememberedForwards(config.GlobalForwards)
+	}
+	if err != nil {
+		return configFile{}, err
+	}
+	config.GlobalWorkingDirectoryRules, err = normalizedWorkingDirectoryRules(config.GlobalWorkingDirectoryRules)
+	if err != nil {
+		return configFile{}, err
+	}
+	// Normalize legacy host references once; runtime only consumes Hosts.
+	if config.Hosts == nil {
+		config.Hosts = make(map[string]HostTarget)
+	}
+	remember := func(host string) {
+		if host != "" {
+			if _, ok := config.Hosts[host]; !ok {
+				config.Hosts[host] = HostTarget{Target: host}
+			}
+		}
+	}
+	remember(config.DefaultHost)
+	config.DefaultHost = ""
+	for host := range config.RememberedForwards {
+		remember(host)
+	}
+	for host := range config.PublishedForwards {
+		remember(host)
+	}
+	for host := range config.WorkingDirectoryRules {
+		remember(host)
+	}
+	for name, target := range config.Hosts {
+		if err := validateTarget(name, target); err != nil {
+			return configFile{}, err
+		}
 	}
 	return config, nil
 }

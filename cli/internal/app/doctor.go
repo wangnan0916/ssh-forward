@@ -52,7 +52,7 @@ func Diagnose(ctx context.Context, opts Options) DoctorReport {
 	checks = append(checks, diagnoseManager(ctx, opts, host)...)
 
 	if opensshCheck.State == DoctorOK && hostCheck.State == DoctorOK {
-		checks = append(checks, diagnoseDiscovery(ctx, opts.SSHConfigPath, host))
+		checks = append(checks, diagnoseDiscovery(ctx, opts, host))
 	}
 	healthy := !slices.ContainsFunc(checks, func(check DoctorCheck) bool {
 		return check.State == DoctorFailed
@@ -72,13 +72,11 @@ func diagnoseOpenSSH() DoctorCheck {
 }
 
 func diagnoseHost(opts Options) (string, DoctorCheck) {
-	opts.Interactive = false
-	opts.PickHost = nil
-	host, err := ResolveHost(opts)
-	if err != nil {
+	host := opts.HostFlag
+	if !validTargetName(host) {
 		return "", failedDoctorCheck(
-			"host", err.Error(),
-			"Pass --host ALIAS or pin one with: ssh-forward default ALIAS",
+			"host", "A host is required for SSH diagnostics.",
+			"Pass --host TARGET.",
 		)
 	}
 	return host, okDoctorCheck("host", host)
@@ -89,14 +87,14 @@ func diagnoseConfig(path string) DoctorCheck {
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		return warningDoctorCheck(
-			"config", "no config.jsonc yet", "Pin a host or add a forward to create it.",
+			"config", "no config.jsonc yet", "Remember a host or add a forward to create it.",
 		)
 	case err != nil:
 		return failedDoctorCheck(
 			"config", err.Error(), "Repair or remove the invalid config.jsonc file: "+path,
 		)
 	default:
-		intentCount := 0
+		intentCount := len(config.GlobalForwards) + len(config.GlobalWorkingDirectoryRules)
 		for _, forwards := range config.RememberedForwards {
 			intentCount += len(forwards)
 		}
@@ -159,21 +157,18 @@ func diagnoseManager(ctx context.Context, opts Options, selectedHost string) []D
 	}
 	defer manager.Close(context.Background())
 
-	status, err := manager.Status(ctx)
-	if err != nil {
-		return unavailableManagerChecks(failedDoctorCheck(
-			"manager", err.Error(), "Run ssh-forward uninstall, then ssh-forward status.",
+	statuses, err := manager.AllStatuses(ctx)
+	index := slices.IndexFunc(statuses, func(s core.Status) bool { return string(s.Host) == selectedHost })
+	if err != nil || index < 0 {
+		return unavailableManagerChecks(warningDoctorCheck(
+			"manager", "the Manager is running but status is unavailable for "+selectedHost,
+			"Run ssh-forward status --host "+selectedHost+" to start or refresh this host.",
 		))
 	}
+	status := statuses[index]
 	checks := []DoctorCheck{okDoctorCheck(
 		"manager", fmt.Sprintf("running for %s with discovery %s", status.Host, status.Discovery.State),
 	)}
-	if selectedHost != "" && status.Host != core.HostAlias(selectedHost) {
-		checks[0] = warningDoctorCheck(
-			"manager", fmt.Sprintf("running for %s while %s is selected", status.Host, selectedHost),
-			"Run ssh-forward status to switch the Manager.",
-		)
-	}
 
 	checks = append(checks, diagnoseForwards(status))
 	return checks
@@ -249,7 +244,7 @@ func unavailableManagerChecks(managerCheck DoctorCheck) []DoctorCheck {
 	}
 }
 
-func diagnoseDiscovery(ctx context.Context, sshConfig, host string) DoctorCheck {
+func diagnoseDiscovery(ctx context.Context, opts Options, host string) DoctorCheck {
 	discoveryCtx, cancel := context.WithTimeout(ctx, doctorDiscoveryTimeout)
 	defer cancel()
 
@@ -261,14 +256,26 @@ func diagnoseDiscovery(ctx context.Context, sshConfig, host string) DoctorCheck 
 	}
 	defer os.RemoveAll(controlDirectory)
 
-	adapter, err := NewOpenSSHAdapter(sshConfig, controlDirectory)
+	targets, _, err := HostList(opts.ConfigPath)
+	if err != nil {
+		return failedDoctorCheck("discovery", err.Error(), "Repair the host registry or configuration.")
+	}
+	target, found := targets[host]
+	if !found {
+		target = HostTarget{Target: host}
+	}
+	if target.Diagnostic != "" {
+		return failedDoctorCheck("discovery", "Discovered target needs connection settings.", "Use host add NAME --target DESTINATION with explicit options.")
+	}
+	adapter, err := NewOpenSSHAdapter(opts.SSHConfigPath, controlDirectory)
 	if err != nil {
 		return failedDoctorCheck(
 			"discovery", err.Error(), "Check the OpenSSH executable and --ssh-config path.",
 		)
 	}
 	defer adapter.Close(discoveryCtx)
-	listeners, err := probeDiscovery(discoveryCtx, adapter, core.HostAlias(host))
+	adapter.SetConnectionArguments(append([]string{"-o", "BatchMode=yes"}, target.Arguments...))
+	listeners, err := probeDiscovery(discoveryCtx, adapter, core.HostAlias(target.Target))
 	if err != nil {
 		diagnostic := core.ErrorDiagnostic(err)
 		detail, fix := diagnostics.DoctorAdvice(diagnostic, host)

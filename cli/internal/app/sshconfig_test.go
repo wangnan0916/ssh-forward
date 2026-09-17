@@ -93,3 +93,9 @@ func TestConfiguredHostsDeduplicatesAndGuardsCycles(t *testing.T) {
 		t.Fatalf("hosts mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestSSHConfigPathUsesFlag(t *testing.T) {
+	if got := SSHConfigPath("/explicit/config"); got != "/explicit/config" {
+		t.Fatalf("SSHConfigPath = %q", got)
+	}
+}

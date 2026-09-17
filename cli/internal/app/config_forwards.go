@@ -9,20 +9,25 @@ import (
 )
 
 func RemoveRememberedForward(path, host string, remotePort uint16) (bool, error) {
-	if host == "" || remotePort == 0 {
-		return false, errors.New("host and remote port are required")
+	if remotePort == 0 {
+		return false, errors.New("remote port is required")
 	}
 	config, err := loadConfigForWrite(path)
 	if err != nil {
 		return false, err
 	}
 	forwards := config.RememberedForwards[host]
+	if host == "" {
+		forwards = config.GlobalForwards
+	}
 	index, found := rememberedForwardIndex(forwards, remotePort)
 	if !found {
 		return false, nil
 	}
 	forwards = slices.Delete(forwards, index, index+1)
-	if len(forwards) == 0 {
+	if host == "" {
+		config.GlobalForwards = forwards
+	} else if len(forwards) == 0 {
 		delete(config.RememberedForwards, host)
 	} else {
 		config.RememberedForwards[host] = forwards
@@ -31,9 +36,6 @@ func RemoveRememberedForward(path, host string, remotePort uint16) (bool, error)
 }
 
 func SetRememberedForward(configPath, host string, forward core.RememberedForward) (bool, error) {
-	if host == "" {
-		return false, errors.New("host is required")
-	}
 	forward, err := normalizedRememberedForward(forward)
 	if err != nil {
 		return false, err
@@ -46,6 +48,9 @@ func SetRememberedForward(configPath, host string, forward core.RememberedForwar
 		config.RememberedForwards = make(map[string][]core.RememberedForward)
 	}
 	forwards := config.RememberedForwards[host]
+	if host == "" {
+		forwards = config.GlobalForwards
+	}
 	index, found := rememberedForwardIndex(forwards, forward.RemotePort)
 	if found && forwards[index] == forward {
 		return false, nil
@@ -66,7 +71,11 @@ func SetRememberedForward(configPath, host string, forward core.RememberedForwar
 	if err := validateLocalPortReservations(forwards, config.PublishedForwards[host]); err != nil {
 		return false, err
 	}
-	config.RememberedForwards[host] = forwards
+	if host == "" {
+		config.GlobalForwards = forwards
+	} else {
+		config.RememberedForwards[host] = forwards
+	}
 	return true, saveConfig(configPath, config)
 }
 

@@ -481,3 +481,26 @@ func TestControlCommandTimeoutDoesNotHangReconnect(t *testing.T) {
 		t.Fatal("control command exceeded timeout")
 	}
 }
+
+func TestPerTargetConfigurationOverridesServiceConfiguration(t *testing.T) {
+	adapter, _ := newLoggingAdapter(t, "")
+	adapter.configFile = "/service/config"
+	adapter.SetConnectionArguments([]string{"-F", "/target/config", "-p", "2222"})
+	got := strings.Join(adapter.configArguments(), " ")
+	if got != "-F /target/config -p 2222" {
+		t.Fatalf("target settings lost: %s", got)
+	}
+}
+
+func TestRememberedHostControlsHaveIndependentIdentities(t *testing.T) {
+	adapter, _ := newLoggingAdapter(t, "")
+	oldPath := adapter.controlPath("dev")
+	adapter.SetControlIdentity("dev")
+	if got := adapter.controlPath("dev"); got != oldPath {
+		t.Fatal("plain-host upgrade lost its existing control socket")
+	}
+	adapter.SetControlIdentity("dev-custom-port")
+	if adapter.controlPath("dev") == oldPath {
+		t.Fatal("different connection settings share a control socket")
+	}
+}

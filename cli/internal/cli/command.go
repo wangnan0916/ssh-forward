@@ -15,10 +15,11 @@ func grouped(id string, command *cobra.Command) *cobra.Command {
 func (a *App) RootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use: "ssh-forward", Short: "forward ports through OpenSSH",
-		Long: `ssh-forward shows loopback TCP listeners on one SSH host, keeps remembered forwards available on all local IPv4 interfaces, and publishes explicit local services to the host.
+		Long: `ssh-forward monitors configured SSH hosts concurrently, keeps remembered forwards available on all local IPv4 interfaces, and publishes explicit local services to each host.
 
-Select an alias, hostname, IP, or user@host with --host TARGET (-h is help).
-Pin a configured alias with: ssh-forward default ALIAS`,
+Rules apply to all remembered and discovered hosts by default.
+Use --host TARGET for host-specific rules, status filtering, and publishing.
+Use host add TARGET to remember an alias, hostname, IP, or user@host.`,
 		SilenceUsage: true, SilenceErrors: true, DisableAutoGenTag: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error { return a.prepareCommand(cmd) },
 		RunE:              func(cmd *cobra.Command, _ []string) error { return missingCommand(cmd) },
@@ -29,7 +30,7 @@ Pin a configured alias with: ssh-forward default ALIAS`,
 		&cobra.Group{ID: groupDaily, Title: "Daily:"},
 		&cobra.Group{ID: groupHost, Title: "Host:"},
 	)
-	root.PersistentFlags().String("host", "", "SSH target (alias, hostname, IP, or user@host; default: pinned alias)")
+	root.PersistentFlags().String("host", "", "SSH target (alias, hostname, IP, or user@host; omit for global rules or all-host status)")
 	root.PersistentFlags().String("ssh-config", "", "SSH client config file (default: ~/.ssh/config)")
 	if a.Version != "" {
 		root.Version = a.Version
@@ -43,7 +44,6 @@ Pin a configured alias with: ssh-forward default ALIAS`,
 		a.publishCommand(false),
 		a.statusCommand(),
 		a.hostCommand(),
-		a.defaultCommand(),
 		a.doctorCommand(),
 		a.uninstallCommand(),
 		a.managerCommand(),

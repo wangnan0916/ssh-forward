@@ -20,9 +20,6 @@ func RemoveWorkingDirectoryRule(configPath, host, pattern string) (bool, error) 
 }
 
 func updateWorkingDirectoryRule(configPath, host, pattern string, adding bool) (bool, error) {
-	if host == "" {
-		return false, errors.New("host is required")
-	}
 	if err := validateWorkingDirectoryRule(pattern); err != nil {
 		return false, err
 	}
@@ -34,6 +31,9 @@ func updateWorkingDirectoryRule(configPath, host, pattern string, adding bool) (
 		config.WorkingDirectoryRules = make(map[string][]string)
 	}
 	hostPatterns := config.WorkingDirectoryRules[host]
+	if host == "" {
+		hostPatterns = config.GlobalWorkingDirectoryRules
+	}
 	index, found := slices.BinarySearch(hostPatterns, pattern)
 	if adding == found {
 		return false, nil
@@ -43,7 +43,9 @@ func updateWorkingDirectoryRule(configPath, host, pattern string, adding bool) (
 	} else {
 		hostPatterns = slices.Delete(hostPatterns, index, index+1)
 	}
-	if len(hostPatterns) == 0 {
+	if host == "" {
+		config.GlobalWorkingDirectoryRules = hostPatterns
+	} else if len(hostPatterns) == 0 {
 		delete(config.WorkingDirectoryRules, host)
 	} else {
 		config.WorkingDirectoryRules[host] = hostPatterns

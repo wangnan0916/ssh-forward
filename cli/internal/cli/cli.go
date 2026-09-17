@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/app"
-	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 // ErrUsage marks a flag or host-resolution failure that should exit 2.
@@ -18,7 +17,7 @@ var ErrUsage = errors.New("usage")
 
 // App is the CLI surface. Tests inject Manager directly and skip app.Connect.
 type App struct {
-	Manager core.Manager
+	Manager app.Session
 	Options app.Options
 	Version string
 
@@ -89,11 +88,7 @@ func withInteractive(opts app.Options) app.Options {
 }
 
 func (a *App) serveManager(ctx context.Context) error {
-	err := app.Serve(ctx, a.Options)
-	if app.IsResolution(err) {
-		return UsageError(err)
-	}
-	return err
+	return app.Serve(ctx, a.Options)
 }
 
 const skipManagerKey = "skip-manager"
@@ -128,6 +123,9 @@ func (a *App) prepareCommand(cmd *cobra.Command) error {
 	if !needsManager(cmd) {
 		return nil
 	}
+	if (cmd.Name() == "publish" || cmd.Name() == "unpublish") && a.Options.HostFlag == "" {
+		return UsageError(errors.New("publish and unpublish require --host TARGET"))
+	}
 	return a.ensureSession(cmd.Context())
 }
 
@@ -137,9 +135,6 @@ func (a *App) ensureSession(ctx context.Context) error {
 	}
 	manager, err := app.Connect(ctx, a.Options)
 	if err != nil {
-		if app.IsResolution(err) {
-			return UsageError(err)
-		}
 		return err
 	}
 	a.Manager = manager
@@ -165,8 +160,10 @@ Daily
   unpublish LOCAL  stop publishing a local port
 
 Host
-  host            aliases from ~/.ssh/config
-  default ALIAS   pin the default host
+  host            remembered and discovered hosts
+  host add TARGET remember a host
+  host ignore HOST stop monitoring a host
+  host discover   discover local SSH sessions
 
 Use status --watch for live updates.
 Run doctor when SSH or forwarding is unhealthy.

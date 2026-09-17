@@ -13,13 +13,15 @@ import (
 )
 
 type fakeManager struct {
-	status core.Status
-	intent core.ForwardingIntent
+	status  core.Status
+	reloads []string
 }
 
-func (m *fakeManager) Status(context.Context) (core.Status, error) { return m.status, nil }
-func (m *fakeManager) UpdateIntent(_ context.Context, intent core.ForwardingIntent) error {
-	m.intent = intent
+func (m *fakeManager) AllStatuses(context.Context) ([]core.Status, error) {
+	return []core.Status{m.status}, nil
+}
+func (m *fakeManager) Reload(_ context.Context, host string) error {
+	m.reloads = append(m.reloads, host)
 	return nil
 }
 func (*fakeManager) Close(context.Context) error { return nil }
@@ -32,7 +34,7 @@ func TestAddWritesRemoteToLocalForward(t *testing.T) {
 		Manager: manager,
 		Options: app.Options{ConfigPath: configPath, Stdout: &stdout},
 	}
-	if err := surface.Run(context.Background(), []string{"add", "5173", "--local", "15173"}); err != nil {
+	if err := surface.Run(context.Background(), []string{"add", "5173", "--local", "15173", "--host", "dev"}); err != nil {
 		t.Fatal(err)
 	}
 	intent, err := app.HostIntent(configPath, "dev")
@@ -43,8 +45,8 @@ func TestAddWritesRemoteToLocalForward(t *testing.T) {
 	if diff := cmp.Diff([]core.RememberedForward{want}, intent.RememberedForwards); diff != "" {
 		t.Fatalf("remembered forwards mismatch (-want +got):\n%s", diff)
 	}
-	if diff := cmp.Diff([]core.RememberedForward{want}, manager.intent.RememberedForwards); diff != "" {
-		t.Fatalf("manager remembered forwards mismatch (-want +got):\n%s", diff)
+	if diff := cmp.Diff([]string{"dev"}, manager.reloads); diff != "" {
+		t.Fatalf("reload mismatch: %s", diff)
 	}
 	if !strings.Contains(stdout.String(), "Remembered remote 5173 at 0.0.0.0:15173 for dev") {
 		t.Fatalf("output = %q", stdout.String())
@@ -59,7 +61,7 @@ func TestAddWithoutLocalPortAllowsTemporaryFallback(t *testing.T) {
 		Manager: manager,
 		Options: app.Options{ConfigPath: configPath, Stdout: &stdout},
 	}
-	if err := surface.Run(context.Background(), []string{"add", "5173"}); err != nil {
+	if err := surface.Run(context.Background(), []string{"add", "5173", "--host", "dev"}); err != nil {
 		t.Fatal(err)
 	}
 	want := core.RememberedForward{
@@ -85,7 +87,7 @@ func TestPublishWritesLocalToRemoteForward(t *testing.T) {
 		Manager: manager,
 		Options: app.Options{ConfigPath: configPath, Stdout: &stdout},
 	}
-	if err := surface.Run(context.Background(), []string{"publish", "9222", "--remote", "19222"}); err != nil {
+	if err := surface.Run(context.Background(), []string{"publish", "9222", "--remote", "19222", "--host", "dev"}); err != nil {
 		t.Fatal(err)
 	}
 	want := core.PublishedForward{LocalPort: 9222, RemotePort: 19222}
@@ -97,8 +99,8 @@ func TestPublishWritesLocalToRemoteForward(t *testing.T) {
 	if diff := cmp.Diff(wantForwards, intent.PublishedForwards); diff != "" {
 		t.Fatalf("published forwards mismatch (-want +got):\n%s", diff)
 	}
-	if diff := cmp.Diff(wantForwards, manager.intent.PublishedForwards); diff != "" {
-		t.Fatalf("manager published forwards mismatch (-want +got):\n%s", diff)
+	if diff := cmp.Diff([]string{"dev"}, manager.reloads); diff != "" {
+		t.Fatalf("reload mismatch: %s", diff)
 	}
 	if !strings.Contains(stdout.String(), "Publishing local 127.0.0.1:9222 at dev 127.0.0.1:19222") {
 		t.Fatalf("output = %q", stdout.String())
@@ -118,15 +120,19 @@ func TestUnpublishJSONReportsRemovedMapping(t *testing.T) {
 		Manager: manager,
 		Options: app.Options{ConfigPath: configPath, Stdout: &stdout},
 	}
-	if err := surface.Run(context.Background(), []string{"unpublish", "9222", "--json"}); err != nil {
+	if err := surface.Run(context.Background(), []string{"unpublish", "9222", "--json", "--host", "dev"}); err != nil {
 		t.Fatal(err)
 	}
 	want := "{\"host\":\"dev\",\"local_port\":9222,\"remote_port\":19222,\"removed\":true}\n"
 	if stdout.String() != want {
 		t.Fatalf("output = %q, want %q", stdout.String(), want)
 	}
-	if len(manager.intent.PublishedForwards) != 0 {
-		t.Fatalf("manager intent = %#v", manager.intent)
+	intent, err := app.HostIntent(configPath, "dev")
+	if err != nil || len(intent.PublishedForwards) != 0 {
+		t.Fatalf("saved intent: %+v, %v", intent, err)
+	}
+	if len(manager.reloads) != 1 {
+		t.Fatal("manager was not reloaded")
 	}
 }
 
@@ -137,7 +143,7 @@ func TestPublishCommandsReportInvalidLocalPort(t *testing.T) {
 				Manager: &fakeManager{status: core.Status{Host: "dev"}},
 				Options: app.Options{ConfigPath: t.TempDir() + "/config.jsonc"},
 			}
-			err := surface.Run(context.Background(), []string{command, "invalid"})
+			err := surface.Run(context.Background(), []string{command, "invalid", "--host", "dev"})
 			if !errors.Is(err, ErrUsage) {
 				t.Fatalf("error = %v, want usage error", err)
 			}
@@ -173,7 +179,7 @@ func TestAddWorkingDirectoryGlobWritesOneHostRuleList(t *testing.T) {
 		Manager: &fakeManager{status: core.Status{Host: "dev"}},
 		Options: app.Options{ConfigPath: configPath, Stdout: &stdout},
 	}
-	if err := surface.Run(context.Background(), []string{"add", "--pwd", "/workspace/**"}); err != nil {
+	if err := surface.Run(context.Background(), []string{"add", "--pwd", "/workspace/**", "--host", "dev"}); err != nil {
 		t.Fatal(err)
 	}
 	intent, err := app.HostIntent(configPath, "dev")
@@ -296,7 +302,7 @@ func renderForwardStatusJSON(t *testing.T, forward core.ForwardStatus) string {
 		}},
 		Options: app.Options{ConfigPath: t.TempDir() + "/config.jsonc", Stdout: &stdout},
 	}
-	if err := surface.Run(context.Background(), []string{"status", "--json"}); err != nil {
+	if err := surface.Run(context.Background(), []string{"status", "--json", "--host", "dev"}); err != nil {
 		t.Fatal(err)
 	}
 	return stdout.String()

@@ -212,7 +212,11 @@ func (a *Adapter) cancelForward(
 }
 
 func (a *Adapter) controlPath(host core.HostAlias) string {
-	digest := sha256.Sum256([]byte(host))
+	identity := string(host)
+	if a.controlIdentity != "" {
+		identity = a.controlIdentity
+	}
+	digest := sha256.Sum256([]byte(identity))
 	// Commands run inside the private control directory. A bounded relative
 	// path avoids the short Unix-domain socket path limit on macOS while still
 	// ignoring any user-configured ControlPath.

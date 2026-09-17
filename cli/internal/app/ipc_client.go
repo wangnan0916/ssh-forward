@@ -1,7 +1,6 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
@@ -19,7 +19,7 @@ type managerClient struct {
 	transport *http.Transport
 }
 
-func dialManager(ctx context.Context, socket, version string) (core.Manager, error) {
+func dialManager(ctx context.Context, socket, version string) (*managerClient, error) {
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{Timeout: 250 * time.Millisecond}).DialContext(ctx, "unix", socket)
@@ -27,65 +27,57 @@ func dialManager(ctx context.Context, socket, version string) (core.Manager, err
 		ResponseHeaderTimeout: 2 * time.Second,
 	}
 	client := &managerClient{client: &http.Client{Transport: transport}, transport: transport}
-	if _, err := client.readStatus(ctx, version); err != nil {
+	if _, err := client.readStatuses(ctx, version); err != nil {
 		_ = client.Close(context.Background())
 		return nil, err
 	}
 	return client, nil
 }
 
-func (c *managerClient) Status(ctx context.Context) (core.Status, error) {
-	return c.readStatus(ctx, "")
-}
-
-func (c *managerClient) UpdateIntent(ctx context.Context, intent core.ForwardingIntent) error {
-	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(intent); err != nil {
-		return err
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPut, "http://manager"+managerIntentPath, &body)
+func (c *managerClient) Reload(ctx context.Context, host string) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://manager"+managerReloadPath+"?host="+url.QueryEscape(host), nil)
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Content-Type", "application/json")
 	response, err := c.client.Do(request)
 	if err != nil {
 		return err
 	}
 	defer response.Body.Close()
-	if response.StatusCode == http.StatusNotFound {
-		return ErrIncompatibleManager
-	}
 	if response.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("manager intent update: %s", response.Status)
+		return fmt.Errorf("reload manager: %s", response.Status)
 	}
 	return nil
 }
 
-func (c *managerClient) readStatus(ctx context.Context, version string) (core.Status, error) {
+func (c *managerClient) AllStatuses(ctx context.Context) ([]core.Status, error) {
+	return c.readStatuses(ctx, "")
+}
+
+func (c *managerClient) readStatuses(ctx context.Context, version string) ([]core.Status, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://manager"+managerStatusPath, nil)
 	if err != nil {
-		return core.Status{}, err
+		return nil, err
 	}
 	response, err := c.client.Do(request)
 	if err != nil {
-		return core.Status{}, err
+		return nil, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode == http.StatusNotFound {
-		return core.Status{}, ErrIncompatibleManager
+		return nil, ErrIncompatibleManager
 	}
 	if response.StatusCode != http.StatusOK {
-		return core.Status{}, fmt.Errorf("manager status: %s", response.Status)
+		return nil, fmt.Errorf("manager status: %s", response.Status)
 	}
-	var status managerStatus
-	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&status); err != nil {
-		return core.Status{}, err
+	var result managerAllStatus
+	if err := json.NewDecoder(io.LimitReader(response.Body, 16<<20)).Decode(&result); err != nil {
+		return nil, err
 	}
-	if status.ProtocolVersion != managerProtocolVersion || version != "" && status.ManagerVersion != version {
-		return core.Status{}, ErrIncompatibleManager
+	if result.ProtocolVersion != managerProtocolVersion || version != "" && result.ManagerVersion != version {
+		return nil, ErrIncompatibleManager
 	}
-	return status.Status, nil
+	return result.Hosts, nil
 }
 
 func (c *managerClient) Close(context.Context) error {
@@ -93,7 +85,7 @@ func (c *managerClient) Close(context.Context) error {
 	return nil
 }
 
-func waitManager(ctx context.Context, socket, version string, timeout time.Duration) (core.Manager, error) {
+func waitManager(ctx context.Context, socket, version string, timeout time.Duration) (*managerClient, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	ticker := time.NewTicker(25 * time.Millisecond)
