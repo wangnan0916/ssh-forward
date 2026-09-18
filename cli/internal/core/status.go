@@ -55,7 +55,8 @@ type ForwardStatus struct {
 
 // Listener is a remote TCP listener reachable through the IPv4 loopback
 // address. Process metadata is best-effort because procfs may hide another
-// user's process details.
+// user's process details; Docker-published ports may instead carry Compose
+// service and project directory labels when the Docker API is reachable.
 type Listener struct {
 	Port             uint16 `json:"port"`
 	App              string `json:"app,omitempty"`

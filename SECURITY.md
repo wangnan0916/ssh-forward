@@ -17,7 +17,9 @@ and expected impact.
   procfs. When available, `ss` associates sockets with same-user processes.
   Listeners whose executable is `sshd`, or that greet with an SSH identification
   banner on loopback, are omitted so a Development Host SSH daemon is not
-  offered for import.
+  offered for import. When the scanning user can read the Docker engine API,
+  published container ports may be labeled with the Compose service name and
+  project working directory.
 - Remote process metadata is bounded, UTF-8 repaired, and stripped of terminal
   control characters before it reaches status output. It is never persisted.
 - Imported services target Development Host `127.0.0.1` but listen on local

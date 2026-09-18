@@ -28,6 +28,19 @@ if looks_like_ssh_banner ""; then
     echo "empty treated as ssh" >&2
     exit 1
 fi
+
+lines=$(printf '%s\n' \
+    "55432	postgres	/home/shampoo/Workspace/personal/demo	/content-pages-postgres-1" \
+    "58333		/home/shampoo/Workspace/personal/demo	/content-pages-s3-1")
+
+meta=$(docker_metadata_for_port 55432 "$lines")
+test "$meta" = "postgres	/home/shampoo/Workspace/personal/demo"
+
+meta=$(docker_metadata_for_port 58333 "$lines")
+test "$meta" = "content-pages-s3-1	/home/shampoo/Workspace/personal/demo"
+
+meta=$(docker_metadata_for_port 22 "$lines")
+test -z "$meta"
 `
 	command := exec.Command("sh", "-s")
 	command.Stdin = strings.NewReader(script)
