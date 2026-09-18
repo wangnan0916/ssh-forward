@@ -122,7 +122,7 @@ ssh-forward COMMAND --help
 
 Status includes every monitored host, including offline hosts and candidates
 needing settings. JSON emits an array by default and one object with `--host`.
-Watch appends changed snapshots. Doctor checks configuration, SSH, the existing
+On a terminal, watch clears the previous snapshot and redraws. JSON and redirected output still append each change. Doctor checks configuration, SSH, the existing
 Manager, forward failures, and a real remote scan without repairing anything.
 
 The remote scanner reads Linux procfs and reports at most 256 listeners reachable

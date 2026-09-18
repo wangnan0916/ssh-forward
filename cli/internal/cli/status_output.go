@@ -4,8 +4,12 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"reflect"
 	"time"
+
+	"golang.org/x/term"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 	"github.com/wangnan0916/ssh-forward/cli/internal/statusview"
@@ -97,9 +101,48 @@ func forwardJSONStatus(forward core.ForwardStatus) any {
 	return output
 }
 
+// watchScreen replaces the visible status on an interactive terminal.
+// JSON and non-terminal output stay an append-only stream.
+type watchScreen struct {
+	writer io.Writer
+	active bool
+}
+
+func newWatchScreen(writer io.Writer, jsonOutput bool) watchScreen {
+	file, ok := writer.(*os.File)
+	return watchScreen{writer: writer, active: ok && !jsonOutput && term.IsTerminal(int(file.Fd()))}
+}
+
+func (s watchScreen) enter() error {
+	if !s.active {
+		return nil
+	}
+	_, err := io.WriteString(s.writer, "\x1b[?25l")
+	return err
+}
+
+func (s watchScreen) clear() error {
+	if !s.active {
+		return nil
+	}
+	_, err := io.WriteString(s.writer, "\x1b[H\x1b[2J")
+	return err
+}
+
+func (s watchScreen) leave() {
+	if s.active {
+		_, _ = io.WriteString(s.writer, "\x1b[?25h")
+	}
+}
+
 func (a *App) runWatch(ctx context.Context, jsonOutput bool) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	screen := newWatchScreen(a.Options.Stdout, jsonOutput)
+	if err := screen.enter(); err != nil {
+		return err
+	}
+	defer screen.leave()
 	var previous []core.Status
 	first := true
 	for {
@@ -111,11 +154,15 @@ func (a *App) runWatch(ctx context.Context, jsonOutput bool) error {
 			return err
 		}
 		if first || !reflect.DeepEqual(status, previous) {
-			if !first && !jsonOutput {
-				fmt.Fprintln(a.Options.Stdout)
+			if err := screen.clear(); err != nil {
+				return err
 			}
-			err = a.writeStatuses(status, jsonOutput)
-			if err != nil {
+			if !screen.active && !first && !jsonOutput {
+				if _, err := fmt.Fprintln(a.Options.Stdout); err != nil {
+					return err
+				}
+			}
+			if err := a.writeStatuses(status, jsonOutput); err != nil {
 				return err
 			}
 			previous, first = status, false
