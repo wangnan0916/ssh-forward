@@ -127,9 +127,12 @@ Manager, forward failures, and a real remote scan without repairing anything.
 
 The remote scanner reads Linux procfs and reports at most 256 listeners reachable
 at IPv4 loopback. Same-user IPv4 and dual-stack wildcard listeners are included;
-IPv6-only listeners are excluded. Executable names and working directories are
-best effort. UDP, Unix sockets, arbitrary publication bind addresses, and dynamic
-remote ports are not supported.
+IPv6-only listeners are excluded. Loopback listeners that speak SSH (or whose
+executable is `sshd`) are omitted. Executable names and working directories are best
+effort; when Docker is reachable for the scanning user, published container
+ports can show the Compose service name and project directory so working-
+directory rules may select them. UDP, Unix sockets, arbitrary publication bind
+addresses, and dynamic remote ports are not supported.
 
 ## Configuration and lifecycle
 

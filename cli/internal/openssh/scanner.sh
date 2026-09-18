@@ -21,7 +21,63 @@ if command -v readlink >/dev/null 2>&1 && command -v base64 >/dev/null 2>&1 \
     && command -v cut >/dev/null 2>&1 && command -v tr >/dev/null 2>&1; then
     has_metadata_tools=1
 fi
+has_docker=0
+if command -v docker >/dev/null 2>&1 && [ -S /var/run/docker.sock ]; then
+    has_docker=1
+fi
+has_ssh_probe=0
+if command -v timeout >/dev/null 2>&1; then
+    if command -v nc >/dev/null 2>&1 || command -v bash >/dev/null 2>&1; then
+        has_ssh_probe=1
+    fi
+fi
 current_uid=$(awk '$1 == "Uid:" { print $2; exit }' /proc/self/status)
+# Ports confirmed to speak SSH; retained only while they stay in the listener set.
+ssh_skip_ports=''
+
+# --- scanner helpers begin ---
+# Returns 0 when the byte string is an SSH identification banner.
+looks_like_ssh_banner() {
+    case "$1" in
+        SSH-*) return 0 ;;
+    esac
+    return 1
+}
+
+# Returns 0 when 127.0.0.1:port greets with an SSH banner.
+is_ssh_listener() {
+    port=$1
+    [ "$has_ssh_probe" -eq 1 ] || return 1
+    banner=''
+    if command -v nc >/dev/null 2>&1; then
+        # stdin must be /dev/null so nc cannot consume the caller’s port list.
+        banner=$(timeout 0.25 nc -n -w 1 127.0.0.1 "$port" </dev/null 2>/dev/null | dd bs=8 count=1 2>/dev/null || true)
+    else
+        banner=$(timeout 0.25 bash -c "exec 3<>/dev/tcp/127.0.0.1/$port && dd bs=8 count=1 <&3" </dev/null 2>/dev/null || true)
+    fi
+    looks_like_ssh_banner "$banner"
+}
+
+# Print "app<TAB>directory" for a Docker-published host port, or nothing.
+docker_metadata_for_port() {
+    port=$1
+    lines=$2
+    [ -n "$lines" ] || return 0
+    printf '%s\n' "$lines" | awk -F '\t' -v port="$port" '
+        $1 == port {
+            app = $2
+            directory = $3
+            name = $4
+            if (app == "") {
+                app = name
+                sub(/^\//, "", app)
+            }
+            print app "\t" directory
+            exit
+        }
+    '
+}
+# --- scanner helpers end ---
 
 while :; do
     sequence=$((sequence + 1))
@@ -85,40 +141,104 @@ while :; do
     ' /proc/net/tcp /proc/net/tcp6 2>/dev/null | sort -k1,1n -k2,2n | \
         awk '!seen[$1]++' | head -n "$limit")
 
+    # Drop cached SSH ports that are no longer listening.
+    next_ssh_skip=''
+    for cached in $ssh_skip_ports; do
+        if printf '%s\n' "$listeners" | awk -v port="$cached" '$1 == port { found = 1 } END { exit !found }'; then
+            next_ssh_skip="$next_ssh_skip $cached"
+        fi
+    done
+    ssh_skip_ports=$next_ssh_skip
+
+    # Optional Docker published-port map: hostPort, compose service, compose
+    # working directory, container name. Built once per snapshot when usable.
+    docker_lines=''
+    if [ "$has_docker" -eq 1 ]; then
+        docker_ids=$(docker ps -q 2>/dev/null || true)
+        if [ -n "$docker_ids" ]; then
+            # Intentional word splitting: docker inspect accepts multiple IDs.
+            # shellcheck disable=SC2086
+            docker_lines=$(docker inspect $docker_ids --format \
+                '{{range $p, $bindings := .NetworkSettings.Ports}}{{range $bindings}}{{if .HostPort}}{{.HostPort}}{{"\t"}}{{index $.Config.Labels "com.docker.compose.service"}}{{"\t"}}{{index $.Config.Labels "com.docker.compose.project.working_dir"}}{{"\t"}}{{$.Name}}{{"\n"}}{{end}}{{end}}{{end}}' \
+                2>/dev/null || true)
+        fi
+    fi
+
     printf 'PF2\tB\t%s\n' "$sequence"
     # Index owners once instead of scanning every owner for every listener.
-    {
-        printf '%s\n' "$socket_owners"
-        printf '\n'
-        printf '%s\n' "$listeners"
-    } | awk '
-        NF == 0 {
-            reading_listeners = 1
-            next
-        }
-        !reading_listeners {
-            split($0, owner, ":")
-            if (!(owner[1] in owner_by_inode)) {
-                owner_by_inode[owner[1]] = owner[2]
+    port_rows=$(
+        {
+            printf '%s\n' "$socket_owners"
+            printf '\n'
+            printf '%s\n' "$listeners"
+        } | awk '
+            NF == 0 {
+                reading_listeners = 1
+                next
             }
-            next
-        }
-        NF >= 2 {
-            print $1, owner_by_inode[$2]
-        }
-    ' | while IFS=' ' read -r port pid; do
+            !reading_listeners {
+                split($0, owner, ":")
+                if (!(owner[1] in owner_by_inode)) {
+                    owner_by_inode[owner[1]] = owner[2]
+                }
+                next
+            }
+            NF >= 2 {
+                print $1, owner_by_inode[$2]
+            }
+        '
+    )
+    # Keep the loop in this shell so ssh_skip_ports persists across snapshots.
+    while IFS=' ' read -r port pid || [ -n "$port" ]; do
         [ -n "$port" ] || continue
 
-        metadata='AA=='
+        case " $ssh_skip_ports " in
+            *" $port "*) continue ;;
+        esac
+
+        app=''
+        directory=''
         if [ -n "$pid" ] && [ "$has_metadata_tools" -eq 1 ]; then
             executable=$(readlink "/proc/$pid/exe" 2>/dev/null || true)
             app=$(printf '%s' "${executable##*/}" | cut -b "1-$max_app_bytes")
             directory=$(readlink "/proc/$pid/cwd" 2>/dev/null | cut -b "1-$max_directory_bytes")
+        fi
+        if [ "$app" = "sshd" ]; then
+            ssh_skip_ports="$ssh_skip_ports $port"
+            continue
+        fi
+
+        # Docker membership is the Docker check: only empty-metadata ports ask
+        # the engine, and only map hits are enriched.
+        if [ -z "$app" ] && [ -z "$directory" ] && [ -n "$docker_lines" ]; then
+            docker_meta=$(docker_metadata_for_port "$port" "$docker_lines")
+            if [ -n "$docker_meta" ]; then
+                docker_app=${docker_meta%%	*}
+                docker_directory=${docker_meta#*	}
+                if [ -n "$docker_app" ]; then
+                    app=$(printf '%s' "$docker_app" | cut -b "1-$max_app_bytes")
+                fi
+                if [ -n "$docker_directory" ]; then
+                    directory=$(printf '%s' "$docker_directory" | cut -b "1-$max_directory_bytes")
+                fi
+            fi
+        fi
+
+        # Unknown listeners: one short banner read detects sshd without cgroup.
+        if [ -z "$app" ] && is_ssh_listener "$port"; then
+            ssh_skip_ports="$ssh_skip_ports $port"
+            continue
+        fi
+
+        metadata='AA=='
+        if [ "$has_metadata_tools" -eq 1 ]; then
             metadata=$(printf '%s\000%s' "$app" "$directory" | base64 | tr -d '\n')
             [ -n "$metadata" ] || metadata='AA=='
         fi
         printf 'PF2\tP\t%s\t%s\t%s\n' "$sequence" "$port" "$metadata"
-    done
+    done <<EOF
+$port_rows
+EOF
     printf 'PF2\tE\t%s\n' "$sequence"
     sleep "$interval"
 done
