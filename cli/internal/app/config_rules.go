@@ -11,46 +11,22 @@ import (
 
 var ErrInvalidWorkingDirectoryRule = errors.New("invalid working-directory glob")
 
-func AddWorkingDirectoryRule(configPath, host, pattern string) (bool, error) {
-	return updateWorkingDirectoryRule(configPath, host, pattern, true)
-}
-
-func RemoveWorkingDirectoryRule(configPath, host, pattern string) (bool, error) {
-	return updateWorkingDirectoryRule(configPath, host, pattern, false)
-}
-
-func updateWorkingDirectoryRule(configPath, host, pattern string, adding bool) (bool, error) {
+func EditWorkingDirectoryRule(configPath, host, pattern string, adding bool) (bool, error) {
 	if err := validateWorkingDirectoryRule(pattern); err != nil {
 		return false, err
 	}
-	config, err := loadConfigForWrite(configPath)
-	if err != nil {
-		return false, err
-	}
-	rules := config.scope(host)
-	hostPatterns := rules.Directories
-	index, found := slices.BinarySearch(hostPatterns, pattern)
-	if adding == found {
-		return false, nil
-	}
-	if adding {
-		hostPatterns = slices.Insert(hostPatterns, index, pattern)
-	} else {
-		hostPatterns = slices.Delete(hostPatterns, index, index+1)
-	}
-	rules.Directories = hostPatterns
-	return true, config.save(configPath)
+	return editScope(configPath, host, func(rules *scopeRules) bool {
+		return editRule(&rules.Directories, &pattern, adding, func(s string) string { return s })
+	})
 }
 
 func normalizedWorkingDirectoryRules(patterns []string) ([]string, error) {
-	normalized := slices.Clone(patterns)
-	for _, pattern := range normalized {
+	for _, pattern := range patterns {
 		if err := validateWorkingDirectoryRule(pattern); err != nil {
 			return nil, err
 		}
 	}
-	slices.Sort(normalized)
-	return slices.Compact(normalized), nil
+	return slices.Compact(slices.Sorted(slices.Values(patterns))), nil
 }
 
 func validateWorkingDirectoryRule(pattern string) error {

@@ -16,155 +16,95 @@ func parseConfig(content []byte) (configFile, error) {
 	return normalizeConfig(config)
 }
 
-func normalizeConfig(config configFile) (configFile, error) {
-	if config.SchemaVersion < 1 || config.SchemaVersion > configSchemaVersion {
-		return configFile{}, fmt.Errorf(
-			"config.jsonc: unsupported schema_version %d (want 1..%d)",
-			config.SchemaVersion,
-			configSchemaVersion,
-		)
+func normalizeConfig(file configFile) (configFile, error) {
+	if file.SchemaVersion < 1 || file.SchemaVersion > configSchemaVersion {
+		return configFile{}, fmt.Errorf("config.jsonc: unsupported schema_version %d (want 1..%d)", file.SchemaVersion, configSchemaVersion)
 	}
-	if len(config.LegacyForwards) != 0 && config.RememberedForwards == nil {
-		config.RememberedForwards = make(map[string][]core.RememberedForward)
+	if len(file.LegacyForwards) > 0 && file.RememberedForwards == nil {
+		file.RememberedForwards = make(map[string][]core.RememberedForward)
 	}
-	for host, ports := range config.LegacyForwards {
+	for host, ports := range file.LegacyForwards {
 		if host == "" {
 			return configFile{}, errors.New("config.jsonc: empty host alias")
 		}
-		if slices.Contains(ports, uint16(0)) {
-			return configFile{}, errors.New("config.jsonc: port must be between 1 and 65535")
-		}
-		for _, port := range normalizedLegacyPorts(ports) {
-			config.RememberedForwards[host] = append(
-				config.RememberedForwards[host],
-				core.RememberedForward{RemotePort: port}.WithDefaults(),
-			)
+		for _, port := range slices.Compact(slices.Sorted(slices.Values(ports))) {
+			file.RememberedForwards[host] = append(file.RememberedForwards[host], core.RememberedForward{RemotePort: port}.WithDefaults())
 		}
 	}
-	config.LegacyForwards = nil
-	for host, forwards := range config.RememberedForwards {
-		if host == "" {
-			return configFile{}, errors.New("config.jsonc: empty host alias")
-		}
-		if config.SchemaVersion < 4 {
-			for index := range forwards {
-				forward := &forwards[index]
-				forward.AllowFallback = forward.LocalPort == 0 || forward.LocalPort == forward.RemotePort
+	for _, forwards := range file.RememberedForwards {
+		if file.SchemaVersion < 4 {
+			for i := range forwards {
+				forwards[i].AllowFallback = forwards[i].LocalPort == 0 || forwards[i].LocalPort == forwards[i].RemotePort
 			}
 		}
-		normalized, err := normalizedRememberedForwards(forwards)
-		if err != nil {
-			return configFile{}, err
-		}
-		config.RememberedForwards[host] = normalized
 	}
-	if config.SchemaVersion < 5 {
-		config.PublishedForwards = nil
+	if file.SchemaVersion < 5 {
+		file.PublishedForwards = nil
 	}
-	for host, forwards := range config.PublishedForwards {
-		if host == "" {
-			return configFile{}, errors.New("config.jsonc: empty host alias")
-		}
-		normalized, err := normalizedPublishedForwards(forwards)
-		if err != nil {
-			return configFile{}, err
-		}
-		config.PublishedForwards[host] = normalized
+	if file.SchemaVersion < 6 {
+		file.Hosts = nil
+		file.IgnoredHosts = nil
+		file.GlobalForwards = nil
+		file.GlobalWorkingDirectoryRules = nil
 	}
-	for host, forwards := range config.RememberedForwards {
-		if err := validateLocalPortReservations(forwards, config.PublishedForwards[host]); err != nil {
-			return configFile{}, err
-		}
+	// Empty keys in historical per-host maps must not become global rules.
+	_, imports := file.RememberedForwards[""]
+	_, publications := file.PublishedForwards[""]
+	_, directories := file.WorkingDirectoryRules[""]
+	if imports || publications || directories {
+		return configFile{}, errors.New("config.jsonc: empty host alias")
 	}
-	for host, patterns := range config.WorkingDirectoryRules {
-		if host == "" {
-			return configFile{}, errors.New("config.jsonc: empty host alias")
-		}
-		normalized, err := normalizedWorkingDirectoryRules(patterns)
-		if err != nil {
-			return configFile{}, err
-		}
-		config.WorkingDirectoryRules[host] = normalized
-	}
-	if config.SchemaVersion < 6 {
-		config.Hosts = nil
-		config.IgnoredHosts = nil
-		config.GlobalForwards = nil
-		config.GlobalWorkingDirectoryRules = nil
-	}
-	var err error
-	if len(config.GlobalForwards) > 0 {
-		config.GlobalForwards, err = normalizedRememberedForwards(config.GlobalForwards)
-	}
-	if err != nil {
-		return configFile{}, err
-	}
-	config.GlobalWorkingDirectoryRules, err = normalizedWorkingDirectoryRules(config.GlobalWorkingDirectoryRules)
-	if err != nil {
-		return configFile{}, err
-	}
-	// Normalize legacy host references once; runtime only consumes Hosts.
+	config := file.model()
 	if config.Hosts == nil {
 		config.Hosts = make(map[string]HostTarget)
 	}
 	remember := func(host string) {
-		if host != "" {
-			if _, ok := config.Hosts[host]; !ok {
-				config.Hosts[host] = HostTarget{Target: host}
-			}
+		if _, exists := config.Hosts[host]; host != "" && !exists {
+			config.Hosts[host] = HostTarget{Target: host}
 		}
 	}
-	remember(config.DefaultHost)
-	config.DefaultHost = ""
-	for host := range config.RememberedForwards {
+	remember(file.DefaultHost)
+	for host, rules := range config.Rules {
 		remember(host)
-	}
-	for host := range config.PublishedForwards {
-		remember(host)
-	}
-	for host := range config.WorkingDirectoryRules {
-		remember(host)
+		if err := rules.normalize(); err != nil {
+			return configFile{}, err
+		}
 	}
 	for name, target := range config.Hosts {
 		if err := validateTarget(name, target); err != nil {
 			return configFile{}, err
 		}
 	}
-	return config, nil
+	normalized, err := config.file()
+	normalized.SchemaVersion = file.SchemaVersion
+	return normalized, err
 }
 
-func normalizedLegacyPorts(ports []uint16) []uint16 {
-	ports = slices.Clone(ports)
-	slices.Sort(ports)
-	return slices.Compact(ports)
+func (rules *scopeRules) normalize() error {
+	if err := errors.Join(
+		normalizeInto(&rules.Forwards, normalizedRememberedForwards),
+		normalizeInto(&rules.Published, normalizedPublishedForwards),
+		normalizeInto(&rules.Directories, normalizedWorkingDirectoryRules),
+	); err != nil {
+		return err
+	}
+	return validateLocalPortReservations(rules.Forwards, rules.Published)
+}
+
+func normalizeInto[T any](items *[]T, normalize func([]T) ([]T, error)) error {
+	if len(*items) == 0 {
+		return nil
+	}
+	values, err := normalize(*items)
+	if err == nil {
+		*items = values
+	}
+	return err
 }
 
 func normalizedRememberedForwards(forwards []core.RememberedForward) ([]core.RememberedForward, error) {
-	normalized := make([]core.RememberedForward, 0, len(forwards))
-	remotePorts := make(map[uint16]bool, len(forwards))
-	localPorts := make(map[uint16]uint16, len(forwards))
-	for _, forward := range forwards {
-		forward, err := normalizedRememberedForward(forward)
-		if err != nil {
-			return nil, err
-		}
-		if remotePorts[forward.RemotePort] {
-			return nil, fmt.Errorf("config.jsonc: duplicate remote port %d", forward.RemotePort)
-		}
-		if remotePort, found := localPorts[forward.LocalPort]; found {
-			return nil, fmt.Errorf(
-				"config.jsonc: local port %d is used by remote ports %d and %d",
-				forward.LocalPort, remotePort, forward.RemotePort,
-			)
-		}
-		remotePorts[forward.RemotePort] = true
-		localPorts[forward.LocalPort] = forward.RemotePort
-		normalized = append(normalized, forward)
-	}
-	slices.SortFunc(normalized, func(left, right core.RememberedForward) int {
-		return int(left.RemotePort) - int(right.RemotePort)
-	})
-	return normalized, nil
+	return normalizeForwards(forwards, normalizedRememberedForward,
+		func(f core.RememberedForward) (uint16, uint16) { return f.RemotePort, f.LocalPort }, "remote", "local")
 }
 
 func normalizedRememberedForward(forward core.RememberedForward) (core.RememberedForward, error) {
@@ -175,29 +115,34 @@ func normalizedRememberedForward(forward core.RememberedForward) (core.Remembere
 }
 
 func normalizedPublishedForwards(forwards []core.PublishedForward) ([]core.PublishedForward, error) {
-	normalized := make([]core.PublishedForward, 0, len(forwards))
-	localPorts := make(map[uint16]bool, len(forwards))
-	remotePorts := make(map[uint16]uint16, len(forwards))
-	for _, forward := range forwards {
-		forward, err := normalizedPublishedForward(forward)
+	return normalizeForwards(forwards, normalizedPublishedForward,
+		func(f core.PublishedForward) (uint16, uint16) { return f.LocalPort, f.RemotePort }, "published local", "published remote")
+}
+
+// Both forwarding directions have a service port (identity) and a bind port
+// (exclusive reservation). Their validation differs only in those roles.
+func normalizeForwards[T any](items []T, defaults func(T) (T, error), ports func(T) (uint16, uint16), service, bind string) ([]T, error) {
+	normalized := make([]T, 0, len(items))
+	services, bindings := make(map[uint16]bool), make(map[uint16]uint16)
+	for _, item := range items {
+		item, err := defaults(item)
 		if err != nil {
 			return nil, err
 		}
-		if localPorts[forward.LocalPort] {
-			return nil, fmt.Errorf("config.jsonc: duplicate published local port %d", forward.LocalPort)
+		source, target := ports(item)
+		if services[source] {
+			return nil, fmt.Errorf("config.jsonc: duplicate %s port %d", service, source)
 		}
-		if localPort, found := remotePorts[forward.RemotePort]; found {
-			return nil, fmt.Errorf(
-				"config.jsonc: published remote port %d is used by local ports %d and %d",
-				forward.RemotePort, localPort, forward.LocalPort,
-			)
+		if previous, found := bindings[target]; found {
+			return nil, fmt.Errorf("config.jsonc: %s port %d is used by %s ports %d and %d", bind, target, service, previous, source)
 		}
-		localPorts[forward.LocalPort] = true
-		remotePorts[forward.RemotePort] = forward.LocalPort
-		normalized = append(normalized, forward)
+		services[source], bindings[target] = true, source
+		normalized = append(normalized, item)
 	}
-	slices.SortFunc(normalized, func(left, right core.PublishedForward) int {
-		return int(left.LocalPort) - int(right.LocalPort)
+	slices.SortFunc(normalized, func(a, b T) int {
+		left, _ := ports(a)
+		right, _ := ports(b)
+		return int(left) - int(right)
 	})
 	return normalized, nil
 }
@@ -209,20 +154,14 @@ func normalizedPublishedForward(forward core.PublishedForward) (core.PublishedFo
 	return forward.WithDefaults(), nil
 }
 
-func validateLocalPortReservations(
-	remembered []core.RememberedForward,
-	published []core.PublishedForward,
-) error {
+func validateLocalPortReservations(remembered []core.RememberedForward, published []core.PublishedForward) error {
 	reserved := make(map[uint16]struct{}, len(published))
 	for _, forward := range published {
 		reserved[forward.LocalPort] = struct{}{}
 	}
 	for _, forward := range remembered {
 		if _, found := reserved[forward.LocalPort]; found && !forward.AllowFallback {
-			return fmt.Errorf(
-				"config.jsonc: local port %d is reserved by a published forward",
-				forward.LocalPort,
-			)
+			return fmt.Errorf("config.jsonc: local port %d is reserved by a published forward", forward.LocalPort)
 		}
 	}
 	return nil

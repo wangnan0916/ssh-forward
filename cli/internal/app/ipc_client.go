@@ -15,8 +15,7 @@ import (
 )
 
 type managerClient struct {
-	client    *http.Client
-	transport *http.Transport
+	client *http.Client
 }
 
 func dialManager(ctx context.Context, socket, version string) (*managerClient, error) {
@@ -26,7 +25,7 @@ func dialManager(ctx context.Context, socket, version string) (*managerClient, e
 		},
 		ResponseHeaderTimeout: 2 * time.Second,
 	}
-	client := &managerClient{client: &http.Client{Transport: transport}, transport: transport}
+	client := &managerClient{client: &http.Client{Transport: transport}}
 	if _, err := client.readStatuses(ctx, version); err != nil {
 		_ = client.Close(context.Background())
 		return nil, err
@@ -35,19 +34,7 @@ func dialManager(ctx context.Context, socket, version string) (*managerClient, e
 }
 
 func (c *managerClient) Reload(ctx context.Context, host string) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://manager"+managerReloadPath+"?host="+url.QueryEscape(host), nil)
-	if err != nil {
-		return err
-	}
-	response, err := c.client.Do(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("reload manager: %s", response.Status)
-	}
-	return nil
+	return c.request(ctx, http.MethodPost, managerReloadPath+"?host="+url.QueryEscape(host), http.StatusNoContent, nil)
 }
 
 func (c *managerClient) AllStatuses(ctx context.Context) ([]core.Status, error) {
@@ -55,23 +42,8 @@ func (c *managerClient) AllStatuses(ctx context.Context) ([]core.Status, error) 
 }
 
 func (c *managerClient) readStatuses(ctx context.Context, version string) ([]core.Status, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://manager"+managerStatusPath, nil)
-	if err != nil {
-		return nil, err
-	}
-	response, err := c.client.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode == http.StatusNotFound {
-		return nil, ErrIncompatibleManager
-	}
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("manager status: %s", response.Status)
-	}
 	var result managerAllStatus
-	if err := json.NewDecoder(io.LimitReader(response.Body, 16<<20)).Decode(&result); err != nil {
+	if err := c.request(ctx, http.MethodGet, managerStatusPath, http.StatusOK, &result); err != nil {
 		return nil, err
 	}
 	if result.ProtocolVersion != managerProtocolVersion || version != "" && result.ManagerVersion != version {
@@ -80,8 +52,30 @@ func (c *managerClient) readStatuses(ctx context.Context, version string) ([]cor
 	return result.Hosts, nil
 }
 
+func (c *managerClient) request(ctx context.Context, method, path string, expected int, result any) error {
+	request, err := http.NewRequestWithContext(ctx, method, "http://manager"+path, nil)
+	if err != nil {
+		return err
+	}
+	response, err := c.client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if path == managerStatusPath && response.StatusCode == http.StatusNotFound {
+		return ErrIncompatibleManager
+	}
+	if response.StatusCode != expected {
+		return fmt.Errorf("manager %s: %s", path, response.Status)
+	}
+	if result != nil {
+		return json.NewDecoder(io.LimitReader(response.Body, 16<<20)).Decode(result)
+	}
+	return nil
+}
+
 func (c *managerClient) Close(context.Context) error {
-	c.transport.CloseIdleConnections()
+	c.client.CloseIdleConnections()
 	return nil
 }
 

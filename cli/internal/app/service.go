@@ -58,18 +58,7 @@ func installAndStart(svc managerService) error {
 }
 
 func reinstallService(svc managerService, layout Layout) error {
-	status, err := svc.Status()
-	if err == nil {
-		if status == service.StatusRunning {
-			if err := svc.Stop(); err != nil {
-				return err
-			}
-			waitSocketGone(layout.Socket, 2*time.Second)
-		}
-		if err := svc.Uninstall(); err != nil {
-			return err
-		}
-	} else if !errors.Is(err, service.ErrNotInstalled) {
+	if err := uninstallService(svc, layout); err != nil {
 		return err
 	}
 	if _, err := stopLegacyManager(layout); err != nil {

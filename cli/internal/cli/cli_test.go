@@ -3,11 +3,13 @@ package cli
 import (
 	"bytes"
 	"context"
-	"errors"
+	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/require"
+
 	"github.com/wangnan0916/ssh-forward/cli/internal/app"
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
@@ -26,342 +28,173 @@ func (m *fakeManager) Reload(_ context.Context, host string) error {
 }
 func (*fakeManager) Close(context.Context) error { return nil }
 
-func TestAddWritesRemoteToLocalForward(t *testing.T) {
-	configPath := t.TempDir() + "/config.jsonc"
-	var stdout bytes.Buffer
-	manager := &fakeManager{status: core.Status{Host: "dev"}}
-	surface := &App{
-		Manager: manager,
-		Options: app.Options{ConfigPath: configPath, Stdout: &stdout},
-	}
-	if err := surface.Run(context.Background(), []string{"add", "5173", "--local", "15173", "--host", "dev"}); err != nil {
-		t.Fatal(err)
-	}
-	intent, err := app.HostIntent(configPath, "dev")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := core.RememberedForward{RemotePort: 5173, LocalPort: 15173}
-	if diff := cmp.Diff([]core.RememberedForward{want}, intent.RememberedForwards); diff != "" {
-		t.Fatalf("remembered forwards mismatch (-want +got):\n%s", diff)
-	}
-	if diff := cmp.Diff([]string{"dev"}, manager.reloads); diff != "" {
-		t.Fatalf("reload mismatch: %s", diff)
-	}
-	if !strings.Contains(stdout.String(), "Remembered remote 5173 at 0.0.0.0:15173 for dev") {
-		t.Fatalf("output = %q", stdout.String())
-	}
-}
-
-func TestAddWithoutLocalPortAllowsTemporaryFallback(t *testing.T) {
-	configPath := t.TempDir() + "/config.jsonc"
-	var stdout bytes.Buffer
-	manager := &fakeManager{status: core.Status{Host: "dev"}}
-	surface := &App{
-		Manager: manager,
-		Options: app.Options{ConfigPath: configPath, Stdout: &stdout},
-	}
-	if err := surface.Run(context.Background(), []string{"add", "5173", "--host", "dev"}); err != nil {
-		t.Fatal(err)
-	}
-	want := core.RememberedForward{
-		RemotePort: 5173, LocalPort: 5173, AllowFallback: true,
-	}
-	intent, err := app.HostIntent(configPath, "dev")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if diff := cmp.Diff([]core.RememberedForward{want}, intent.RememberedForwards); diff != "" {
-		t.Fatalf("remembered forwards mismatch (-want +got):\n%s", diff)
-	}
-	if !strings.Contains(stdout.String(), "prefers 0.0.0.0:5173; falls back if busy") {
-		t.Fatalf("output = %q", stdout.String())
-	}
-}
-
-func TestPublishWritesLocalToRemoteForward(t *testing.T) {
-	configPath := t.TempDir() + "/config.jsonc"
-	var stdout bytes.Buffer
-	manager := &fakeManager{status: core.Status{Host: "dev"}}
-	surface := &App{
-		Manager: manager,
-		Options: app.Options{ConfigPath: configPath, Stdout: &stdout},
-	}
-	if err := surface.Run(context.Background(), []string{"publish", "9222", "--remote", "19222", "--host", "dev"}); err != nil {
-		t.Fatal(err)
-	}
-	want := core.PublishedForward{LocalPort: 9222, RemotePort: 19222}
-	intent, err := app.HostIntent(configPath, "dev")
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantForwards := []core.PublishedForward{want}
-	if diff := cmp.Diff(wantForwards, intent.PublishedForwards); diff != "" {
-		t.Fatalf("published forwards mismatch (-want +got):\n%s", diff)
-	}
-	if diff := cmp.Diff([]string{"dev"}, manager.reloads); diff != "" {
-		t.Fatalf("reload mismatch: %s", diff)
-	}
-	if !strings.Contains(stdout.String(), "Publishing local 127.0.0.1:9222 at dev 127.0.0.1:19222") {
-		t.Fatalf("output = %q", stdout.String())
-	}
-}
-
 func TestUnpublishJSONReportsRemovedMapping(t *testing.T) {
 	configPath := t.TempDir() + "/config.jsonc"
-	if _, err := app.SetPublishedForward(configPath, "dev", core.PublishedForward{
-		LocalPort: 9222, RemotePort: 19222,
-	}); err != nil {
+	if _, err := app.EditPublishedForward(configPath, "dev", &core.PublishedForward{LocalPort: 9222, RemotePort: 19222}, true); err != nil {
 		t.Fatal(err)
 	}
 	var stdout bytes.Buffer
 	manager := &fakeManager{status: core.Status{Host: "dev"}}
-	surface := &App{
-		Manager: manager,
-		Options: app.Options{ConfigPath: configPath, Stdout: &stdout},
-	}
-	if err := surface.Run(context.Background(), []string{"unpublish", "9222", "--json", "--host", "dev"}); err != nil {
-		t.Fatal(err)
-	}
+	surface := &App{Manager: manager, Options: app.Options{ConfigPath: configPath, Stdout: &stdout}}
+	require.NoError(t, surface.Run(context.Background(), []string{"unpublish", "9222", "--json", "--host", "dev"}))
 	want := "{\"host\":\"dev\",\"local_port\":9222,\"remote_port\":19222,\"removed\":true}\n"
-	if stdout.String() != want {
-		t.Fatalf("output = %q, want %q", stdout.String(), want)
-	}
+	require.EqualValuesf(t, want, stdout.String(), "output = %q, want %q", stdout.String(), want)
 	intent, err := app.HostIntent(configPath, "dev")
-	if err != nil || len(intent.PublishedForwards) != 0 {
-		t.Fatalf("saved intent: %+v, %v", intent, err)
-	}
-	if len(manager.reloads) != 1 {
-		t.Fatal("manager was not reloaded")
+	require.Falsef(t, err != nil || len(intent.PublishedForwards) != 0, "saved intent: %+v, %v", intent, err)
+	require.EqualValues(t, 1, len(manager.reloads), "manager was not reloaded")
+}
+
+func TestNoCommandDisplaysGeneratedHelp(t *testing.T) {
+	var stdout bytes.Buffer
+	surface := &App{Options: app.Options{Stdout: &stdout}}
+	require.NoError(t, surface.Run(context.Background(), nil))
+	for _, text := range []string{"publish <LOCAL>", "unpublish <LOCAL>", "Publish a local port on the Development Host"} {
+		require.Contains(t, stdout.String(), text)
 	}
 }
 
-func TestPublishCommandsReportInvalidLocalPort(t *testing.T) {
-	for _, command := range []string{"publish", "unpublish"} {
-		t.Run(command, func(t *testing.T) {
-			surface := &App{
-				Manager: &fakeManager{status: core.Status{Host: "dev"}},
-				Options: app.Options{ConfigPath: t.TempDir() + "/config.jsonc"},
-			}
-			err := surface.Run(context.Background(), []string{command, "invalid", "--host", "dev"})
-			if !errors.Is(err, ErrUsage) {
-				t.Fatalf("error = %v, want usage error", err)
-			}
-			want := command + " requires one local port 1..65535"
-			if err.Error() != want {
-				t.Fatalf("error = %q, want %q", err, want)
-			}
+func TestStatusDelegatesHumanRenderingAndPreservesJSONEnvelope(t *testing.T) {
+	surface, manager, output := testCLI(t)
+	manager.status = core.Status{Host: "dev", Discovery: core.DiscoveryStatus{State: core.DiscoveryActive}, Listeners: []core.Listener{{Port: 631}}}
+	require.NoError(t, surface.Run(context.Background(), []string{"status"}))
+	require.Contains(t, output.String(), "Host  dev    Discovery  active")
+	require.Contains(t, output.String(), "AVAILABLE")
+	require.NotContains(t, output.String(), "ssh-forward add")
+	output.Reset()
+	require.NoError(t, surface.Run(context.Background(), []string{"status", "--host", "dev", "--json"}))
+	require.JSONEq(t, `{"host":"dev","discovery":{"state":"active"},"listeners":[{"port":631}],"forwards":null}`, output.String())
+}
+
+func TestForwardJSONCompatibility(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		forward core.ForwardStatus
+		json    string
+	}{
+		{"same port", core.ForwardStatus{RemotePort: 8443, PreferredLocalPort: 8443, LocalPort: 8443, State: core.ForwardActive, AllowFallback: true}, `{"port":8443,"state":"active"}`},
+		{"fallback", core.ForwardStatus{RemotePort: 8443, PreferredLocalPort: 8443, LocalPort: 8444, State: core.ForwardActive, AllowFallback: true}, `{"remote_port":8443,"preferred_local_port":8443,"local_port":8444,"state":"active","allow_fallback":true}`},
+		{"publication", core.ForwardStatus{Direction: core.LocalToRemote, LocalPort: 9222, PreferredRemotePort: 19222, RemotePort: 19222, State: core.ForwardActive}, `{"direction":"local_to_remote","local_port":9222,"preferred_remote_port":19222,"remote_port":19222,"state":"active","kind":"published"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			output, err := json.Marshal(statusJSON(core.Status{Forwards: []core.ForwardStatus{tc.forward}}).Forwards)
+			require.NoError(t, err)
+			require.JSONEq(t, "["+tc.json+"]", string(output))
 		})
 	}
 }
 
-func TestNoCommandPrimerIncludesPublishedForwards(t *testing.T) {
-	var stdout bytes.Buffer
-	surface := &App{Options: app.Options{Stdout: &stdout}}
-	if err := surface.Run(context.Background(), nil); err != nil {
-		t.Fatal(err)
-	}
-	for _, text := range []string{
-		"publish LOCAL",
-		"unpublish LOCAL",
-		"publish a local port on the Development Host",
+func TestCommandSurface(t *testing.T) {
+	for _, tc := range []struct {
+		command         string
+		present, absent []string
+	}{
+		{"", []string{"hostname, IP, or user@host", "doctor", "uninstall"}, []string{"  manager", "  policy", "  watch"}},
+		{"add", []string{"--pwd", "--local"}, []string{"--dir"}},
+		{"remove", []string{"--pwd"}, []string{"--local"}},
+		{"publish", []string{"--remote"}, nil},
+		{"unpublish", nil, []string{"--remote"}},
+		{"status", []string{"--watch", "--json"}, nil},
 	} {
-		if !strings.Contains(stdout.String(), text) {
-			t.Fatalf("primer = %q, missing %q", stdout.String(), text)
-		}
+		t.Run(tc.command, func(t *testing.T) {
+			var output bytes.Buffer
+			surface := &App{Options: app.Options{Stdout: &output}}
+			args := []string{"--help"}
+			if tc.command != "" {
+				args = append([]string{tc.command}, args...)
+			}
+			require.NoError(t, surface.Run(context.Background(), args))
+			for _, text := range tc.present {
+				require.Contains(t, output.String(), text)
+			}
+			for _, text := range tc.absent {
+				require.NotContains(t, output.String(), text)
+			}
+			require.Nil(t, surface.Manager, "help must never create a service session")
+		})
+	}
+	for _, args := range [][]string{{"policy"}, {"watch"}, {"add", "--dir", "/workspace"}, {"remove", "5173", "--local", "15173"}, {"unpublish", "9222", "--remote", "19222"}} {
+		require.ErrorIs(t, (&App{}).Run(context.Background(), args), ErrUsage)
 	}
 }
 
-func TestAddWorkingDirectoryGlobWritesOneHostRuleList(t *testing.T) {
-	configPath := t.TempDir() + "/config.jsonc"
-	var stdout bytes.Buffer
-	surface := &App{
-		Manager: &fakeManager{status: core.Status{Host: "dev"}},
-		Options: app.Options{ConfigPath: configPath, Stdout: &stdout},
-	}
-	if err := surface.Run(context.Background(), []string{"add", "--pwd", "/workspace/**", "--host", "dev"}); err != nil {
-		t.Fatal(err)
-	}
-	intent, err := app.HostIntent(configPath, "dev")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(intent.WorkingDirectoryRules) != 1 || intent.WorkingDirectoryRules[0] != "/workspace/**" {
-		t.Fatalf("rules = %v", intent.WorkingDirectoryRules)
-	}
-	if !strings.Contains(stdout.String(), "Remembered working-directory glob /workspace/** for dev") {
-		t.Fatalf("output = %q", stdout.String())
-	}
-}
-
-func TestAddWorkingDirectoryGlobRejectsRelativePattern(t *testing.T) {
-	surface := &App{
-		Manager: &fakeManager{status: core.Status{Host: "dev"}},
-		Options: app.Options{ConfigPath: t.TempDir() + "/config.jsonc"},
-	}
-	err := surface.Run(context.Background(), []string{"add", "--pwd", "workspace/**"})
-	if !errors.Is(err, ErrUsage) {
-		t.Fatalf("error = %v, want usage error", err)
-	}
-}
-
-func TestAddRejectsLocalPortWithWorkingDirectoryGlob(t *testing.T) {
-	surface := &App{
-		Manager: &fakeManager{status: core.Status{Host: "dev"}},
-		Options: app.Options{ConfigPath: t.TempDir() + "/config.jsonc"},
-	}
-	err := surface.Run(context.Background(), []string{
-		"add", "--pwd", "/workspace/**", "--local", "15173",
-	})
-	if !errors.Is(err, ErrUsage) {
-		t.Fatalf("error = %v, want usage error", err)
-	}
-}
-
-func TestStatusSeparatesForwardedAndAvailablePorts(t *testing.T) {
-	var stdout bytes.Buffer
-	surface := &App{
-		Manager: &fakeManager{status: core.Status{
-			Host: "dev", Discovery: core.DiscoveryStatus{State: core.DiscoveryActive},
-			Listeners: []core.Listener{
-				{Port: 631},
-				{Port: 3000, App: "vite", WorkingDirectory: "/workspace/web"},
-				{Port: 5173, App: "node", WorkingDirectory: "/workspace/app"},
-				{Port: 12000, App: "node", WorkingDirectory: "/workspace/api"},
-			},
-			Forwards: []core.ForwardStatus{
-				{RemotePort: 5173, LocalPort: 15173, State: core.ForwardActive},
-				{RemotePort: 12000, LocalPort: 12000, State: core.ForwardActive},
-			},
-		}},
-		Options: app.Options{ConfigPath: t.TempDir() + "/config.jsonc", Stdout: &stdout},
-	}
-	if err := surface.Run(context.Background(), []string{"status"}); err != nil {
-		t.Fatal(err)
-	}
-	output := stdout.String()
-	for _, text := range []string{
-		"Host  dev    Discovery  active",
-		" 5173  0.0.0.0:15173  remembered  node  /workspace/app",
-		"12000  0.0.0.0:12000  remembered  node  /workspace/api",
-		"  631  —     —",
-		" 3000  vite  /workspace/web",
+func TestRuleCommandsPersistIntent(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		args   []string
+		want   core.ForwardingIntent
+		output string
+	}{
+		{"mapped import", []string{"add", "5173", "--local", "15173"}, core.ForwardingIntent{RememberedForwards: []core.RememberedForward{{RemotePort: 5173, LocalPort: 15173}}}, "Remembered remote 5173 at 0.0.0.0:15173 for dev"},
+		{"fallback import", []string{"add", "5173"}, core.ForwardingIntent{RememberedForwards: []core.RememberedForward{{RemotePort: 5173, LocalPort: 5173, AllowFallback: true}}}, "prefers 0.0.0.0:5173; falls back if busy"},
+		{"publication", []string{"publish", "9222", "--remote", "19222"}, core.ForwardingIntent{PublishedForwards: []core.PublishedForward{{LocalPort: 9222, RemotePort: 19222}}}, "Publishing local 127.0.0.1:9222 at dev 127.0.0.1:19222"},
+		{"directory", []string{"add", "--pwd", "/workspace/**"}, core.ForwardingIntent{WorkingDirectoryRules: []string{"/workspace/**"}}, "Remembered working-directory glob /workspace/** for dev"},
 	} {
-		if !strings.Contains(output, text) {
-			t.Fatalf("output = %q, missing %q", output, text)
-		}
-	}
-	if strings.Contains(output, "ssh-forward add") {
-		t.Fatalf("output still contains an add command: %q", output)
-	}
-}
-
-func TestStatusJSONPreservesLegacyForwardShape(t *testing.T) {
-	got := renderForwardStatusJSON(t, core.ForwardStatus{
-		RemotePort: 8443, PreferredLocalPort: 8443, LocalPort: 8443,
-		State: core.ForwardActive, AllowFallback: true,
-	})
-	want := "{\"host\":\"dev\",\"discovery\":{\"state\":\"active\"},\"listeners\":[{\"port\":631}],\"forwards\":[{\"port\":8443,\"state\":\"active\"}]}\n"
-	if got != want {
-		t.Fatalf("output = %q, want %q", got, want)
+		t.Run(tc.name, func(t *testing.T) {
+			surface, manager, output := testCLI(t)
+			require.NoError(t, surface.Run(context.Background(), append(tc.args, "--host", "dev")))
+			intent, err := app.HostIntent(surface.Options.ConfigPath, "dev")
+			require.NoError(t, err)
+			require.Equal(t, tc.want, intent)
+			require.Equal(t, []string{"dev"}, manager.reloads)
+			require.Contains(t, output.String(), tc.output)
+		})
 	}
 }
 
-func TestStatusJSONIncludesFallbackMapping(t *testing.T) {
-	got := renderForwardStatusJSON(t, core.ForwardStatus{
-		RemotePort: 8443, PreferredLocalPort: 8443, LocalPort: 8444,
-		State: core.ForwardActive, AllowFallback: true,
-	})
-	want := "{\"host\":\"dev\",\"discovery\":{\"state\":\"active\"},\"listeners\":[{\"port\":631}],\"forwards\":[{\"remote_port\":8443,\"preferred_local_port\":8443,\"local_port\":8444,\"state\":\"active\",\"allow_fallback\":true}]}\n"
-	if got != want {
-		t.Fatalf("output = %q, want %q", got, want)
+func TestRuleCommandValidation(t *testing.T) {
+	for _, tc := range []struct {
+		args    []string
+		message string
+	}{
+		{[]string{"publish", "invalid", "--host", "dev"}, "publish requires one local port 1..65535"},
+		{[]string{"unpublish", "invalid", "--host", "dev"}, "unpublish requires one local port 1..65535"},
+		{[]string{"add", "--pwd", "workspace/**"}, ""},
+		{[]string{"add", "--pwd", "/workspace/**", "--local", "15173"}, ""},
+		{[]string{"add", "8080", "--host=-bad"}, "invalid host name"},
+		{[]string{"add", "0"}, ""}, {[]string{"add", "5173", "--local", "0"}, ""},
+		{[]string{"publish", "9222", "--remote", "0", "--host", "dev"}, ""},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			surface, manager, _ := testCLI(t)
+			err := surface.Run(context.Background(), tc.args)
+			require.ErrorIs(t, err, ErrUsage)
+			if tc.message != "" {
+				require.Equal(t, tc.message, err.Error())
+			}
+			require.Empty(t, manager.reloads, "invalid edits must not reach the manager")
+		})
 	}
 }
 
-func TestStatusJSONIncludesExplicitPublishedForward(t *testing.T) {
-	got := renderForwardStatusJSON(t, core.ForwardStatus{
-		Direction: core.LocalToRemote, LocalPort: 9222,
-		PreferredRemotePort: 19222, RemotePort: 19222,
-		State: core.ForwardActive,
-	})
-	want := "{\"host\":\"dev\",\"discovery\":{\"state\":\"active\"},\"listeners\":[{\"port\":631}],\"forwards\":[{\"direction\":\"local_to_remote\",\"local_port\":9222,\"preferred_remote_port\":19222,\"remote_port\":19222,\"state\":\"active\",\"kind\":\"published\"}]}\n"
-	if got != want {
-		t.Fatalf("output = %q, want %q", got, want)
-	}
-}
-
-func renderForwardStatusJSON(t *testing.T, forward core.ForwardStatus) string {
+func testCLI(t *testing.T) (*App, *fakeManager, *bytes.Buffer) {
 	t.Helper()
-	var stdout bytes.Buffer
-	surface := &App{
-		Manager: &fakeManager{status: core.Status{
-			Host:      "dev",
-			Discovery: core.DiscoveryStatus{State: core.DiscoveryActive},
-			Listeners: []core.Listener{{Port: 631}},
-			Forwards:  []core.ForwardStatus{forward},
-		}},
-		Options: app.Options{ConfigPath: t.TempDir() + "/config.jsonc", Stdout: &stdout},
-	}
-	if err := surface.Run(context.Background(), []string{"status", "--json", "--host", "dev"}); err != nil {
-		t.Fatal(err)
-	}
-	return stdout.String()
+	output := new(bytes.Buffer)
+	manager := &fakeManager{status: core.Status{Host: "dev"}}
+	return &App{Manager: manager, Options: app.Options{ConfigPath: t.TempDir() + "/config.jsonc", Stdout: output}}, manager, output
 }
 
-func TestRootDescribesDirectHostTargets(t *testing.T) {
-	root := (&App{}).RootCommand()
-	hostFlag := root.PersistentFlags().Lookup("host")
-	if hostFlag == nil || !strings.Contains(hostFlag.Usage, "hostname, IP, or user@host") {
-		t.Fatal("--host does not describe direct SSH targets")
+func TestHostCommandsPersistSettingsAcrossIgnoreAndEnable(t *testing.T) {
+	surface, _, output := testCLI(t)
+	args := []string{"host", "add", "dev", "--target", "me@dev", "--port", "2222", "--user", "me", "--identity", "/keys/dev", "--jump", "jump", "--ssh-config", "/ssh/config"}
+	require.NoError(t, surface.Run(context.Background(), args))
+	hosts, _, err := app.HostList(surface.Options.ConfigPath)
+	require.NoError(t, err)
+	target := hosts["dev"]
+	require.Equal(t, "me@dev", target.Target)
+	require.Equal(t, []string{"-l", "me", "-i", "/keys/dev", "-J", "jump", "-F", "/ssh/config", "-p", "2222"}, target.Arguments)
+	for _, action := range []string{"ignore", "enable"} {
+		require.NoError(t, surface.Run(context.Background(), []string{"host", action, "dev"}))
+		hosts, ignored, err := app.HostList(surface.Options.ConfigPath)
+		require.NoError(t, err)
+		require.Equal(t, target, hosts["dev"])
+		require.Equal(t, action == "ignore", slices.Contains(ignored, "dev"))
+		output.Reset()
+		require.NoError(t, surface.Run(context.Background(), []string{"host", "--json"}))
+		require.True(t, json.Valid(output.Bytes()))
+		require.Contains(t, output.String(), "me@dev")
 	}
-}
-
-func TestRootHasNoPolicyOrDirectorySurface(t *testing.T) {
-	root := (&App{}).RootCommand()
-	if _, _, err := root.Find([]string{"policy"}); err == nil {
-		t.Fatal("policy command still exists")
-	}
-	add, _, err := root.Find([]string{"add"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if add.Flags().Lookup("dir") != nil {
-		t.Fatal("add --dir still exists")
-	}
-	if add.Flags().Lookup("pwd") == nil {
-		t.Fatal("add --pwd is missing")
-	}
-	if add.Flags().Lookup("local") == nil {
-		t.Fatal("add --local is missing")
-	}
-	publish, _, err := root.Find([]string{"publish"})
-	if err != nil || publish.Flags().Lookup("remote") == nil {
-		t.Fatal("publish --remote is missing")
-	}
-	unpublish, _, err := root.Find([]string{"unpublish"})
-	if err != nil || unpublish.Flags().Lookup("remote") != nil {
-		t.Fatal("unpublish command surface is invalid")
-	}
-	remove, _, err := root.Find([]string{"remove"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if remove.Flags().Lookup("local") != nil {
-		t.Fatal("remove unexpectedly accepts --local")
-	}
-	status, _, err := root.Find([]string{"status"})
-	if err != nil || status.Flags().Lookup("watch") == nil {
-		t.Fatal("status --watch is missing")
-	}
-	if uninstall, _, err := root.Find([]string{"uninstall"}); err != nil || uninstall.Hidden {
-		t.Fatalf("uninstall command is missing: %v", err)
-	}
-	if doctor, _, err := root.Find([]string{"doctor"}); err != nil || doctor.Hidden || needsManager(doctor) {
-		t.Fatalf("read-only doctor command is unavailable: %v", err)
-	}
-	for _, command := range root.Commands() {
-		if command.Name() == "watch" || command.Name() == "manager" && !command.Hidden {
-			t.Fatalf("obsolete public command %q is still visible", command.Name())
-		}
-	}
+	output.Reset()
+	surface.Options.Version = "test"
+	require.NoError(t, surface.Run(context.Background(), []string{"--version"}))
+	require.Equal(t, "ssh-forward test\n", output.String())
 }

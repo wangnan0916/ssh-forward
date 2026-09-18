@@ -1,8 +1,12 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"errors"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 type HostAlias string
@@ -88,9 +92,7 @@ type PublishedForward struct {
 }
 
 func (forward PublishedForward) WithDefaults() PublishedForward {
-	if forward.RemotePort == 0 {
-		forward.RemotePort = forward.LocalPort
-	}
+	forward.RemotePort = cmp.Or(forward.RemotePort, forward.LocalPort)
 	return forward
 }
 
@@ -122,8 +124,8 @@ var ErrManagerClosed = errors.New("manager is closed")
 // endpoint binds. Close releases the shared transport after observation and
 // forwards have stopped.
 type Backend interface {
-	Observe(context.Context, HostAlias, func([]Listener)) error
-	Forward(context.Context, HostAlias, ForwardTarget, func()) error
+	Observe(context.Context, func([]Listener)) error
+	Forward(context.Context, ForwardTarget, func()) error
 	Close(context.Context) error
 }
 
@@ -147,4 +149,10 @@ type Manager interface {
 	Status(context.Context) (Status, error)
 	UpdateIntent(context.Context, ForwardingIntent) error
 	Close(context.Context) error
+}
+
+// ValidHostName accepts one literal SSH destination, never patterns or options.
+func ValidHostName(host string) bool {
+	return host != "" && len(host) <= MaxHostAliasLength && utf8.ValidString(host) && host[0] != '-' &&
+		!strings.ContainsAny(host, "*?!") && strings.IndexFunc(host, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) < 0
 }

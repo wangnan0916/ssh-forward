@@ -2,27 +2,14 @@
 package statusview
 
 import (
+	"cmp"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
 
-	"charm.land/lipgloss/v2"
-
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 	"github.com/wangnan0916/ssh-forward/cli/internal/diagnostics"
-)
-
-const (
-	portHeader             = "PORT"
-	remotePortHeader       = "REMOTE"
-	localPortHeader        = "LOCAL"
-	remoteTargetHeader     = "REMOTE TARGET"
-	targetHeader           = "TARGET"
-	appHeader              = "APP"
-	kindHeader             = "KIND"
-	workingDirectoryHeader = "WORKING DIRECTORY"
-	issueHeader            = "ISSUE"
 )
 
 // Options describe terminal capabilities. A zero Width keeps all content,
@@ -48,13 +35,16 @@ func Render(writer io.Writer, status core.Status, options Options) error {
 	}
 
 	for _, state := range []core.ForwardState{core.ForwardActive, core.ForwardStarting, core.ForwardFailed} {
-		rows := forwardsInState(status.Forwards, state, core.RemoteToLocal)
-		if len(rows) != 0 {
-			sections = append(sections, renderForwards(rows, listenersByPort, state, options))
-		}
-		published := forwardsInState(status.Forwards, state, core.LocalToRemote)
-		if len(published) != 0 {
-			sections = append(sections, renderPublished(published, state, options))
+		for _, published := range []bool{false, true} {
+			var rows []core.ForwardStatus
+			for _, forward := range status.Forwards {
+				if forward.State == state && (forward.Direction == core.LocalToRemote) == published {
+					rows = append(rows, forward)
+				}
+			}
+			if len(rows) > 0 {
+				sections = append(sections, renderForwardSection(rows, listenersByPort, state, published, options))
+			}
 		}
 	}
 
@@ -76,127 +66,52 @@ func Render(writer io.Writer, status core.Status, options Options) error {
 }
 
 func renderSummary(status core.Status, options Options) string {
-	hostLabel := "Host"
-	discoveryLabel := "Discovery"
-	host := string(status.Host)
-	state := string(status.Discovery.State)
-	if options.Color {
-		labelStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.BrightBlue)
-		hostLabel = labelStyle.Render(hostLabel)
-		discoveryLabel = labelStyle.Render(discoveryLabel)
-		host = lipgloss.NewStyle().Foreground(lipgloss.BrightCyan).Render(host)
-		state = lipgloss.NewStyle().Foreground(discoveryColor(status.Discovery.State)).Render(state)
-	}
-	summary := fmt.Sprintf("%s  %s    %s  %s", hostLabel, host, discoveryLabel, state)
+	summary := fmt.Sprintf("%s  %s    %s  %s", styled("Host", "1;94", options.Color),
+		styled(string(status.Host), brightCyan, options.Color), styled("Discovery", "1;94", options.Color),
+		styled(string(status.Discovery.State), stateColor(string(status.Discovery.State)), options.Color))
 	if status.Discovery.Diagnostic != "" {
 		detailLabel := "Discovery detail"
 		detail := diagnostics.Text(status.Discovery.Diagnostic)
-		if options.Color {
-			detailLabel = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.BrightRed).Render(detailLabel)
-			detail = lipgloss.NewStyle().Foreground(lipgloss.BrightRed).Render(detail)
-		}
+		detailLabel = styled(detailLabel, "1;"+red, options.Color)
+		detail = styled(detail, red, options.Color)
 		summary += "\n" + detailLabel + "  " + detail
 	}
 	return summary
 }
 
-func forwardsInState(
-	forwards []core.ForwardStatus,
-	state core.ForwardState,
-	direction core.ForwardDirection,
-) []core.ForwardStatus {
-	rows := make([]core.ForwardStatus, 0, len(forwards))
-	for _, forward := range forwards {
-		if forward.State == state && effectiveForwardDirection(forward) == direction {
-			rows = append(rows, forward)
-		}
-	}
-	return rows
-}
-
-func effectiveForwardDirection(forward core.ForwardStatus) core.ForwardDirection {
-	if forward.Direction == "" {
-		return core.RemoteToLocal
-	}
-	return forward.Direction
-}
-
 func hidesAvailableListener(forward core.ForwardStatus) bool {
-	return effectiveForwardDirection(forward) == core.RemoteToLocal || forward.State == core.ForwardActive
+	return forward.Direction != core.LocalToRemote || forward.State == core.ForwardActive
 }
 
-func renderPublished(forwards []core.ForwardStatus, state core.ForwardState, options Options) string {
+func renderForwardSection(forwards []core.ForwardStatus, listeners map[uint16]core.Listener, state core.ForwardState, published bool, options Options) string {
+	titles := map[core.ForwardState]string{core.ForwardActive: "FORWARDS", core.ForwardStarting: "STARTING", core.ForwardFailed: "NEEDS ATTENTION"}
+	headers := []string{"REMOTE", "TARGET", "KIND"}
+	if published {
+		titles = map[core.ForwardState]string{core.ForwardActive: "PUBLISHED", core.ForwardStarting: "PUBLISHING", core.ForwardFailed: "PUBLISH NEEDS ATTENTION"}
+		headers = []string{"LOCAL", "REMOTE TARGET", "KIND"}
+	}
+	switch {
+	case state == core.ForwardFailed:
+		headers = append(headers, "ISSUE")
+	case !published:
+		headers = append(headers, "APP", "WORKING DIRECTORY")
+	}
 	rows := make([][]string, 0, len(forwards))
 	for _, forward := range forwards {
-		row := []string{
-			strconv.Itoa(int(forward.LocalPort)),
-			publishedTarget(forward),
-			"published",
+		row := []string{strconv.Itoa(int(forward.RemotePort)), forwardTarget(forward, options.Hyperlinks && state == core.ForwardActive), forwardKind(forward)}
+		if published {
+			row = []string{strconv.Itoa(int(forward.LocalPort)), publishedTarget(forward), "published"}
 		}
-		if state == core.ForwardFailed {
+		switch {
+		case state == core.ForwardFailed:
 			row = append(row, diagnostics.Text(forward.Diagnostic))
+		case !published:
+			listener := listeners[forward.RemotePort]
+			row = append(row, cmp.Or(listener.App, "—"), cmp.Or(listener.WorkingDirectory, "—"))
 		}
 		rows = append(rows, row)
 	}
-	title := "PUBLISHED"
-	headers := []string{localPortHeader, remoteTargetHeader, kindHeader}
-	switch state {
-	case core.ForwardStarting:
-		title = "PUBLISHING"
-	case core.ForwardFailed:
-		title = "PUBLISH NEEDS ATTENTION"
-		headers = append(headers, issueHeader)
-	}
-	return renderSection(title, headers, rows, stateColor(state), options)
-}
-
-func renderForwards(
-	forwards []core.ForwardStatus,
-	listeners map[uint16]core.Listener,
-	state core.ForwardState,
-	options Options,
-) string {
-	if state == core.ForwardFailed {
-		rows := make([][]string, 0, len(forwards))
-		for _, forward := range forwards {
-			rows = append(rows, []string{
-				strconv.Itoa(int(forward.RemotePort)),
-				forwardTarget(forward, false),
-				forwardKind(forward),
-				diagnostics.Text(forward.Diagnostic),
-			})
-		}
-		return renderSection(
-			"NEEDS ATTENTION",
-			[]string{remotePortHeader, targetHeader, kindHeader, issueHeader},
-			rows,
-			stateColor(state),
-			options,
-		)
-	}
-
-	rows := make([][]string, 0, len(forwards))
-	for _, forward := range forwards {
-		listener := listeners[forward.RemotePort]
-		rows = append(rows, []string{
-			strconv.Itoa(int(forward.RemotePort)),
-			forwardTarget(forward, options.Hyperlinks && state == core.ForwardActive),
-			forwardKind(forward),
-			valueOrMissing(listener.App),
-			valueOrMissing(listener.WorkingDirectory),
-		})
-	}
-	title := "FORWARDS"
-	if state == core.ForwardStarting {
-		title = "STARTING"
-	}
-	return renderSection(
-		title,
-		[]string{remotePortHeader, targetHeader, kindHeader, appHeader, workingDirectoryHeader},
-		rows,
-		stateColor(state),
-		options,
-	)
+	return renderSection(titles[state], headers, rows, stateColor(string(state)), options)
 }
 
 func forwardKind(forward core.ForwardStatus) string {
@@ -209,17 +124,7 @@ func forwardKind(forward core.ForwardStatus) string {
 func renderAvailable(listeners []core.Listener, options Options) string {
 	rows := make([][]string, 0, len(listeners))
 	for _, listener := range listeners {
-		rows = append(rows, []string{
-			strconv.Itoa(int(listener.Port)),
-			valueOrMissing(listener.App),
-			valueOrMissing(listener.WorkingDirectory),
-		})
+		rows = append(rows, []string{strconv.Itoa(int(listener.Port)), cmp.Or(listener.App, "—"), cmp.Or(listener.WorkingDirectory, "—")})
 	}
-	return renderSection(
-		"AVAILABLE",
-		[]string{portHeader, appHeader, workingDirectoryHeader},
-		rows,
-		lipgloss.BrightCyan,
-		options,
-	)
+	return renderSection("AVAILABLE", []string{"PORT", "APP", "WORKING DIRECTORY"}, rows, brightCyan, options)
 }

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"reflect"
@@ -20,33 +21,6 @@ type statusJSONOutput struct {
 	Listeners             []core.Listener      `json:"listeners"`
 	Forwards              []any                `json:"forwards"`
 	WorkingDirectoryRules []string             `json:"working_directory_rules,omitempty"`
-}
-
-type legacyForwardJSONOutput struct {
-	Port       uint16            `json:"port"`
-	State      core.ForwardState `json:"state"`
-	Diagnostic string            `json:"diagnostic,omitempty"`
-	Automatic  bool              `json:"automatic,omitempty"`
-}
-
-type mappedForwardJSONOutput struct {
-	RemotePort         uint16            `json:"remote_port"`
-	PreferredLocalPort uint16            `json:"preferred_local_port"`
-	LocalPort          uint16            `json:"local_port"`
-	State              core.ForwardState `json:"state"`
-	Diagnostic         string            `json:"diagnostic,omitempty"`
-	Automatic          bool              `json:"automatic,omitempty"`
-	AllowFallback      bool              `json:"allow_fallback,omitempty"`
-}
-
-type publishedForwardJSONOutput struct {
-	Direction           core.ForwardDirection `json:"direction"`
-	LocalPort           uint16                `json:"local_port"`
-	PreferredRemotePort uint16                `json:"preferred_remote_port"`
-	RemotePort          uint16                `json:"remote_port"`
-	State               core.ForwardState     `json:"state"`
-	Diagnostic          string                `json:"diagnostic,omitempty"`
-	Kind                string                `json:"kind"`
 }
 
 func statusJSON(status core.Status) statusJSONOutput {
@@ -92,37 +66,35 @@ func (a *App) writeStatuses(statuses []core.Status, jsonOutput bool) error {
 	return nil
 }
 
+// forwardJSONStatus is the sole compatibility boundary for public status JSON.
+// IPC uses core.Status directly; legacy same-port imports retain their port key.
 func forwardJSONStatus(forward core.ForwardStatus) any {
+	output := map[string]any{"state": forward.State}
+	if forward.Diagnostic != "" {
+		output["diagnostic"] = forward.Diagnostic
+	}
 	if forward.Direction == core.LocalToRemote {
-		preferredRemotePort := forward.PreferredRemotePort
-		if preferredRemotePort == 0 {
-			preferredRemotePort = forward.RemotePort
-		}
-		return publishedForwardJSONOutput{
-			Direction: core.LocalToRemote, LocalPort: forward.LocalPort,
-			PreferredRemotePort: preferredRemotePort, RemotePort: forward.RemotePort,
-			State: forward.State, Diagnostic: forward.Diagnostic, Kind: "published",
-		}
+		forward.PreferredRemotePort = cmp.Or(forward.PreferredRemotePort, forward.RemotePort)
+		output["direction"], output["kind"] = core.LocalToRemote, "published"
+		output["local_port"], output["remote_port"] = forward.LocalPort, forward.RemotePort
+		output["preferred_remote_port"] = forward.PreferredRemotePort
+		return output
 	}
-	preferredLocalPort := forward.PreferredLocalPort
-	if preferredLocalPort == 0 {
-		preferredLocalPort = forward.RemotePort
+	if forward.Automatic {
+		output["automatic"] = true
 	}
-	localPort := forward.LocalPort
-	if localPort == 0 {
-		localPort = preferredLocalPort
+	forward.PreferredLocalPort = cmp.Or(forward.PreferredLocalPort, forward.RemotePort)
+	forward.LocalPort = cmp.Or(forward.LocalPort, forward.PreferredLocalPort)
+	if forward.PreferredLocalPort == forward.RemotePort && forward.LocalPort == forward.RemotePort {
+		output["port"] = forward.RemotePort
+		return output
 	}
-	if preferredLocalPort != forward.RemotePort || localPort != forward.RemotePort {
-		return mappedForwardJSONOutput{
-			RemotePort: forward.RemotePort, PreferredLocalPort: preferredLocalPort,
-			LocalPort: localPort, State: forward.State, Diagnostic: forward.Diagnostic,
-			Automatic: forward.Automatic, AllowFallback: forward.AllowFallback,
-		}
+	output["remote_port"], output["local_port"] = forward.RemotePort, forward.LocalPort
+	output["preferred_local_port"] = forward.PreferredLocalPort
+	if forward.AllowFallback {
+		output["allow_fallback"] = true
 	}
-	return legacyForwardJSONOutput{
-		Port: forward.RemotePort, State: forward.State,
-		Diagnostic: forward.Diagnostic, Automatic: forward.Automatic,
-	}
+	return output
 }
 
 func (a *App) runWatch(ctx context.Context, jsonOutput bool) error {

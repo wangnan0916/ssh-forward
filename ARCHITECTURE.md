@@ -1,153 +1,104 @@
 # Architecture
 
-The product contract is:
-
-> Monitor configured SSH hosts concurrently, see their IPv4 loopback TCP listeners,
-> and keep remembered remote-to-local forwards plus live listeners matching
-> configured working-directory globs available on all local IPv4 interfaces,
-> while keeping explicitly published local services available on the
-> Development Host's IPv4 loopback.
-
-Anything that does not serve this sentence is outside the current design.
-
-## Modules
+One user service reconciles forwarding intent independently for every remembered
+or discovered SSH host. Imports expose remote loopback services on local IPv4
+interfaces; explicit publications expose local services on remote loopback.
 
 ```text
-CLI
- ├─ config.jsonc (host, forwards, and directory rules)
- └─ GET /v1/status + POST /v1/reload over a user-only Unix socket
-                         │
-             Manager service (host registry)
-                         │
-                per-host core Manager
-               ┌─────────┴─────────┐
-        observe listeners      one worker per directional Forward
-               │                    │
-      ssh HOST sh -s       OpenSSH -O forward/cancel
-               └──────── shared OpenSSH master ────────┘
+CLI typed commands → config.jsonc → POST /v1/reload
+                                        ↓
+local SSH argv → discovered-hosts.json → managerPool
+                                        ↓ one runtime per host
+                  listener snapshot → desired state → reconciliation plan
+                                        ↓
+                             independent forwarding workers
+                                        ↓
+                     bound OpenSSH adapter → private master
+
+status ← GET /v1/status ← all runtimes (including offline hosts)
 ```
 
-- `internal/core` owns the forwarding state machine. A pure desired-state
-  builder combines persistent intent with listener snapshots, then a pure
-  reconciliation planner decides which workers to keep, stop, wait for, or
-  start. The Manager executes that plan asynchronously. Its external interface
-  is `Status`, `UpdateIntent`, and `Close`; its true-external backend has
-  `Observe`, `Forward`, and `Close`.
-- `internal/openssh` owns the product-private multiplexed OpenSSH connection,
-  dynamic forwarding commands, process invocation, the fixed remote scanner,
-  readiness checks, and bounded SSH error classification. Encrypted SSH
-  keepalives detect silent connection loss; core retry loops recreate discovery
-  and forwarding on a replacement master. Forward installation and cancellation
-  check the master generation so retiring workers cannot affect a new session.
-- `internal/app` owns configuration, SSH host discovery, and the thin
-  adapters that compose HTTP/Unix Socket and the user's OS service manager.
-  A host registry starts independent core Managers and OpenSSH adapters for
-  every remembered host at startup. The shared user-only Unix socket exposes
-  all status snapshots in alias order and a reload notification. Configuration
-  is the only source of intent: CLI mutations save it, then request a reload;
-  the service derives each host's intent and reconciles affected workers.
-  The CLI filters status locally when `--host` is explicit. Published local service
-  ports are reserved across all runtimes. `Connect` adds a selected host without
-  replacing existing runtimes; only protocol or binary-version changes replace
-  the service. New rules are global unless explicitly scoped; legacy rules retain their host.
-  The service polls same-user native SSH argv and configuration every five seconds.
-  Discovered targets are merged into a separate, locked registry; ignored targets
-  stay excluded. Unsupported parameters remain visible without initiating SSH.
-  `Uninstall` removes only the background service; persistent intent remains user-owned configuration. Its read-only
-  doctor module composes configuration, Manager, and true-remote discovery
-  checks without repairing or mutating them.
-- `internal/diagnostics` owns the bounded human-readable diagnostic catalog,
-  including shared descriptions and doctor remediation text.
-- `internal/statusview` owns human status grouping, terminal-width fitting,
-  missing-value presentation, and optional ANSI styling and hyperlinks. JSON
-  bypasses it.
-- `internal/cli` owns command orchestration and edits remembered and published
-  forwards; it delegates human status rendering through the
-  `statusview.Render` seam.
+## Ownership and code map
 
-Mechanisms are delegated to deep external modules: system OpenSSH handles SSH,
-`kardianos/service` handles resident process lifecycle, `net/http` handles local
-IPC, `ssh_config` parses Host declarations, and `hujson` parses JSONC. Product
-code keeps only their composition and the forwarding state machine. Lip Gloss
-renders human status tables; `x/ansi` handles grapheme-aware tail truncation,
-while `x/term` detects terminal capabilities.
-`gopsutil/process` enumerates local processes and reads their exact argv;
-`gofrs/flock` provides cancellable registry locking. SSH argument selection,
-process exclusion, and host persistence remain product logic.
+| Package | Entry points and responsibilities |
+| --- | --- |
+| `cli` | Kong's typed `commands` grammar dispatches domain `Run` methods. Human status delegates to `statusview`; public JSON has one compatibility projection. |
+| `app/config*` | Strict JSONC decoding, schemas 1–6 migration, scoped normalization, atomic rule edits. Configuration is the only source of intent. |
+| `app/host_target` | Target identity, option allowlist, exact SSH argv parsing. |
+| `app/host_discovery` | Same-user process discovery and product-process exclusion. |
+| `app/host_registry` | Locked merge of discovered hosts, explicit hosts, and persistent ignore state. |
+| `app/manager_pool` | Runtime composition, global port reservations, targeted reload, sorted all-host status. |
+| `app/service*`, `ipc*` | OS service lifecycle, upgrades, bounded HTTP over a user-only Unix socket. |
+| `app/doctor*` | Read-only configuration, service, forwarding, and remote discovery checks. |
+| `core/desired`, `reconcile` | Pure selection and keep/stop/wait/start planning. |
+| `core/manager*`, `worker` | Synchronized status, observation, worker ownership, retry and cleanup. |
+| `openssh` | One immutable connection target per adapter, master lifecycle, forwarding, procfs scanner, readiness and bounded diagnostics. |
+| `statusview`, `diagnostics` | Human layout and ANSI-aware widths; shared diagnostic descriptions and remediation. |
 
-## State
+Libraries handle parsing and mechanisms: Kong, hujson, renameio, ssh_config,
+gopsutil/process, flock, doublestar, x/ansi, x/term, kardianos/service, and Go's
+HTTP/concurrency primitives. System OpenSSH handles authentication and transport.
+Kong is the single command grammar; generated help follows it. The renderer uses
+`x/ansi` for grapheme-aware widths and `x/term` for capability detection, without
+a widget framework. Tests share `testify/require` assertions and behavioral fixtures.
 
-Persistent state consists of:
+A supervisor library does not own the forwarding policy: removal must await
+cleanup, failures are isolated per port, and replacement cannot overlap a retiring
+worker. `sync.WaitGroup.Go` and cancellable contexts express those requirements
+without an additional lifecycle framework. The Docker/OpenSSH fixture tests real
+transport behavior; parser and planner fuzz tests cover pure boundaries.
 
-- explicit host connection records and an ignored-host list;
-- a separate registry of discovered connection targets;
-- global listener-port rules and working-directory globs;
-- a sorted remembered remote-to-preferred-local mapping list, including its
-  fallback policy, per alias;
-- a sorted published local-to-remote mapping list per alias;
-- a sorted absolute working-directory glob list per alias.
+## Configuration and discovery
 
-The on-disk schema is decoded and migrated at the configuration boundary.
-The internal model groups typed port, publish, and directory rules by scope;
-an empty scope means all hosts. Rule mutations share this model, while encoding
-preserves the existing schema 6 file layout. Published forwards are rejected
-without a named scope both by the command mutation and the model writer.
+The schema-6 wire format is isolated from the internal map of typed rule scopes.
+An empty scope is global; publications require a named scope. Every rule edit
+uses the same normalize/validate/save path, including cross-direction conflicts.
+Legacy scoped rules stay scoped; `default_host` migrates into explicit hosts.
+Invalid configuration leaves existing runtimes intact.
 
-Volatile state is rebuilt after restart:
+A five-second scan reads native same-user SSH argv, excluding the product process
+tree and control commands. Discovered targets persist separately under a
+cancellable file lock. Unsupported options produce diagnostic-only candidates;
+remote commands and process environments are never persisted. Explicit host
+records override discoveries. Ignoring a destination excludes its variants.
 
-- current remote listeners;
-- best-effort listener executable names and working directories;
-- ports currently selected by working-directory rules;
-- each active Forward's actual local wildcard port, which may temporarily
-  differ from its preferred port;
-- each Published Forward's strict remote listening endpoint;
-- discovery health;
-- each forward's starting, active, or failed state.
+Each runtime owns its transport and failures. Only changed/removed targets are
+replaced; equivalent intent preserves workers. Published local service ports are
+reserved across all runtimes, even when the local application is absent.
 
-The manager retries discovery and failed forwards. A worker always exists for
-every Remembered or Published Forward. It creates a worker for a listener whose
-observed working directory matches a configured glob, and cancels that
-Automatic Forward when a later complete listener snapshot no longer matches.
-Remembered intent wins when both sources select the same Remote Port, so only
-one worker exists. Changing a Remembered Forward's preferred Local Port or
-fallback policy restarts only that worker. Any Forward with fallback enabled
-may try up to 20 higher ports after a local conflict; implicit same-port and
-Automatic Forwards enable that policy by default. The selected port remains
-volatile. Invalid configuration prevents a new Manager from starting.
+## Reconciliation and cleanup
 
-Workers use the composite identity `{direction, service port}`: the Remote Port
-identifies a remote-to-local Forward and the Local Port identifies a Published
-Forward. Core owns local fallback and skips ports reserved as Published local
-targets. Published remote ports are strict, bind only to `127.0.0.1` on the
-Development Host, and are excluded from listener discovery and Automatic
-Forward selection.
+Worker identity is `(direction, service port)`: remote port for imports, local
+port for publications. Scoped fixed imports override global listener-port rules,
+which override directory matches. Automatic imports disappear with the listener;
+fixed imports and publications persist. Desired published remote ports cannot
+create automatic imports; only active publications hide available listeners.
 
-The OpenSSH adapter translates directions to exact `-L` and `-R` control
-requests on the same product-owned master. The master honors the selected Host
-alias for connection setup but starts with `-g` and `ClearAllForwardings=yes`;
-later discovery and multiplexing commands use the explicit private control
-socket with `/dev/null` as client config. This prevents `LocalForward`,
-`RemoteForward`, or `ControlPath` entries in user configuration from being
-silently duplicated while preserving authentication, jump-host, and connection
-settings on the master. A successful `-R` request is not sufficient readiness:
-the Adapter reads the resulting remote procfs socket and accepts only an actual
-IPv4 loopback bind. It cancels wildcard listeners forced by `GatewayPorts yes`
-and fails closed when the bind cannot be verified. Failed cancellation of an
-installed forward tears down the product-owned master; a rejected forward
-request does not. Reconciliation rebuilds affected forwards on a fresh
-connection after teardown.
+Implicit same-port imports and automatic imports may try 20 higher local ports.
+Explicit local mappings and all remote publication ports are strict. Actual
+fallback ports, listener metadata, and worker/discovery health are volatile.
+A publication waits for cleanup of a conflicting import before binding.
 
-Every imported `-L` request explicitly binds local `0.0.0.0`, including both
-Remembered and Automatic Forwards, and targets Development Host
-`127.0.0.1`. This lets local virtual machines and containers reach imported
-services but also makes them reachable from other connected networks unless a
-host firewall blocks that access. Published `-R` requests remain loopback-only
-on both machines. Before opening an imported Forward, the Adapter verifies that
-its loopback port is unoccupied so macOS cannot silently split one port between
-a loopback listener and the wildcard SSH listener; Core then applies the normal
-strict or fallback policy.
+Cancellation keeps a worker registered until backend cleanup finishes. Replacement
+cannot overlap it, including after rapid listener reappearance. Retry waits are
+cancellable; removal never waits for the retry delay. Shutdown waits for all
+workers before closing the backend, even if a caller stops waiting.
 
-Before creating an alias-hash master, the Adapter also checks the legacy
-`master-%C` path using the selected SSH config. If an older product-owned
-master is still alive, it requests exit and waits for that mux socket to stop
-responding so orphaned listeners cannot conflict with replacement forwards.
+## Transport boundaries
+
+A master honors the user's connection configuration but uses `-g`, a private
+control socket, and `ClearAllForwardings=yes`. Mux clients use `/dev/null` config,
+so configured forwards and control paths cannot be inherited. Imports use
+`-L 0.0.0.0:LOCAL:127.0.0.1:REMOTE`; publications use
+`-R 127.0.0.1:REMOTE:127.0.0.1:LOCAL`.
+
+Imports first check loopback occupancy to prevent macOS split binds. Publications
+verify the resulting procfs socket before reporting active: `GatewayPorts yes`
+can override a requested bind. Unsafe/unverifiable binds are canceled. Failed
+cancellation tears down the private master; a rejected installation does not.
+Install and cancel operations check the master generation under the same lock.
+
+Keepalives (5 seconds, 3 unanswered probes) detect silent loss; independent retry
+loops reestablish the master, observation, and desired forwards. Commands have
+bounded timeouts. Upgrade cleanup retires legacy `master-%C` sockets and old PID
+services before rebinding. See [Security](SECURITY.md) for exposure boundaries.

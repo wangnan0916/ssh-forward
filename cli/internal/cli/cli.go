@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"strconv"
 
-	"github.com/spf13/cobra"
+	"github.com/alecthomas/kong"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/app"
+	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 // ErrUsage marks a flag or host-resolution failure that should exit 2.
@@ -19,7 +19,6 @@ var ErrUsage = errors.New("usage")
 type App struct {
 	Manager app.Session
 	Options app.Options
-	Version string
 
 	sessionOwned bool
 }
@@ -35,98 +34,51 @@ func UsageError(err error) error {
 
 type usageError struct{ inner error }
 
-func (e *usageError) Error() string { return e.inner.Error() }
-func (e *usageError) Unwrap() error { return e.inner }
-func (e *usageError) Is(target error) bool {
-	return target == ErrUsage || errors.Is(e.inner, target)
-}
+func (e *usageError) Error() string        { return e.inner.Error() }
+func (e *usageError) Unwrap() error        { return e.inner }
+func (e *usageError) Is(target error) bool { return target == ErrUsage }
 
-// Run parses and executes one command line, e.g. ["status", "--json"].
+// Run parses typed commands before opening a service session. Read-only and
+// local commands never connect to or install the Manager.
 func (a *App) Run(ctx context.Context, args []string) error {
-	command := a.RootCommand()
-	command.SetArgs(args)
-	if a.Options.Stdout != nil {
-		command.SetOut(a.Options.Stdout)
-	} else {
-		command.SetOut(io.Discard)
+	a.Options = a.Options.WithDefaults()
+	grammar := commands{}
+	exited := false
+	parser, err := kong.New(&grammar, kong.Name("ssh-forward"),
+		kong.Description("Import remote ports and publish local services through OpenSSH."),
+		kong.Writers(a.Options.Stdout, a.Options.Stderr), kong.Exit(func(int) { exited = true }),
+		kong.Vars{"version": "ssh-forward " + a.Options.Version}, kong.BindTo(ctx, (*context.Context)(nil)))
+	if err != nil {
+		return err
 	}
-	if a.Options.Stderr != nil {
-		command.SetErr(a.Options.Stderr)
-	} else {
-		command.SetErr(io.Discard)
+	if len(args) == 0 {
+		args = []string{"--help"}
 	}
-	err := command.ExecuteContext(ctx)
-	a.closeSession()
-	return err
+	parsed, err := parser.Parse(args)
+	if exited {
+		return nil
+	}
+	if err != nil {
+		return UsageError(err)
+	}
+	if grammar.Host != "" && !core.ValidHostName(grammar.Host) {
+		return UsageError(errors.New("invalid host name"))
+	}
+	a.Options.HostFlag = grammar.Host
+	if grammar.SSHConfig != "" {
+		a.Options.SSHConfigPath = grammar.SSHConfig
+	}
+	a.Options.Interactive = a.Options.Interactive || app.IsTerminal(a.Options.Stdin)
+	defer a.closeSession()
+	return parsed.Run(a)
 }
 
 func (a *App) closeSession() {
-	if !a.sessionOwned || a.Manager == nil {
-		return
+	if a.sessionOwned && a.Manager != nil {
+		_ = a.Manager.Close(context.Background())
+		a.Manager = nil
+		a.sessionOwned = false
 	}
-	_ = a.Manager.Close(context.Background())
-	a.sessionOwned = false
-}
-
-func (a *App) bindGlobalFlags(cmd *cobra.Command) {
-	a.Options.HostFlag, _ = cmd.Flags().GetString("host")
-	if sshConfig, _ := cmd.Flags().GetString("ssh-config"); sshConfig != "" {
-		a.Options.SSHConfigPath = sshConfig
-	}
-}
-
-func jsonFlag(cmd *cobra.Command) bool {
-	value, _ := cmd.Flags().GetBool("json")
-	return value
-}
-
-func withInteractive(opts app.Options) app.Options {
-	if app.IsTerminal(opts.Stdin) {
-		opts.Interactive = true
-	}
-	return opts
-}
-
-func (a *App) serveManager(ctx context.Context) error {
-	return app.Serve(ctx, a.Options)
-}
-
-const skipManagerKey = "skip-manager"
-
-func annotateSkipManager(command *cobra.Command) *cobra.Command {
-	if command.Annotations == nil {
-		command.Annotations = map[string]string{}
-	}
-	command.Annotations[skipManagerKey] = "1"
-	return command
-}
-
-func needsManager(cmd *cobra.Command) bool {
-	if cmd.Parent() == nil {
-		return false
-	}
-	for current := cmd; current != nil; current = current.Parent() {
-		if current.Annotations[skipManagerKey] == "1" {
-			return false
-		}
-	}
-	return true
-}
-
-func (a *App) prepareCommand(cmd *cobra.Command) error {
-	a.bindGlobalFlags(cmd)
-	a.Options = a.Options.WithDefaults()
-	if a.Version != "" {
-		a.Options.Version = a.Version
-	}
-	a.Options = withInteractive(a.Options)
-	if !needsManager(cmd) {
-		return nil
-	}
-	if (cmd.Name() == "publish" || cmd.Name() == "unpublish") && a.Options.HostFlag == "" {
-		return UsageError(errors.New("publish and unpublish require --host TARGET"))
-	}
-	return a.ensureSession(cmd.Context())
 }
 
 func (a *App) ensureSession(ctx context.Context) error {
@@ -140,41 +92,6 @@ func (a *App) ensureSession(ctx context.Context) error {
 	a.Manager = manager
 	a.sessionOwned = true
 	return nil
-}
-
-func flagError(cmd *cobra.Command, err error) error {
-	_ = cmd
-	return UsageError(err)
-}
-
-const primerText = `ssh-forward — import Development Host ports and publish local services
-
-Daily
-  status           what is forwarded right now
-  doctor           diagnose configuration, SSH, and Manager health
-  add PORT         remember a remote port
-  add --pwd GLOB   auto-forward matching working directories
-  remove PORT      forget a remembered port
-  remove --pwd GLOB
-  publish LOCAL    publish a local port on the Development Host
-  unpublish LOCAL  stop publishing a local port
-
-Host
-  host            remembered and discovered hosts
-  host add TARGET remember a host
-  host ignore HOST stop monitoring a host
-  host discover   discover local SSH sessions
-
-Use status --watch for live updates.
-Run doctor when SSH or forwarding is unhealthy.
-Run uninstall before removing the binary.
-
-ssh-forward COMMAND --help for details.
-`
-
-func missingCommand(cmd *cobra.Command) error {
-	_, err := io.WriteString(cmd.OutOrStdout(), primerText)
-	return err
 }
 
 func requirePort(command, kind, text string) (uint16, error) {

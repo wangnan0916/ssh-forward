@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
-
-	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 var ErrInvalidAlias = errors.New("invalid Development Host alias")
@@ -16,6 +15,9 @@ var ErrInvalidAlias = errors.New("invalid Development Host alias")
 const maxStderrTailBytes = 64 << 10
 
 type Options struct {
+	Target           string
+	Identity         string
+	Arguments        []string
 	Executable       string
 	ConfigFile       string
 	ControlDirectory string
@@ -27,6 +29,7 @@ type Options struct {
 // through one product-private OpenSSH master per host. OpenSSH owns the
 // forwarding data plane.
 type Adapter struct {
+	target              string
 	executable          string
 	configFile          string
 	connectionArguments []string
@@ -38,9 +41,9 @@ type Adapter struct {
 	environment         []string
 	localPortAvailable  func(uint16) bool
 
-	mu      sync.Mutex
-	closed  bool
-	masters map[core.HostAlias]*sshMaster
+	mu     sync.Mutex
+	closed bool
+	master *sshMaster
 }
 
 func New(options Options) (*Adapter, error) {
@@ -70,23 +73,16 @@ func New(options Options) (*Adapter, error) {
 		options.WaitDelay = 2 * time.Second
 	}
 	return &Adapter{
-		executable:         options.Executable,
-		configFile:         options.ConfigFile,
-		controlDirectory:   options.ControlDirectory,
-		readyTimeout:       options.ReadyTimeout,
-		controlTimeout:     10 * time.Second,
-		waitDelay:          options.WaitDelay,
-		environment:        approvedEnvironment(),
-		localPortAvailable: localLoopbackPortAvailable,
-		masters:            make(map[core.HostAlias]*sshMaster),
+		target:              options.Target,
+		controlIdentity:     options.Identity,
+		connectionArguments: slices.Clone(options.Arguments),
+		executable:          options.Executable,
+		configFile:          options.ConfigFile,
+		controlDirectory:    options.ControlDirectory,
+		readyTimeout:        options.ReadyTimeout,
+		controlTimeout:      10 * time.Second,
+		waitDelay:           options.WaitDelay,
+		environment:         approvedEnvironment(),
+		localPortAvailable:  localLoopbackPortAvailable,
 	}, nil
 }
-
-// SetConnectionArguments configures a new adapter before it starts workers.
-func (a *Adapter) SetConnectionArguments(arguments []string) {
-	a.connectionArguments = append([]string(nil), arguments...)
-}
-
-// SetControlIdentity scopes the private socket to a remembered host record.
-// Call only before starting workers. Plain aliases retain their old socket path.
-func (a *Adapter) SetControlIdentity(name string) { a.controlIdentity = name }

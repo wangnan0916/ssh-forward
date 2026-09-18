@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/wangnan0916/ssh-forward/cli/internal/app"
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
@@ -49,30 +51,18 @@ func TestStatusDisplaysAllHostsAndExplicitHostFilters(t *testing.T) {
 				args = append(args, "--watch", "--json")
 				manager.cancel = cancel
 			}
-			if err := surface.Run(ctx, args); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, surface.Run(ctx, args))
 			if mode == "filtered" {
-				if manager.calls != 1 || strings.Contains(output.String(), "staging") {
-					t.Fatalf("host filter ignored: %s", output.String())
-				}
+				require.Falsef(t, manager.calls != 1 || strings.Contains(output.String(), "staging"), "host filter ignored: %s", output.String())
 				var status statusJSONOutput
-				if err := json.Unmarshal(output.Bytes(), &status); err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, json.Unmarshal(output.Bytes(), &status))
 				return
 			}
-			if manager.calls != 1 || !strings.Contains(output.String(), "dev") || !strings.Contains(output.String(), "staging") {
-				t.Fatalf("missing hosts: %s", output.String())
-			}
+			require.Falsef(t, manager.calls != 1 || !strings.Contains(output.String(), "dev") || !strings.Contains(output.String(), "staging"), "missing hosts: %s", output.String())
 			if mode != "human" {
 				var got []statusJSONOutput
-				if err := json.Unmarshal(output.Bytes(), &got); err != nil {
-					t.Fatal(err)
-				}
-				if len(got) != 2 || got[1].Discovery.State != core.DiscoveryFailed {
-					t.Fatalf("lost offline host: %+v", got)
-				}
+				require.NoError(t, json.Unmarshal(output.Bytes(), &got))
+				require.Falsef(t, len(got) != 2 || got[1].Discovery.State != core.DiscoveryFailed, "lost offline host: %+v", got)
 			}
 		})
 	}
@@ -80,46 +70,28 @@ func TestStatusDisplaysAllHostsAndExplicitHostFilters(t *testing.T) {
 
 func TestGlobalRuleCommandsIgnoreDefaultHost(t *testing.T) {
 	path := t.TempDir() + "/config.jsonc"
-	if err := os.WriteFile(path, []byte(`{"schema_version":5,"default_host":"dev"}`), 0600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(`{"schema_version":5,"default_host":"dev"}`), 0600))
 	for _, args := range [][]string{{"add", "8080"}, {"add", "--pwd", "/workspace/**"}} {
 		var out bytes.Buffer
 		surface := &App{Manager: &fakeManager{status: core.Status{Host: "dev"}}, Options: app.Options{ConfigPath: path, Stdout: &out}}
-		if err := surface.Run(context.Background(), args); err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(out.String(), "all hosts") {
-			t.Fatalf("not global: %s", out.String())
-		}
+		require.NoError(t, surface.Run(context.Background(), args))
+		require.Contains(t, out.String(), "all hosts")
 	}
 	for _, host := range []string{"dev", "another"} {
 		intent, err := app.HostIntent(path, host)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(intent.AutoForwards) != 1 || len(intent.WorkingDirectoryRules) != 1 || len(intent.RememberedForwards) != 0 {
-			t.Fatalf("not global for %s: %+v", host, intent)
-		}
+		require.NoError(t, err)
+		require.Falsef(t, len(intent.AutoForwards) != 1 || len(intent.WorkingDirectoryRules) != 1 || len(intent.RememberedForwards) != 0, "not global for %s: %+v", host, intent)
 	}
 	surface := &App{Manager: &fakeManager{}, Options: app.Options{ConfigPath: path}}
-	if err := surface.Run(context.Background(), []string{"remove", "8080"}); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, surface.Run(context.Background(), []string{"remove", "8080"}))
 	intent, err := app.HostIntent(path, "another")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(intent.AutoForwards) != 0 || len(intent.WorkingDirectoryRules) != 1 {
-		t.Fatalf("remove leaked: %+v", intent)
-	}
+	require.NoError(t, err)
+	require.Falsef(t, len(intent.AutoForwards) != 0 || len(intent.WorkingDirectoryRules) != 1, "remove leaked: %+v", intent)
 }
 
 func TestPublishRequiresExplicitHostEvenWithDefault(t *testing.T) {
 	path := t.TempDir() + "/config.jsonc"
-	if err := os.WriteFile(path, []byte(`{"schema_version":5,"default_host":"dev"}`), 0600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(`{"schema_version":5,"default_host":"dev"}`), 0600))
 	surface := &App{Manager: &fakeManager{}, Options: app.Options{ConfigPath: path}}
 	if err := surface.Run(context.Background(), []string{"publish", "9222"}); err == nil || !strings.Contains(err.Error(), "--host") {
 		t.Fatalf("publish error: %v", err)

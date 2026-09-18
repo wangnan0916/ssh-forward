@@ -2,24 +2,15 @@ package openssh
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
-	"fmt"
 	"io"
 	"os/exec"
 	"time"
-
-	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 var errAdapterClosed = errors.New("OpenSSH adapter is closed")
 
 const legacyControlSocketTemplate = "master-%C"
-
-type controlForward struct {
-	flag string
-	spec string
-}
 
 type sshMaster struct {
 	command *exec.Cmd
@@ -28,7 +19,7 @@ type sshMaster struct {
 	err     error // published by closing done
 }
 
-func (a *Adapter) ensureMaster(ctx context.Context, host core.HostAlias) (*sshMaster, error) {
+func (a *Adapter) ensureMaster(ctx context.Context) (*sshMaster, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -37,15 +28,15 @@ func (a *Adapter) ensureMaster(ctx context.Context, host core.HostAlias) (*sshMa
 	if a.closed {
 		return nil, errAdapterClosed
 	}
-	if master := a.masters[host]; master != nil {
+	if master := a.master; master != nil {
 		select {
 		case <-master.done:
-			delete(a.masters, host)
+			a.master = nil
 		default:
 			return master, nil
 		}
 	}
-	if err := a.validateAlias(ctx, string(host)); err != nil {
+	if err := a.validateAlias(ctx, a.target); err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
@@ -55,24 +46,24 @@ func (a *Adapter) ensureMaster(ctx context.Context, host core.HostAlias) (*sshMa
 	// A previous Manager may have died before closing its product-owned master.
 	// Stop the pre-alias-hash master first, then ask any current-format stale
 	// master to exit before creating the replacement.
-	if err := a.stopLegacyMaster(ctx, host); err != nil {
+	if err := a.stopLegacyMaster(ctx); err != nil {
 		return nil, err
 	}
-	_ = a.runControl(ctx, host, "exit", nil)
-	master, err := a.startMaster(host)
+	_ = a.runControl(ctx, "exit", nil)
+	master, err := a.startMaster()
 	if err != nil {
 		return nil, err
 	}
-	if err := a.waitForMaster(ctx, host, master); err != nil {
+	if err := a.waitForMaster(ctx, master); err != nil {
 		return nil, err
 	}
-	a.masters[host] = master
+	a.master = master
 	return master, nil
 }
 
-func (a *Adapter) startMaster(host core.HostAlias) (*sshMaster, error) {
+func (a *Adapter) startMaster() (*sshMaster, error) {
 	arguments := append(a.configArguments(),
-		"-M", "-N", "-T", "-g", "-S", a.controlPath(host),
+		"-M", "-N", "-T", "-g", "-S", a.controlPath(),
 		"-o", "ClearAllForwardings=yes",
 		"-o", "ControlMaster=yes", "-o", "ControlPersist=no",
 		// TCP can remain apparently established after a reboot or a dropped
@@ -80,7 +71,7 @@ func (a *Adapter) startMaster(host core.HostAlias) (*sshMaster, error) {
 		// existing discovery/forward retry loops can establish a fresh session.
 		"-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3",
 		"-o", "ConnectTimeout=10", "-o", "ConnectionAttempts=1",
-		string(host),
+		a.target,
 	)
 	command := a.command(arguments...)
 	stderr := &boundedBuffer{limit: maxStderrTailBytes}
@@ -95,136 +86,14 @@ func (a *Adapter) startMaster(host core.HostAlias) (*sshMaster, error) {
 	return master, nil
 }
 
-func (a *Adapter) waitForMaster(ctx context.Context, host core.HostAlias, master *sshMaster) error {
-	deadline := time.NewTimer(a.readyTimeout)
-	ticker := time.NewTicker(25 * time.Millisecond)
-	defer deadline.Stop()
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			_ = a.stopMaster(ctx, master)
-			return ctx.Err()
-		case <-master.done:
-			return master.failure()
-		case <-deadline.C:
-			_ = a.stopMaster(ctx, master)
-			return backendError("master_start_timeout")
-		case <-ticker.C:
-			if err := a.runControl(ctx, host, "check", nil); err == nil {
-				return nil
-			}
-		}
+func (a *Adapter) waitForMaster(ctx context.Context, master *sshMaster) error {
+	err := a.awaitReady(ctx, master, "master_start_timeout", func() bool {
+		return a.runControl(ctx, "check", nil) == nil
+	})
+	if err != nil {
+		_ = a.stopMaster(ctx, master)
 	}
-}
-
-func (a *Adapter) runControl(
-	ctx context.Context,
-	host core.HostAlias,
-	operation string,
-	forward *controlForward,
-) error {
-	arguments := append(a.masterClientArguments(host), "-O", operation)
-	if forward != nil {
-		arguments = append(arguments, "-o", "ExitOnForwardFailure=yes", forward.flag, forward.spec)
-	}
-	arguments = append(arguments, string(host))
-	return a.runControlCommand(ctx, arguments)
-}
-
-func (a *Adapter) runLegacyControl(
-	ctx context.Context,
-	host core.HostAlias,
-	operation string,
-) error {
-	arguments := append(
-		a.configArguments(), "-S", legacyControlSocketTemplate, "-O", operation, string(host),
-	)
-	return a.runControlCommand(ctx, arguments)
-}
-
-func (a *Adapter) runControlCommand(ctx context.Context, arguments []string) error {
-	ctx, cancel := context.WithTimeout(ctx, a.controlTimeout)
-	defer cancel()
-	command := a.commandContext(ctx, arguments...)
-	stderr := &boundedBuffer{limit: maxStderrTailBytes}
-	command.Stdout = io.Discard
-	command.Stderr = stderr
-	if err := command.Run(); err != nil {
-		return classifyError(err, stderr.String())
-	}
-	return nil
-}
-
-func (a *Adapter) stopLegacyMaster(ctx context.Context, host core.HostAlias) error {
-	cleanupCtx, cancel := context.WithTimeout(ctx, a.waitDelay)
-	defer cancel()
-	if err := a.runLegacyControl(cleanupCtx, host, "exit"); err != nil {
-		return legacyCleanupError(ctx, cleanupCtx)
-	}
-	ticker := time.NewTicker(25 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-cleanupCtx.Done():
-			return legacyCleanupError(ctx, cleanupCtx)
-		case <-ticker.C:
-			if err := a.runLegacyControl(cleanupCtx, host, "check"); err != nil {
-				return legacyCleanupError(ctx, cleanupCtx)
-			}
-		}
-	}
-}
-
-func legacyCleanupError(parent, cleanup context.Context) error {
-	if err := parent.Err(); err != nil {
-		return err
-	}
-	if cleanup.Err() != nil {
-		return backendError("master_start_timeout")
-	}
-	return nil
-}
-
-func (a *Adapter) cancelForward(
-	host core.HostAlias,
-	master *sshMaster,
-	forward controlForward,
-) {
-	// A retiring worker must never cancel a forward on a replacement master
-	// that has reused this host's control socket. Serialize this check with
-	// replacement and skip cleanup once the original transport has exited.
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.masters[host] != master {
-		return
-	}
-	select {
-	case <-master.done:
-		return
-	default:
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), a.waitDelay)
-	defer cancel()
-	if err := a.runControl(ctx, host, "cancel", &forward); err != nil {
-		_ = a.stopMaster(context.Background(), master)
-	}
-}
-
-func (a *Adapter) controlPath(host core.HostAlias) string {
-	identity := string(host)
-	if a.controlIdentity != "" {
-		identity = a.controlIdentity
-	}
-	digest := sha256.Sum256([]byte(identity))
-	// Commands run inside the private control directory. A bounded relative
-	// path avoids the short Unix-domain socket path limit on macOS while still
-	// ignoring any user-configured ControlPath.
-	return fmt.Sprintf("master-%x", digest[:12])
-}
-
-func (a *Adapter) masterClientArguments(host core.HostAlias) []string {
-	return []string{"-F", "/dev/null", "-S", a.controlPath(host)}
+	return err
 }
 
 func (m *sshMaster) wait() {
@@ -259,7 +128,7 @@ func (a *Adapter) stopMaster(ctx context.Context, master *sshMaster) error {
 	}
 }
 
-// Close stops every product-owned OpenSSH master after Manager workers have
+// Close stops the private master after Manager workers have
 // canceled their individual forward requests and discovery session.
 func (a *Adapter) Close(ctx context.Context) error {
 	a.mu.Lock()
@@ -268,15 +137,11 @@ func (a *Adapter) Close(ctx context.Context) error {
 		return nil
 	}
 	a.closed = true
-	masters := make([]*sshMaster, 0, len(a.masters))
-	for _, master := range a.masters {
-		masters = append(masters, master)
-	}
-	a.masters = nil
+	master := a.master
+	a.master = nil
 	a.mu.Unlock()
-	var err error
-	for _, master := range masters {
-		err = errors.Join(err, a.stopMaster(ctx, master))
+	if master == nil {
+		return nil
 	}
-	return err
+	return a.stopMaster(ctx, master)
 }

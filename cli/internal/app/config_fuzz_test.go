@@ -3,6 +3,8 @@ package app
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
@@ -36,25 +38,16 @@ func FuzzNormalizeConfig(f *testing.F) {
 	f.Add(uint8(1), uint16(5173), uint16(0), uint16(9222), uint16(0), false)
 	f.Add(uint8(3), uint16(5173), uint16(15173), uint16(9222), uint16(19222), true)
 	f.Add(uint8(5), uint16(5173), uint16(5173), uint16(9222), uint16(19222), true)
-	f.Fuzz(func(
-		t *testing.T,
-		schemaIndex uint8,
-		remotePort, localPort, publishedLocalPort, publishedRemotePort uint16,
-		allowFallback bool,
-	) {
+	f.Fuzz(func(t *testing.T, schemaIndex uint8, remotePort, localPort, publishedLocalPort, publishedRemotePort uint16, allowFallback bool) {
 		schema := int(schemaIndex%configSchemaVersion) + 1
 		config := configFile{SchemaVersion: schema}
 		if schema <= 2 {
 			config.LegacyForwards = map[string][]uint16{"dev": {remotePort}}
 		} else {
-			config.RememberedForwards = map[string][]core.RememberedForward{"dev": {{
-				RemotePort: remotePort, LocalPort: localPort, AllowFallback: allowFallback,
-			}}}
+			config.RememberedForwards = map[string][]core.RememberedForward{"dev": {{RemotePort: remotePort, LocalPort: localPort, AllowFallback: allowFallback}}}
 		}
 		if schema == configSchemaVersion {
-			config.PublishedForwards = map[string][]core.PublishedForward{"dev": {{
-				LocalPort: publishedLocalPort, RemotePort: publishedRemotePort,
-			}}}
+			config.PublishedForwards = map[string][]core.PublishedForward{"dev": {{LocalPort: publishedLocalPort, RemotePort: publishedRemotePort}}}
 		}
 		normalized, err := normalizeConfig(config)
 		if err != nil {
@@ -66,74 +59,36 @@ func FuzzNormalizeConfig(f *testing.F) {
 
 func assertNormalizedConfig(t *testing.T, config configFile) {
 	t.Helper()
-	if config.SchemaVersion < 1 || config.SchemaVersion > configSchemaVersion {
-		t.Fatalf("schema version = %d", config.SchemaVersion)
-	}
-	if config.LegacyForwards != nil {
-		t.Fatalf("legacy forwards survived normalization: %#v", config.LegacyForwards)
-	}
-	for host, forwards := range config.RememberedForwards {
-		if host == "" {
-			t.Fatal("empty remembered host")
+	require.GreaterOrEqual(t, config.SchemaVersion, 1)
+	require.LessOrEqual(t, config.SchemaVersion, configSchemaVersion)
+	require.Nil(t, config.LegacyForwards)
+	for host, rules := range config.model().Rules {
+		assertPortMappings(t, rules.Forwards, func(f core.RememberedForward) (uint16, uint16) { return f.RemotePort, f.LocalPort })
+		assertPortMappings(t, rules.Published, func(f core.PublishedForward) (uint16, uint16) { return f.LocalPort, f.RemotePort })
+		for _, publication := range rules.Published {
+			require.NotEmpty(t, host, "publications must remain host-scoped")
+			for _, imported := range rules.Forwards {
+				require.True(t, imported.AllowFallback || imported.LocalPort != publication.LocalPort, "strict import overlaps publication")
+			}
 		}
-		remotePorts := make(map[uint16]struct{}, len(forwards))
-		localPorts := make(map[uint16]struct{}, len(forwards))
-		for index, forward := range forwards {
-			if forward.RemotePort == 0 || forward.LocalPort == 0 {
-				t.Fatalf("invalid remembered forward: %#v", forward)
-			}
-			if index > 0 && forwards[index-1].RemotePort >= forward.RemotePort {
-				t.Fatalf("remembered forwards are not strictly sorted: %#v", forwards)
-			}
-			if _, duplicate := remotePorts[forward.RemotePort]; duplicate {
-				t.Fatalf("duplicate remembered remote port %d", forward.RemotePort)
-			}
-			if _, duplicate := localPorts[forward.LocalPort]; duplicate {
-				t.Fatalf("duplicate remembered local port %d", forward.LocalPort)
-			}
-			remotePorts[forward.RemotePort] = struct{}{}
-			localPorts[forward.LocalPort] = struct{}{}
-		}
-	}
-	for host, forwards := range config.PublishedForwards {
-		if host == "" {
-			t.Fatal("empty published host")
-		}
-		localPorts := make(map[uint16]struct{}, len(forwards))
-		remotePorts := make(map[uint16]struct{}, len(forwards))
-		for index, forward := range forwards {
-			if forward.LocalPort == 0 || forward.RemotePort == 0 {
-				t.Fatalf("invalid published forward: %#v", forward)
-			}
-			if index > 0 && forwards[index-1].LocalPort >= forward.LocalPort {
-				t.Fatalf("published forwards are not strictly sorted: %#v", forwards)
-			}
-			if _, duplicate := localPorts[forward.LocalPort]; duplicate {
-				t.Fatalf("duplicate published local port %d", forward.LocalPort)
-			}
-			if _, duplicate := remotePorts[forward.RemotePort]; duplicate {
-				t.Fatalf("duplicate published remote port %d", forward.RemotePort)
-			}
-			localPorts[forward.LocalPort] = struct{}{}
-			remotePorts[forward.RemotePort] = struct{}{}
-		}
-		for _, remembered := range config.RememberedForwards[host] {
-			if _, reserved := localPorts[remembered.LocalPort]; reserved && !remembered.AllowFallback {
-				t.Fatalf("strict remembered forward uses published local port: %#v", remembered)
+		for i, pattern := range rules.Directories {
+			require.NoError(t, validateWorkingDirectoryRule(pattern))
+			if i > 0 {
+				require.Less(t, rules.Directories[i-1], pattern)
 			}
 		}
 	}
-	for host, patterns := range config.WorkingDirectoryRules {
-		if host == "" {
-			t.Fatal("empty working-directory host")
-		}
-		for index, pattern := range patterns {
-			if err := validateWorkingDirectoryRule(pattern); err != nil {
-				t.Fatalf("invalid normalized rule %q: %v", pattern, err)
-			}
-			if index > 0 && patterns[index-1] >= pattern {
-				t.Fatalf("rules are not strictly sorted: %#v", patterns)
-			}
-		}
+}
+
+func assertPortMappings[T any](t *testing.T, forwards []T, ports func(T) (uint16, uint16)) {
+	t.Helper()
+	previous := uint16(0)
+	bindings := make(map[uint16]bool)
+	for _, forward := range forwards {
+		service, bind := ports(forward)
+		require.Greater(t, service, previous, "service ports must be nonzero, sorted, and unique")
+		require.NotZero(t, bind)
+		require.False(t, bindings[bind], "duplicate bind port %d", bind)
+		previous, bindings[bind] = service, true
 	}
 }

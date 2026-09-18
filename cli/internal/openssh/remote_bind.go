@@ -5,8 +5,6 @@ import (
 	"io"
 	"strconv"
 	"strings"
-
-	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 const remoteBindProbeScript = `set -eu
@@ -48,19 +46,10 @@ awk -v port="$port_hex" '
 
 // sshd may override a requested loopback bind when GatewayPorts is enabled.
 // Inspect the actual remote listener and fail closed before reporting readiness.
-func (a *Adapter) verifyRemoteLoopbackForward(
-	ctx context.Context,
-	host core.HostAlias,
-	master *sshMaster,
-	port uint16,
-) error {
+func (a *Adapter) verifyRemoteLoopbackForward(ctx context.Context, master *sshMaster, port uint16) error {
 	probeCtx, cancel := context.WithTimeout(ctx, a.readyTimeout)
 	defer cancel()
-	arguments := append(
-		a.masterClientArguments(host),
-		"-T", "-o", "ControlMaster=no",
-		string(host), "sh", "-s", "--", strconv.Itoa(int(port)),
-	)
+	arguments := append(a.masterClientArguments(), "-T", "-o", "ControlMaster=no", a.target, "sh", "-s", "--", strconv.Itoa(int(port)))
 	command := a.commandContext(probeCtx, arguments...)
 	stdout := &boundedBuffer{limit: 256}
 	command.Stdin = strings.NewReader(remoteBindProbeScript)

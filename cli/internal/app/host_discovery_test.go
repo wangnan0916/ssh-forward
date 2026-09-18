@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"github.com/gofrs/flock"
 	"io"
 	"os"
 	"os/exec"
@@ -13,18 +12,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
+	"github.com/gofrs/flock"
+	"github.com/stretchr/testify/require"
+
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 func TestProcessArgumentsPreserveExactArgv(t *testing.T) {
 	args, err := processArguments(context.Background(), int32(os.Getpid()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(args, os.Args) {
-		t.Fatalf("argv mismatch: %s", cmp.Diff(os.Args, args))
-	}
+	require.NoError(t, err)
+	require.Equal(t, os.Args, args)
 }
 func TestParseSSHConnectionTargets(t *testing.T) {
 	tests := []struct {
@@ -43,16 +40,12 @@ func TestParseSSHConnectionTargets(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			got, ok := parseSSHProcess(test.args)
-			if ok != test.ok || !reflect.DeepEqual(got, test.want) {
-				t.Fatalf("got %+v %v, want %+v %v", got, ok, test.want, test.ok)
-			}
+			require.Falsef(t, ok != test.ok || !reflect.DeepEqual(got, test.want), "got %+v %v, want %+v %v", got, ok, test.want, test.ok)
 		})
 	}
 	a, _ := parseSSHProcess([]string{"ssh", "-p", "2222", "dev"})
 	b, _ := parseSSHProcess([]string{"ssh", "-p", "2223", "dev"})
-	if targetID(a) == targetID(b) {
-		t.Fatal("distinct connections merged")
-	}
+	require.False(t, targetID(a) == targetID(b), "distinct connections merged")
 }
 func TestDiscoveryExcludesOtherUsersAndProductProcesses(t *testing.T) {
 	input := []hostProcess{
@@ -69,102 +62,56 @@ func TestDiscoveryExcludesOtherUsersAndProductProcesses(t *testing.T) {
 		t.Fatalf("read excluded process %d", pid)
 		return nil, nil
 	})
-	if len(got) != 2 || got["user@direct"].Target == "" || got["dev"].Target == "" {
-		t.Fatalf("unexpected discovery: %+v", got)
-	}
+	require.Falsef(t, len(got) != 2 || got["user@direct"].Target == "" || got["dev"].Target == "", "unexpected discovery: %+v", got)
 }
 func TestGlobalRulesAndDiscoverySurviveRestartAndIgnore(t *testing.T) {
 	ctx := context.Background()
 	pool, _ := testPool(t, configFile{Hosts: map[string]HostTarget{"manual": {Target: "manual"}}, GlobalForwards: []core.RememberedForward{{RemotePort: 8080}}, GlobalWorkingDirectoryRules: []string{"/other/**"}})
-	if err := writeJSONC(discoveryPath(pool.configPath), map[string]HostTarget{"found": {Target: "found"}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := pool.reload(ctx, ""); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, writeJSONC(discoveryPath(pool.configPath), map[string]HostTarget{"found": {Target: "found"}}))
+	require.NoError(t, pool.reload(ctx, ""))
 	for _, host := range []string{"manual", "found"} {
 		awaitPoolStatus(t, pool, host, allPoolForwardsActive(1))
 	}
-	if err := SetHost(pool.configPath, "found", HostTarget{}, true); err != nil {
-		t.Fatal(err)
-	}
-	if err := pool.reload(ctx, ""); err != nil {
-		t.Fatal(err)
-	}
-	if pool.lookup("found") != nil {
-		t.Fatal("ignored host still running")
-	}
-	if err := pool.reload(ctx, "found"); err != nil {
-		t.Fatal(err)
-	}
-	if pool.lookup("found") != nil {
-		t.Fatal("ignored host was rediscovered")
-	}
+	require.NoError(t, EditHost(pool.configPath, "found", nil, true))
+	require.NoError(t, pool.reload(ctx, ""))
+	require.Nil(t, pool.lookup("found"), "ignored host still running")
+	require.NoError(t, pool.reload(ctx, "found"))
+	require.Nil(t, pool.lookup("found"), "ignored host was rediscovered")
 	remembered, ignored, err := HostList(pool.configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if remembered["found"].Target != "found" || len(ignored) != 1 {
-		t.Fatal("remembered state lost")
-	}
-	if err := SetHost(pool.configPath, "found", remembered["found"], false); err != nil {
-		t.Fatal(err)
-	}
-	if err := pool.reload(ctx, ""); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.False(t, remembered["found"].Target != "found" || len(ignored) != 1, "remembered state lost")
+	require.NoError(t, EditHost(pool.configPath, "found", nil, false))
+	require.NoError(t, pool.reload(ctx, ""))
 	awaitPoolStatus(t, pool, "found", allPoolForwardsActive(1))
 }
 func TestSchemaFiveMigrationKeepsPublishedAndScopedRules(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.jsonc")
-	if err := writeAtomic(path, []byte(`{"schema_version":5,"remembered_forwards":{"dev":[{"remote_port":3000,"local_port":3000}]},"published_forwards":{"dev":[{"local_port":9222}]},"working_directory_rules":{"dev":["/work/**"]}}`)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := SetRememberedForward(path, "", core.RememberedForward{RemotePort: 8080}); err != nil {
+	require.NoError(t, writeAtomic(path, []byte(`{"schema_version":5,"remembered_forwards":{"dev":[{"remote_port":3000,"local_port":3000}]},"published_forwards":{"dev":[{"local_port":9222}]},"working_directory_rules":{"dev":["/work/**"]}}`)))
+	if _, err := EditRememberedForward(path, "", &core.RememberedForward{RemotePort: 8080}, true); err != nil {
 		t.Fatal(err)
 	}
 	dev, err := HostIntent(path, "dev")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	other, err := HostIntent(path, "other")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(dev.PublishedForwards) != 1 || len(dev.RememberedForwards) != 1 || len(dev.WorkingDirectoryRules) != 1 || len(dev.AutoForwards) != 1 {
-		t.Fatalf("lost old rules: %+v", dev)
-	}
-	if len(other.PublishedForwards) != 0 || len(other.RememberedForwards) != 0 || len(other.WorkingDirectoryRules) != 0 || len(other.AutoForwards) != 1 {
-		t.Fatalf("old rules broadened: %+v", other)
-	}
+	require.NoError(t, err)
+	require.Falsef(t, len(dev.PublishedForwards) != 1 || len(dev.RememberedForwards) != 1 || len(dev.WorkingDirectoryRules) != 1 || len(dev.AutoForwards) != 1, "lost old rules: %+v", dev)
+	require.Falsef(t, len(other.PublishedForwards) != 0 || len(other.RememberedForwards) != 0 || len(other.WorkingDirectoryRules) != 0 || len(other.AutoForwards) != 1, "old rules broadened: %+v", other)
 }
 
 func TestEnableDestinationDoesNotInventPlainConnection(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.jsonc")
 	target := HostTarget{Target: "dev", Arguments: []string{"-p", "2222"}}
-	if err := writeJSONC(discoveryPath(path), map[string]HostTarget{targetID(target): target}); err != nil {
-		t.Fatal(err)
-	}
-	if err := SetHost(path, "dev", HostTarget{}, true); err != nil {
-		t.Fatal(err)
-	}
-	if err := EnableHost(path, "dev"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, writeJSONC(discoveryPath(path), map[string]HostTarget{targetID(target): target}))
+	require.NoError(t, EditHost(path, "dev", nil, true))
+	require.NoError(t, EditHost(path, "dev", nil, false))
 	hosts, ignored, err := HostList(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(hosts) != 1 || len(ignored) != 0 || hosts[targetID(target)].Target != "dev" {
-		t.Fatalf("invented target: %+v, %v", hosts, ignored)
-	}
+	require.NoError(t, err)
+	require.Falsef(t, len(hosts) != 1 || len(ignored) != 0 || hosts[targetID(target)].Target != "dev", "invented target: %+v, %v", hosts, ignored)
 }
 
 func TestOrphanedProductMasterIsNotDiscovered(t *testing.T) {
 	_, ok := parseSSHProcess([]string{"ssh", "-M", "-N", "-S", "master-abc123", "dev"})
-	if ok {
-		t.Fatal("product master fed back into discovery")
-	}
+	require.False(t, ok, "product master fed back into discovery")
 }
 
 func TestProcessArgumentsPreserveBoundaries(t *testing.T) {
@@ -178,16 +125,10 @@ func TestProcessArgumentsPreserveBoundaries(t *testing.T) {
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestProcessArgumentsPreserveBoundaries$", "--", "a key with spaces", "", "quote'\"", "你好", "last-argument")
 	cmd.Env = append(os.Environ(), "SSH_FORWARD_ARGV_PROBE=1", "SSH_FORWARD_ARGV_SECRET=must-not-be-argv")
 	input, err := cmd.StdinPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	output, err := cmd.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, cmd.Start())
 	defer func() {
 		_ = input.Close()
 		if err := cmd.Wait(); err != nil {
@@ -198,39 +139,25 @@ func TestProcessArgumentsPreserveBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	args, err := processArguments(ctx, int32(cmd.Process.Pid))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if diff := cmp.Diff(cmd.Args, args); diff != "" {
-		t.Fatalf("argument boundaries changed: %s", diff)
-	}
+	require.NoError(t, err)
+	require.Equal(t, cmd.Args, args)
 }
 
 func TestDiscoveredRegistryLockCancellationAndMerge(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.jsonc")
 	lock := flock.New(discoveryPath(path) + ".lock")
-	if err := lock.Lock(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, lock.Lock())
 	defer lock.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
-	if err := rememberDiscovered(ctx, path, map[string]HostTarget{"blocked": {Target: "blocked"}}); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("lock timeout: %v", err)
-	}
+	require.ErrorIs(t, rememberDiscovered(ctx, path, map[string]HostTarget{"blocked": {Target: "blocked"}}), context.DeadlineExceeded)
 	if _, err := os.Stat(discoveryPath(path)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("wrote without lock: %v", err)
 	}
 	info, err := os.Stat(discoveryPath(path) + ".lock")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0600 {
-		t.Fatalf("lock permissions: %v", info.Mode())
-	}
-	if err := lock.Unlock(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.EqualValuesf(t, 0600, info.Mode().Perm(), "lock permissions: %v", info.Mode())
+	require.NoError(t, lock.Unlock())
 	results := make(chan error, 2)
 	for _, name := range []string{"one", "two"} {
 		go func() {
@@ -238,23 +165,15 @@ func TestDiscoveredRegistryLockCancellationAndMerge(t *testing.T) {
 		}()
 	}
 	for range 2 {
-		if err := <-results; err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, <-results)
 	}
 	targets, err := loadDiscovered(path)
-	if err != nil || len(targets) != 2 {
-		t.Fatalf("concurrent discoveries lost: %+v, %v", targets, err)
-	}
+	require.Falsef(t, err != nil || len(targets) != 2, "concurrent discoveries lost: %+v, %v", targets, err)
 }
 
 func TestTerminalRejectsCharacterDevice(t *testing.T) {
 	file, err := os.Open(os.DevNull)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer file.Close()
-	if IsTerminal(file) {
-		t.Fatal("null device treated as terminal")
-	}
+	require.False(t, IsTerminal(file), "null device treated as terminal")
 }

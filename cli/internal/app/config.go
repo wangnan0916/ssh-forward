@@ -76,7 +76,7 @@ func loadConfigForWrite(path string) (configuration, error) {
 	return file.model(), nil
 }
 
-func (c configuration) save(path string) error {
+func (c configuration) file() (configFile, error) {
 	file := configFile{Hosts: c.Hosts, IgnoredHosts: c.IgnoredHosts,
 		RememberedForwards:    make(map[string][]core.RememberedForward),
 		PublishedForwards:     make(map[string][]core.PublishedForward),
@@ -84,7 +84,7 @@ func (c configuration) save(path string) error {
 	for host, rules := range c.Rules {
 		if host == "" {
 			if len(rules.Published) > 0 {
-				return errors.New("published forwards require a host")
+				return configFile{}, errors.New("published forwards require a host")
 			}
 			file.GlobalForwards, file.GlobalWorkingDirectoryRules = rules.Forwards, rules.Directories
 			continue
@@ -98,6 +98,14 @@ func (c configuration) save(path string) error {
 		if len(rules.Directories) > 0 {
 			file.WorkingDirectoryRules[host] = rules.Directories
 		}
+	}
+	return file, nil
+}
+
+func (c configuration) save(path string) error {
+	file, err := c.file()
+	if err != nil {
+		return err
 	}
 	return saveConfig(path, file)
 }
