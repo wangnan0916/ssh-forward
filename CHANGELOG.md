@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.0](https://github.com/wangnan0916/ssh-forward/compare/v0.7.0...v0.8.0) (2026-09-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* discover and monitor SSH hosts concurrently ([#19](https://github.com/wangnan0916/ssh-forward/issues/19))
+
+### Features
+
+* discover and monitor SSH hosts concurrently ([#19](https://github.com/wangnan0916/ssh-forward/issues/19)) ([f56d434](https://github.com/wangnan0916/ssh-forward/commit/f56d434db14ecf0ba6628a829fe54717b49e534c))
+
 ## [0.7.0](https://github.com/wangnan0916/ssh-forward/compare/v0.6.0...v0.7.0) (2026-09-08)
 
 
