@@ -32,8 +32,9 @@ func TestParseSSHConnectionTargets(t *testing.T) {
 	}{
 		{"direct", []string{"ssh", "user@10.0.0.1", "echo", "secret"}, HostTarget{Target: "user@10.0.0.1"}, true},
 		{"options", []string{"ssh", "-NT", "-p2222", "-l", "me", "-i", "/keys/a key", "-F", "/config/ssh", "-J", "jump", "-L", "8000:localhost:80", "dev"}, HostTarget{Target: "dev", Arguments: []string{"-p", "2222", "-l", "me", "-i", "/keys/a key", "-F", "/config/ssh", "-J", "jump"}}, true},
-		{"unsupported", []string{"ssh", "-o", "ProxyCommand=custom secret", "dev"}, HostTarget{Target: "dev", Diagnostic: "discovered_unsupported"}, true},
-		{"relative path", []string{"ssh", "-i", "key", "dev"}, HostTarget{Target: "dev", Diagnostic: "discovered_unsupported"}, true},
+		{"unsupported dropped", []string{"ssh", "-o", "ProxyCommand=custom secret", "dev"}, HostTarget{Target: "dev"}, true},
+		{"relative path dropped", []string{"ssh", "-i", "key", "dev"}, HostTarget{Target: "dev"}, true},
+		{"keeps supported beside unsupported", []string{"ssh", "-p", "2222", "-o", "ProxyCommand=custom", "dev"}, HostTarget{Target: "dev", Arguments: []string{"-p", "2222"}}, true},
 		{"config evaluation", []string{"ssh", "-G", "dev"}, HostTarget{}, false},
 		{"control", []string{"ssh", "-O", "check", "dev"}, HostTarget{}, false},
 	}
@@ -46,6 +47,16 @@ func TestParseSSHConnectionTargets(t *testing.T) {
 	a, _ := parseSSHProcess([]string{"ssh", "-p", "2222", "dev"})
 	b, _ := parseSSHProcess([]string{"ssh", "-p", "2223", "dev"})
 	require.False(t, targetID(a) == targetID(b), "distinct connections merged")
+}
+
+func TestLoadDiscoveredHealsUnsupportedDiagnostic(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.jsonc")
+	require.NoError(t, writeJSONC(discoveryPath(path), map[string]HostTarget{
+		"ubuntu": {Target: "ubuntu", Diagnostic: "discovered_unsupported"},
+	}))
+	targets, err := loadDiscovered(path)
+	require.NoError(t, err)
+	require.Equal(t, HostTarget{Target: "ubuntu"}, targets["ubuntu"])
 }
 func TestDiscoveryExcludesOtherUsersAndProductProcesses(t *testing.T) {
 	input := []hostProcess{

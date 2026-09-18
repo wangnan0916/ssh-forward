@@ -15,11 +15,27 @@ import (
 )
 
 // HostTarget stores connection parameters, never commands or process environments.
-// Diagnostic-only candidates are visible but never connected.
+// Diagnostic is reserved for persisted candidates that must not be connected.
 type HostTarget struct {
 	Target     string   `json:"target"`
 	Arguments  []string `json:"arguments,omitempty"`
 	Diagnostic string   `json:"diagnostic,omitempty"`
+}
+
+// keepValidArguments drops options that cannot be replayed safely. The Target
+// alone still monitors through OpenSSH defaults and SSH config.
+func keepValidArguments(target HostTarget) HostTarget {
+	out := HostTarget{Target: target.Target}
+	for i := 0; i+1 < len(target.Arguments); i += 2 {
+		next := HostTarget{
+			Target:    target.Target,
+			Arguments: append(slices.Clone(out.Arguments), target.Arguments[i], target.Arguments[i+1]),
+		}
+		if validateTarget(target.Target, next) == nil {
+			out.Arguments = next.Arguments
+		}
+	}
+	return out
 }
 
 func validateTarget(name string, target HostTarget) error {
@@ -77,7 +93,8 @@ func targetID(target HostTarget) string {
 	return fmt.Sprintf("%s-%x", prefix, hash[:6])
 }
 
-// parseSSHProcess consumes exact OS argv. Unsupported options require manual completion.
+// parseSSHProcess consumes exact OS argv. Unsupported options are dropped so the
+// destination still auto-monitors via OpenSSH config and defaults.
 func parseSSHProcess(args []string) (HostTarget, bool) {
 	target := HostTarget{}
 	unsupported := false
@@ -137,8 +154,7 @@ func parseSSHProcess(args []string) (HostTarget, bool) {
 		return HostTarget{}, false
 	}
 	if unsupported || validateTarget(target.Target, target) != nil {
-		target.Arguments = nil
-		target.Diagnostic = "discovered_unsupported"
+		target = keepValidArguments(target)
 	}
 	return target, true
 }

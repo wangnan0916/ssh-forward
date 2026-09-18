@@ -58,9 +58,10 @@ Invalid configuration leaves existing runtimes intact.
 
 A five-second scan reads native same-user SSH argv, excluding the product process
 tree and control commands. Discovered targets persist separately under a
-cancellable file lock. Unsupported options produce diagnostic-only candidates;
-remote commands and process environments are never persisted. Explicit host
-records override discoveries. Ignoring a destination excludes its variants.
+cancellable file lock. Unsupported options are dropped so the destination still
+auto-monitors via OpenSSH config and defaults; remote commands and process
+environments are never persisted. Explicit host records override discoveries.
+Ignoring a destination excludes its variants.
 
 Each runtime owns its transport and failures. Only changed/removed targets are
 replaced; equivalent intent preserves workers. Published local service ports are
