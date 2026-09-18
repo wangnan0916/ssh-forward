@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/wangnan0916/ssh-forward/compare/v0.9.0...v0.10.0) (2026-09-18)
+
+
+### Features
+
+* redraw status --watch in place on a terminal ([2af3675](https://github.com/wangnan0916/ssh-forward/commit/2af367505452bd4dd8a19d51f8e80c9c389b0ea2))
+
 ## [0.9.0](https://github.com/wangnan0916/ssh-forward/compare/v0.8.0...v0.9.0) (2026-09-18)
 
 
