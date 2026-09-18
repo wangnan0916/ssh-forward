@@ -18,31 +18,24 @@ the local machine and one Linux Development Host. System OpenSSH and
 
 ```bash
 ssh-forward --version
-ssh-forward host --json
-ssh-forward default
+ssh-forward host list --json
+ssh-forward status --json
 ```
 
-Use `--host TARGET` to select an alias, hostname, IP address, or `user@host`
-for a command. Direct targets use OpenSSH's default connection and
-authentication settings. Without `--host`, use an alias returned by `host`.
-If no default is set, pin one:
-
-```bash
-ssh-forward default ALIAS
-```
-
-`TARGET` is one OpenSSH destination. Keep custom ports, identities, jump
-hosts, and other SSH options in SSH config. `default ALIAS` only pins a literal
-alias from SSH config. `-h` shows help. If the binary is missing, report these
-installation choices and stop:
+Active same-user SSH sessions are discovered automatically every five seconds and
+monitored without `host add`. Use `--host TARGET` to select an alias, hostname,
+IP address, or `user@host` for a scoped command. Keep custom ports, identities,
+jump hosts, and other SSH options in SSH config; `host add` is only for explicit
+overrides or destinations that never appear as a live SSH process. `-h` shows
+help. If the binary is missing, report these installation choices and stop:
 
 ```bash
 brew install --HEAD wangnan0916/ssh-forward/ssh-forward
 go install github.com/wangnan0916/ssh-forward/cli/cmd/ssh-forward@main
 ```
 
-This step is complete when an existing alias is pinned or a target is
-explicitly selected.
+This step is complete when `host list` or `status` shows the relevant host, or a
+target is explicitly selected with `--host`.
 
 ## 2. Inspect directional state
 

@@ -13,7 +13,7 @@ type entry struct {
 }
 
 var catalog = map[string]entry{
-	"discovered_unsupported": {text: "Discovered SSH target needs explicit connection settings.", doctorFix: "Use host add NAME --target DESTINATION with connection options, or an SSH config alias."},
+	"discovered_unsupported": {text: "Discovered SSH target needs explicit connection settings.", doctorFix: "Reconnect with a plain SSH session, or use host add NAME with connection options."},
 	"invalid_alias": {
 		text:       "SSH does not know this host alias.",
 		doctorText: "OpenSSH does not recognize this host alias",

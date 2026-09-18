@@ -93,15 +93,17 @@ reading exact native argv and excluding its own process tree. It remembers new
 targets in a locked `discovered-hosts.json` registry; closing the original SSH
 session does not forget them. Supported options include port, user, absolute
 identity/config paths, jump hosts, and selected `-o` settings. Different settings
-receive distinct IDs. Unsupported settings remain visible without connecting;
-complete them with `host add NAME --target DESTINATION` and `--port`, `--user`,
-`--identity`, `--jump`, or `--ssh-config`.
+receive distinct IDs. Unsupported argv options are dropped; the destination still
+auto-monitors through OpenSSH defaults and SSH config. Use `host add` only when
+you need explicit overrides (`--target`, `--port`, `--user`, `--identity`,
+`--jump`, or `--ssh-config`).
 
-Embedded SSH clients, inaccessible argv, relative key/config paths, and sessions
-between scans may require manual setup. Merely listing an alias in SSH config
-does not connect it. Ignoring a destination also suppresses its discovered
-variants, across restarts. Host edits reload within five seconds; rule edits
-reload immediately. Discovered targets use noninteractive SSH authentication.
+Embedded SSH clients, inaccessible argv, and sessions between scans may be
+missed until the next successful scan. Merely listing an alias in SSH config
+does not connect it until a matching session is discovered or you add the host.
+Ignoring a destination also suppresses its discovered variants, across restarts.
+Host edits reload within five seconds; rule edits reload immediately. Discovered
+targets use noninteractive SSH authentication.
 
 One user service owns an independent SSH master per host. Encrypted keepalives
 run after five idle seconds and disconnect after three unanswered probes.
