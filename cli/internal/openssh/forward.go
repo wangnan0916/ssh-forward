@@ -14,17 +14,8 @@ const (
 	forwardDialTimeout   = 50 * time.Millisecond
 )
 
-func (a *Adapter) Forward(
-	ctx context.Context,
-	host core.HostAlias,
-	target core.ForwardTarget,
-	ready func(),
-) error {
-	alias := string(host)
-	if !validAlias(alias) {
-		return backendError("invalid_alias")
-	}
-	master, err := a.ensureMaster(ctx, host)
+func (a *Adapter) Forward(ctx context.Context, target core.ForwardTarget, ready func()) error {
+	master, err := a.ensureMaster(ctx)
 	if err != nil {
 		return err
 	}
@@ -39,7 +30,7 @@ func (a *Adapter) Forward(
 	// Installation and cleanup must refer to the same transport generation.
 	// A reconnect may otherwise reuse the socket after ensureMaster returns.
 	a.mu.Lock()
-	if a.masters[host] != master {
+	if a.master != master {
 		a.mu.Unlock()
 		return backendError("transport_unavailable")
 	}
@@ -49,19 +40,19 @@ func (a *Adapter) Forward(
 		return master.failure()
 	default:
 	}
-	err = a.startForward(ctx, host, target.Direction, forward)
+	err = a.startForward(ctx, target.Direction, forward)
 	a.mu.Unlock()
 	if err != nil {
 		return err
 	}
-	defer a.cancelForward(host, master, forward)
+	defer a.cancelForward(master, forward)
 	switch target.Direction {
 	case core.RemoteToLocal:
 		if err := a.waitForLocalForward(ctx, master, target.LocalPort); err != nil {
 			return err
 		}
 	case core.LocalToRemote:
-		if err := a.verifyRemoteLoopbackForward(ctx, host, master, target.RemotePort); err != nil {
+		if err := a.verifyRemoteLoopbackForward(ctx, master, target.RemotePort); err != nil {
 			return err
 		}
 	}
@@ -83,20 +74,15 @@ func localLoopbackPortAvailable(port uint16) bool {
 	return true
 }
 
-func (a *Adapter) startForward(
-	ctx context.Context,
-	host core.HostAlias,
-	direction core.ForwardDirection,
-	forward controlForward,
-) error {
-	err := a.runControl(ctx, host, "forward", &forward)
+func (a *Adapter) startForward(ctx context.Context, direction core.ForwardDirection, forward controlForward) error {
+	err := a.runControl(ctx, "forward", &forward)
 	if err == nil {
 		return nil
 	}
 	// The mux client can report only a generic failure when OpenSSH cannot bind
 	// the requested endpoint. If the master is still healthy, classify the
 	// failure according to the endpoint owned by this direction.
-	if checkErr := a.runControl(ctx, host, "check", nil); checkErr == nil {
+	if checkErr := a.runControl(ctx, "check", nil); checkErr == nil {
 		if direction == core.LocalToRemote {
 			err = backendError("remote_port_unavailable")
 		} else {
@@ -109,25 +95,32 @@ func (a *Adapter) startForward(
 func controlForwardFor(target core.ForwardTarget) (controlForward, error) {
 	switch target.Direction {
 	case core.RemoteToLocal:
-		return controlForward{
-			flag: "-L",
-			spec: fmt.Sprintf("0.0.0.0:%d:127.0.0.1:%d", target.LocalPort, target.RemotePort),
-		}, nil
+		return controlForward{flag: "-L", spec: fmt.Sprintf("0.0.0.0:%d:127.0.0.1:%d", target.LocalPort, target.RemotePort)}, nil
 	case core.LocalToRemote:
-		return controlForward{
-			flag: "-R",
-			spec: fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", target.RemotePort, target.LocalPort),
-		}, nil
+		return controlForward{flag: "-R", spec: fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", target.RemotePort, target.LocalPort)}, nil
 	default:
 		return controlForward{}, backendError("invalid_forward_direction")
 	}
 }
 
 func (a *Adapter) waitForLocalForward(ctx context.Context, master *sshMaster, port uint16) error {
+	return a.awaitReady(ctx, master, "forward_start_timeout", func() bool {
+		conn, err := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", port), forwardDialTimeout)
+		if err != nil {
+			return false
+		}
+		_ = conn.Close()
+		return true
+	})
+}
+
+// Both a master and an imported listener become ready by polling, while
+// cancellation, transport exit, and the startup deadline remain authoritative.
+func (a *Adapter) awaitReady(ctx context.Context, master *sshMaster, diagnostic string, probe func() bool) error {
 	deadline := time.NewTimer(a.readyTimeout)
-	probe := time.NewTicker(forwardProbeInterval)
+	ticker := time.NewTicker(forwardProbeInterval)
 	defer deadline.Stop()
-	defer probe.Stop()
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -135,16 +128,11 @@ func (a *Adapter) waitForLocalForward(ctx context.Context, master *sshMaster, po
 		case <-master.done:
 			return master.failure()
 		case <-deadline.C:
-			return backendError("forward_start_timeout")
-		case <-probe.C:
-			connection, err := net.DialTimeout(
-				"tcp4", fmt.Sprintf("127.0.0.1:%d", port), forwardDialTimeout,
-			)
-			if err != nil {
-				continue
+			return backendError(diagnostic)
+		case <-ticker.C:
+			if probe() {
+				return nil
 			}
-			_ = connection.Close()
-			return nil
 		}
 	}
 }

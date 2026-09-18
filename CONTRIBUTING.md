@@ -16,7 +16,8 @@ Preview the latest CLI against the installed Manager with
 changed; full mode restores the installed Manager before it exits.
 
 The real OpenSSH path uses a disposable Linux container and never connects to
-a developer's configured hosts:
+a developer's configured hosts. The harness requires Python 3 and a local Docker
+Engine 28 or newer:
 
 ```bash
 ./scripts/test-integration

@@ -7,19 +7,12 @@ import (
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
-func (a *Adapter) Observe(ctx context.Context, host core.HostAlias, emit func([]core.Listener)) error {
-	alias := string(host)
-	if !validAlias(alias) {
-		return backendError("invalid_alias")
-	}
-	master, err := a.ensureMaster(ctx, host)
+func (a *Adapter) Observe(ctx context.Context, emit func([]core.Listener)) error {
+	master, err := a.ensureMaster(ctx)
 	if err != nil {
 		return err
 	}
-	arguments := append(a.masterClientArguments(host),
-		"-T", "-o", "ControlMaster=no",
-		alias, "sh", "-s",
-	)
+	arguments := append(a.masterClientArguments(), "-T", "-o", "ControlMaster=no", a.target, "sh", "-s")
 	command := a.command(arguments...)
 	stderr := &boundedBuffer{limit: maxStderrTailBytes}
 	stdout, err := command.StdoutPipe()

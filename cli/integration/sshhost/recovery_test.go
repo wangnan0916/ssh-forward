@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 	"github.com/wangnan0916/ssh-forward/cli/internal/openssh"
 )
@@ -26,9 +28,7 @@ import (
 func TestForwardsRecoverAfterSilentConnectionLoss(t *testing.T) {
 	environment := loadTestEnvironment(t)
 	output, err := exec.Command(environment.ssh, "-F", environment.config, "-G", environment.host).Output()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	hostname, port := "", ""
 	for _, line := range strings.Split(string(output), "\n") {
 		fields := strings.Fields(line)
@@ -42,28 +42,20 @@ func TestForwardsRecoverAfterSilentConnectionLoss(t *testing.T) {
 			port = fields[1]
 		}
 	}
-	if hostname == "" || port == "" {
-		t.Fatal("missing fixture SSH endpoint")
-	}
+	require.False(t, hostname == "" || port == "", "missing fixture SSH endpoint")
 	proxy, loseConnection := blackholeProxy(t, net.JoinHostPort(hostname, port))
 	baseConfig, err := os.ReadFile(environment.config)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	config := filepath.Join(t.TempDir(), "ssh-config")
 	// Explicitly disable user-config keepalives to prove the product's command
 	// options enforce recovery even when the user's SSH config does not.
 	prefix := fmt.Sprintf("Host %s\n Hostname 127.0.0.1\n Port %d\n HostKeyAlias [%s]:%s\n ServerAliveInterval 0\n ServerAliveCountMax 999\n", environment.host, proxy.Addr().(*net.TCPAddr).Port, hostname, port)
-	if err := os.WriteFile(config, append([]byte(prefix), baseConfig...), 0600); err != nil {
-		t.Fatal(err)
-	}
-	adapter, err := openssh.New(openssh.Options{Executable: environment.ssh, ConfigFile: config, ControlDirectory: environment.controlDirectory})
-	if err != nil {
-		t.Fatal(err)
-	}
-	remote := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_V4", 38080)
+	require.NoError(t, os.WriteFile(config, append([]byte(prefix), baseConfig...), 0600))
+	adapter, err := openssh.New(openssh.Options{Target: environment.host, Executable: environment.ssh, ConfigFile: config, ControlDirectory: environment.controlDirectory})
+	require.NoError(t, err)
+	remote := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_V4")
 	local := availableLocalPort(t)
-	published := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_REVERSE", 38085)
+	published := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_REVERSE")
 	service := startLocalEchoServer(t)
 	manager := core.NewManager(core.HostAlias(environment.host), adapter, core.ForwardingIntent{
 		RememberedForwards: []core.RememberedForward{{RemotePort: remote, LocalPort: local}},
@@ -88,9 +80,7 @@ func TestForwardsRecoverAfterSilentConnectionLoss(t *testing.T) {
 func blackholeProxy(t *testing.T, target string) (net.Listener, func()) {
 	t.Helper()
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var generation atomic.Int64
 	ctx, cancel := context.WithCancel(context.Background())
 	var workers sync.WaitGroup

@@ -8,8 +8,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
@@ -33,7 +31,7 @@ func (a *Adapter) configureCommand(command *exec.Cmd) {
 }
 
 func (a *Adapter) validateAlias(ctx context.Context, alias string) error {
-	if !validAlias(alias) {
+	if !core.ValidHostName(alias) {
 		return ErrInvalidAlias
 	}
 	arguments := append(a.configArguments(), "-G", alias)
@@ -90,18 +88,6 @@ func approvedEnvironment() []string {
 	}
 	slices.Sort(environment)
 	return environment
-}
-
-func validAlias(alias string) bool {
-	if len(alias) == 0 || len(alias) > core.MaxHostAliasLength || alias[0] == '-' || !utf8.ValidString(alias) {
-		return false
-	}
-	for _, character := range alias {
-		if unicode.IsSpace(character) || unicode.IsControl(character) {
-			return false
-		}
-	}
-	return true
 }
 
 type boundedBuffer struct {

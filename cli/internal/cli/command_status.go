@@ -5,39 +5,29 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/spf13/cobra"
-
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
 const statusSettleTimeout = 20 * time.Second
 
-func (a *App) statusCommand() *cobra.Command {
-	command := &cobra.Command{
-		Use: "status", Short: "show listeners and forwards for all hosts", Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if watch, _ := cmd.Flags().GetBool("watch"); watch {
-				return a.runWatch(cmd.Context(), jsonFlag(cmd))
-			}
-			status, err := a.readStatuses(cmd.Context())
-			if err != nil {
-				return err
-			}
-			if a.Options.Interactive && statusesConnecting(status) {
-				status, err = a.waitForSettledStatus(cmd.Context(), status)
-				if err != nil {
-					return err
-				}
-			}
-			if jsonFlag(cmd) {
-				return a.writeStatuses(status, true)
-			}
-			return a.writeStatuses(status, false)
-		},
+func (c *statusCommand) Run(a *App, ctx context.Context) error {
+	if err := a.ensureSession(ctx); err != nil {
+		return err
 	}
-	command.Flags().Bool("json", false, "emit JSON")
-	command.Flags().Bool("watch", false, "refresh until interrupted")
-	return grouped(groupDaily, command)
+	if c.Watch {
+		return a.runWatch(ctx, c.JSON)
+	}
+	statuses, err := a.readStatuses(ctx)
+	if err != nil {
+		return err
+	}
+	if a.Options.Interactive && statusesConnecting(statuses) {
+		statuses, err = a.waitForSettledStatus(ctx, statuses)
+		if err != nil {
+			return err
+		}
+	}
+	return a.writeStatuses(statuses, c.JSON)
 }
 
 func (a *App) waitForSettledStatus(ctx context.Context, initial []core.Status) ([]core.Status, error) {

@@ -2,12 +2,13 @@ package statusview
 
 import (
 	"bytes"
-	"github.com/charmbracelet/x/ansi"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
-	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/stretchr/testify/require"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
@@ -45,198 +46,87 @@ AVAILABLE
  7897  verge-mihomo  /home/shampoo
 33331  clash-verge   /home/shampoo
 `
-	if output != want {
-		t.Fatalf("output:\n%s\nwant:\n%s", output, want)
-	}
+	require.EqualValuesf(t, want, output, "output:\n%s\nwant:\n%s", output, want)
 }
 
-func TestRenderFitsWorkingDirectoryToWidth(t *testing.T) {
-	status := core.Status{
-		Host:      "dev",
-		Discovery: core.DiscoveryStatus{State: core.DiscoveryActive},
-		Listeners: []core.Listener{{
-			Port: 12000, App: "node",
-			WorkingDirectory: "/home/shampoo/Workspace/nears/worktrees/feature/console.cli.im",
-		}},
-	}
-	output := renderStatus(t, status, Options{Width: 48})
-	requireMaxWidth(t, output, 48)
-	if !strings.Contains(output, "…") || !strings.Contains(output, "console.cli.im") {
-		t.Fatalf("output does not preserve the final path segment: %q", output)
-	}
-}
-
-func TestRenderMissingMetadataPlaceholders(t *testing.T) {
-	status := core.Status{
-		Host:      "dev",
-		Discovery: core.DiscoveryStatus{State: core.DiscoveryActive},
-		Listeners: []core.Listener{
-			{Port: 3000, App: "node"},
-			{Port: 4000, WorkingDirectory: "/workspace"},
-		},
-	}
-	output := renderStatus(t, status, Options{})
-	for _, row := range []string{
-		" 3000  node  —",
-		" 4000  —     /workspace",
-	} {
-		if !strings.Contains(output, row) {
-			t.Fatalf("output = %q, missing %q", output, row)
-		}
-	}
-}
-
-func TestRenderForwardStatesAndDiagnostics(t *testing.T) {
-	status := core.Status{
-		Host:      "dev",
-		Discovery: core.DiscoveryStatus{State: core.DiscoveryFailed, Diagnostic: "authentication_failed"},
-		Forwards: []core.ForwardStatus{
-			{RemotePort: 3000, LocalPort: 13000, State: core.ForwardStarting},
-			{RemotePort: 8080, LocalPort: 8080, State: core.ForwardFailed, Diagnostic: "local_port_conflict", Automatic: true},
-		},
-	}
-	output := renderStatus(t, status, Options{})
-	for _, text := range []string{
-		"Discovery  failed",
-		"Discovery detail  SSH authentication failed.",
-		"STARTING",
-		"3000  0.0.0.0:13000  remembered",
-		"NEEDS ATTENTION",
-		"8080  0.0.0.0:8080  automatic  the same local port is already in use",
-	} {
-		if !strings.Contains(output, text) {
-			t.Fatalf("output = %q, missing %q", output, text)
-		}
-	}
-}
-
-func TestRenderShowsActualAndPreferredFallbackPorts(t *testing.T) {
-	status := core.Status{
-		Host:      "dev",
-		Discovery: core.DiscoveryStatus{State: core.DiscoveryActive},
-		Forwards: []core.ForwardStatus{{
-			RemotePort: 3000, PreferredLocalPort: 3000, LocalPort: 3001,
-			State: core.ForwardActive, AllowFallback: true,
-		}},
-	}
-	output := renderStatus(t, status, Options{})
-	if !strings.Contains(output, "0.0.0.0:3001 (preferred 3000)") {
-		t.Fatalf("output = %q", output)
-	}
-}
-
-func TestRenderSeparatesPublishedForwardsWithoutRemoteMetadataOrHyperlinks(t *testing.T) {
-	status := core.Status{
-		Host:      "dev",
-		Discovery: core.DiscoveryStatus{State: core.DiscoveryActive},
-		Listeners: []core.Listener{{
-			Port: 19222, App: "sshd", WorkingDirectory: "/should/not/appear",
-		}},
-		Forwards: []core.ForwardStatus{
-			{
-				Direction: core.LocalToRemote, LocalPort: 9222,
-				PreferredRemotePort: 19222, RemotePort: 19222,
-				State: core.ForwardActive,
+func TestRenderStatusFeatures(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		status           core.Status
+		options          Options
+		contains, absent []string
+	}{
+		{name: "narrow paths", status: core.Status{Listeners: []core.Listener{{Port: 12000, App: "node", WorkingDirectory: "/home/shampoo/Workspace/nears/worktrees/feature/console.cli.im"}}}, options: Options{Width: 48}, contains: []string{"…", "console.cli.im"}},
+		{name: "missing metadata", status: core.Status{Listeners: []core.Listener{{Port: 3000, App: "node"}, {Port: 4000, WorkingDirectory: "/workspace"}}}, contains: []string{" 3000  node  —", " 4000  —     /workspace"}},
+		{name: "diagnostics", status: core.Status{
+			Discovery: core.DiscoveryStatus{State: core.DiscoveryFailed, Diagnostic: "authentication_failed"},
+			Forwards:  []core.ForwardStatus{{RemotePort: 3000, LocalPort: 13000, State: core.ForwardStarting}, {RemotePort: 8080, LocalPort: 8080, State: core.ForwardFailed, Diagnostic: "local_port_conflict", Automatic: true}},
+		}, contains: []string{"Discovery  failed", "Discovery detail  SSH authentication failed.", "STARTING", "3000  0.0.0.0:13000  remembered", "NEEDS ATTENTION", "8080  0.0.0.0:8080  automatic  the same local port is already in use"}},
+		{name: "fallback", status: core.Status{Forwards: []core.ForwardStatus{{RemotePort: 3000, PreferredLocalPort: 3000, LocalPort: 3001, State: core.ForwardActive, AllowFallback: true}}}, contains: []string{"0.0.0.0:3001 (preferred 3000)"}},
+		{name: "published", status: core.Status{
+			Listeners: []core.Listener{{Port: 19222, App: "sshd", WorkingDirectory: "/should/not/appear"}},
+			Forwards: []core.ForwardStatus{
+				{Direction: core.LocalToRemote, LocalPort: 9222, PreferredRemotePort: 19222, RemotePort: 19222, State: core.ForwardActive},
+				{Direction: core.LocalToRemote, LocalPort: 9333, PreferredRemotePort: 19333, RemotePort: 19333, State: core.ForwardFailed, Diagnostic: "remote_port_unavailable"},
 			},
-			{
-				Direction: core.LocalToRemote, LocalPort: 9333,
-				PreferredRemotePort: 19333, RemotePort: 19333,
-				State: core.ForwardFailed, Diagnostic: "remote_port_unavailable",
-			},
-		},
-	}
-	output := renderStatus(t, status, Options{Hyperlinks: true})
-	for _, text := range []string{
-		"PUBLISHED",
-		"LOCAL  REMOTE TARGET    KIND",
-		" 9222  127.0.0.1:19222  published",
-		"PUBLISH NEEDS ATTENTION",
-		"9333  127.0.0.1:19333  published  the Development Host port could not be opened",
+		}, options: Options{Hyperlinks: true}, contains: []string{"PUBLISHED", "LOCAL  REMOTE TARGET    KIND", " 9222  127.0.0.1:19222  published", "PUBLISH NEEDS ATTENTION", "9333  127.0.0.1:19333  published  the Development Host port could not be opened"}, absent: []string{"/should/not/appear", "http://127.0.0.1:19222"}},
+		{name: "empty", contains: []string{"No loopback TCP listeners found."}},
 	} {
-		if !strings.Contains(output, text) {
-			t.Fatalf("output = %q, missing %q", output, text)
-		}
-	}
-	if strings.Contains(output, "/should/not/appear") || strings.Contains(output, "http://127.0.0.1:19222") {
-		t.Fatalf("published output leaked listener metadata or a hyperlink: %q", output)
-	}
-}
-
-func TestRenderColorIsExplicit(t *testing.T) {
-	status := core.Status{
-		Host:      "dev",
-		Discovery: core.DiscoveryStatus{State: core.DiscoveryActive},
-		Listeners: []core.Listener{
-			{Port: 3000, App: "node", WorkingDirectory: "/workspace/app"},
-			{Port: 8080, App: "api", WorkingDirectory: "/workspace/api"},
-		},
-		Forwards: []core.ForwardStatus{{RemotePort: 3000, LocalPort: 13000, State: core.ForwardActive}},
-	}
-	plain := renderStatus(t, status, Options{})
-	colored := renderStatus(t, status, Options{Color: true})
-	if !strings.Contains(colored, "\x1b[") {
-		t.Fatalf("styled output contains no ANSI sequences: %q", colored)
-	}
-
-	ansiPattern := regexp.MustCompile(`\x1b\[[0-9;]*m`)
-	if got := ansiPattern.ReplaceAllString(colored, ""); got != plain {
-		t.Fatalf("styled output changed content:\n%s\nwant:\n%s", got, plain)
-	}
-	codes := make(map[string]struct{})
-	for _, code := range ansiPattern.FindAllString(colored, -1) {
-		codes[code] = struct{}{}
-	}
-	if len(codes) < 8 {
-		t.Fatalf("distinct ANSI styles = %d, want semantic palette: %q", len(codes), colored)
+		t.Run(tc.name, func(t *testing.T) {
+			output := renderStatus(t, tc.status, tc.options)
+			for _, text := range tc.contains {
+				require.Contains(t, output, text)
+			}
+			for _, text := range tc.absent {
+				require.NotContains(t, output, text)
+			}
+			if tc.options.Width > 0 {
+				requireMaxWidth(t, output, tc.options.Width)
+			}
+		})
 	}
 }
 
-func TestRenderHyperlinksActiveForwardTargets(t *testing.T) {
+func TestRenderTerminalCapabilitiesAreExplicit(t *testing.T) {
 	status := core.Status{
-		Host:      "dev",
-		Discovery: core.DiscoveryStatus{State: core.DiscoveryActive},
+		Listeners: []core.Listener{{Port: 3000, App: "node", WorkingDirectory: "/workspace/app"}, {Port: 8080, App: "api", WorkingDirectory: "/workspace/api"}},
 		Forwards: []core.ForwardStatus{
 			{RemotePort: 3000, LocalPort: 13000, State: core.ForwardActive},
 			{RemotePort: 4000, LocalPort: 14000, State: core.ForwardStarting},
 			{RemotePort: 5000, LocalPort: 15000, State: core.ForwardFailed, Diagnostic: "local_port_conflict"},
 		},
 	}
-	output := renderStatus(t, status, Options{Width: 80, Color: true, Hyperlinks: true})
-	link := "\x1b]8;;http://127.0.0.1:13000\x1b\\0.0.0.0:13000\x1b]8;;\x1b\\"
-	if !strings.Contains(output, link) {
-		t.Fatalf("output = %q, missing active forward hyperlink %q", output, link)
-	}
+	plain := renderStatus(t, status, Options{})
+	colored := renderStatus(t, status, Options{Color: true})
+	require.Equal(t, plain, ansi.Strip(colored))
+	codes := regexp.MustCompile(`\x1b\[[0-9;]*m`).FindAllString(colored, -1)
+	slices.Sort(codes)
+	require.GreaterOrEqual(t, len(slices.Compact(codes)), 8, "semantic palette")
+	linked := renderStatus(t, status, Options{Width: 80, Color: true, Hyperlinks: true})
+	require.Contains(t, linked, "\x1b]8;;http://127.0.0.1:13000\x1b\\0.0.0.0:13000\x1b]8;;\x1b\\")
 	for _, port := range []string{"14000", "15000"} {
-		if strings.Contains(output, "http://127.0.0.1:"+port) {
-			t.Fatalf("output unexpectedly links inactive forward %s: %q", port, output)
-		}
+		require.NotContains(t, linked, "http://127.0.0.1:"+port)
 	}
-	requireMaxWidth(t, output, 80)
-}
-
-func TestRenderEmptyActiveDiscovery(t *testing.T) {
-	status := core.Status{Host: "dev", Discovery: core.DiscoveryStatus{State: core.DiscoveryActive}}
-	output := renderStatus(t, status, Options{})
-	if !strings.Contains(output, "No loopback TCP listeners found.") {
-		t.Fatalf("output = %q", output)
-	}
+	requireMaxWidth(t, linked, 80)
 }
 
 func renderStatus(t *testing.T, status core.Status, options Options) string {
 	t.Helper()
-	var output bytes.Buffer
-	if err := Render(&output, status, options); err != nil {
-		t.Fatal(err)
+	if status.Host == "" {
+		status.Host = "dev"
 	}
+	if status.Discovery.State == "" {
+		status.Discovery.State = core.DiscoveryActive
+	}
+	var output bytes.Buffer
+	require.NoError(t, Render(&output, status, options))
 	return output.String()
 }
 
-func requireMaxWidth(t *testing.T, output string, maxWidth int) {
+func requireMaxWidth(t *testing.T, output string, width int) {
 	t.Helper()
-	for _, line := range strings.Split(strings.TrimSuffix(output, "\n"), "\n") {
-		if width := lipgloss.Width(line); width > maxWidth {
-			t.Fatalf("line width = %d, want <= %d: %q", width, maxWidth, line)
-		}
+	for _, line := range strings.Split(output, "\n") {
+		require.LessOrEqual(t, ansi.StringWidth(line), width, "%q", line)
 	}
 }
 

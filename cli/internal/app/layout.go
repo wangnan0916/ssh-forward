@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"os"
 	"path/filepath"
 )
@@ -12,19 +13,13 @@ type Layout struct {
 	Socket string
 }
 
-// DefaultLayout resolves the product directory per cli-and-state.md:
-// SSH_FORWARD_CONFIG_DIR overrides it, then the platform application-support
-// locations.
+// DefaultLayout uses SSH_FORWARD_CONFIG_DIR or the platform config directory.
 func DefaultLayout() Layout {
 	return layoutForDir(configDir())
 }
 
 func layoutForDir(dir string) Layout {
-	return Layout{
-		Dir:    dir,
-		Config: filepath.Join(dir, "config.jsonc"),
-		Socket: filepath.Join(dir, "manager.sock"),
-	}
+	return Layout{Dir: dir, Config: filepath.Join(dir, "config.jsonc"), Socket: filepath.Join(dir, "manager.sock")}
 }
 
 func configDir() string {
@@ -50,8 +45,5 @@ func DefaultSSHConfigPath() string {
 
 // SSHConfigPath returns flag when set, otherwise DefaultSSHConfigPath.
 func SSHConfigPath(flag string) string {
-	if flag != "" {
-		return flag
-	}
-	return DefaultSSHConfigPath()
+	return cmp.Or(flag, DefaultSSHConfigPath())
 }

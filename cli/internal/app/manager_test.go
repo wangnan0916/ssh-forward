@@ -7,7 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/require"
+
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
@@ -18,12 +19,8 @@ type fixedManager struct {
 
 func TestServiceConfigIsUserScopedAndAutomatic(t *testing.T) {
 	config, err := serviceConfig(Options{Layout: Layout{Dir: t.TempDir()}}, "dev", func() {})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if diff := cmp.Diff([]string{"manager", "serve", "--host", "dev"}, config.Arguments); diff != "" {
-		t.Fatalf("service arguments mismatch (-want +got):\n%s", diff)
-	}
+	require.NoError(t, err)
+	require.Equal(t, []string{"manager", "serve", "--host", "dev"}, config.Arguments)
 	for _, option := range []string{"UserService", "KeepAlive", "RunAtLoad"} {
 		if enabled, _ := config.Option[option].(bool); !enabled {
 			t.Fatalf("%s is not enabled", option)
@@ -42,9 +39,7 @@ func TestManagerIPCRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "manager.sock")
 	listener, err := listenManager(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	configPath := writeConfigFile(t, `{"schema_version":5,"default_host":"dev","remembered_forwards":{"dev":[{"remote_port":3000}]}}`)
 	pool := &managerPool{configPath: configPath, managers: make(map[string]core.Manager),
 		createTarget: func(host string, _ HostTarget, intent core.ForwardingIntent) (core.Manager, error) {
@@ -55,41 +50,23 @@ func TestManagerIPCRoundTrip(t *testing.T) {
 	t.Cleanup(func() { _ = server.Close(); _ = pool.Close(ctx) })
 	opts := Options{Layout: Layout{Dir: filepath.Dir(path), Socket: path}, ConfigPath: configPath, Version: "test-version", HostFlag: "user@other"}
 	session, err := Connect(ctx, opts)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer session.Close(ctx)
 	all, err := session.AllStatuses(ctx)
-	if err != nil || len(all) != 2 || all[0].Host != "dev" || all[1].Host != "user@other" {
-		t.Fatalf("all statuses: %+v, %v", all, err)
-	}
+	require.Falsef(t, err != nil || len(all) != 2 || all[0].Host != "dev" || all[1].Host != "user@other", "all statuses: %+v, %v", all, err)
 	dev := pool.lookup("dev").(*fixedManager)
 	original := dev.intent
-	if _, err := SetRememberedForward(configPath, "user@other", core.RememberedForward{RemotePort: 8080}); err != nil {
+	if _, err := EditRememberedForward(configPath, "user@other", &core.RememberedForward{RemotePort: 8080}, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.Reload(ctx, ""); err != nil {
-		t.Fatal(err)
-	}
-	if diff := cmp.Diff(original, dev.intent); diff != "" {
-		t.Fatalf("other host changed dev: %s", diff)
-	}
+	require.NoError(t, session.Reload(ctx, ""))
+	require.Equal(t, original, dev.intent)
 	other := pool.lookup("user@other").(*fixedManager)
-	if len(other.intent.RememberedForwards) != 1 || other.intent.RememberedForwards[0].RemotePort != 8080 {
-		t.Fatalf("configuration not reloaded: %+v", other.intent)
-	}
-	if err := session.Reload(ctx, "-invalid"); err == nil {
-		t.Fatal("invalid host accepted")
-	}
-	if err := writeTextFile(configPath, `{"schema_version":`); err != nil {
-		t.Fatal(err)
-	}
-	if err := session.Reload(ctx, ""); err == nil {
-		t.Fatal("invalid config accepted")
-	}
-	if pool.lookup("dev") != dev {
-		t.Fatal("failed reload replaced runtime")
-	}
+	require.Falsef(t, len(other.intent.RememberedForwards) != 1 || other.intent.RememberedForwards[0].RemotePort != 8080, "configuration not reloaded: %+v", other.intent)
+	require.Error(t, session.Reload(ctx, "-invalid"), "invalid host accepted")
+	require.NoError(t, writeTextFile(configPath, `{"schema_version":`))
+	require.Error(t, session.Reload(ctx, ""), "invalid config accepted")
+	require.EqualValues(t, dev, pool.lookup("dev"), "failed reload replaced runtime")
 	if _, err := dialManager(ctx, path, "other-version"); !errors.Is(err, ErrIncompatibleManager) {
 		t.Fatalf("version mismatch: %v", err)
 	}

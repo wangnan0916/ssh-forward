@@ -1,6 +1,8 @@
 package cli
 
-import "encoding/json"
+import (
+	"encoding/json"
+)
 
 func (a *App) writeJSON(value any) error {
 	return json.NewEncoder(a.Options.Stdout).Encode(value)

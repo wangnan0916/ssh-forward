@@ -57,7 +57,7 @@ func managerHandler(pool *managerPool, version string) http.Handler {
 			_ = json.NewEncoder(w).Encode(managerAllStatus{ProtocolVersion: managerProtocolVersion, ManagerVersion: version, Hosts: statuses})
 		case r.Method == http.MethodPost && r.URL.Path == managerReloadPath:
 			host := r.URL.Query().Get("host")
-			if host != "" && !validTargetName(host) {
+			if host != "" && !core.ValidHostName(host) {
 				http.Error(w, "invalid host", http.StatusBadRequest)
 				return
 			}

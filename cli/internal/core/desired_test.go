@@ -3,13 +3,11 @@ package core
 import (
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBuildDesiredForwardsCombinesPersistentAndDiscoveredIntent(t *testing.T) {
-	remembered := RememberedForward{
-		RemotePort: 3000, LocalPort: 13000, AllowFallback: true,
-	}
+	remembered := RememberedForward{RemotePort: 3000, LocalPort: 13000, AllowFallback: true}
 	published := PublishedForward{LocalPort: 9222, RemotePort: 19222}
 	got := buildDesiredForwards(
 		[]RememberedForward{remembered},
@@ -22,12 +20,6 @@ func TestBuildDesiredForwardsCombinesPersistentAndDiscoveredIntent(t *testing.T)
 		},
 		[]string{"/workspace/**"},
 	)
-	want := desiredForwardMap(
-		desiredRememberedForward(remembered),
-		desiredAutomaticForward(5173),
-		desiredPublishedForward(published),
-	)
-	if diff := cmp.Diff(want, got, cmp.AllowUnexported(desiredForward{}, forwardKey{})); diff != "" {
-		t.Fatalf("desired forwards mismatch (-want +got):\n%s", diff)
-	}
+	want := desiredForwardMap(desiredRememberedForward(remembered), desiredAutomaticForward(5173), desiredPublishedForward(published))
+	require.Equal(t, want, got)
 }

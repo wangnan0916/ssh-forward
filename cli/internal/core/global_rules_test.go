@@ -1,18 +1,16 @@
 package core
 
 import (
-	"context"
 	"testing"
 	"time"
 )
 
 func TestGlobalPortRuleFollowsListenerLifecycle(t *testing.T) {
 	backend := newFakeBackend()
-	manager := newManager(managerOptions{host: "dev", backend: backend, retryDelay: time.Millisecond, intent: ForwardingIntent{
+	manager := testManager(t, backend, ForwardingIntent{
 		AutoForwards:       []RememberedForward{{RemotePort: 8080, LocalPort: 18080}},
 		RememberedForwards: []RememberedForward{{RemotePort: 3000}},
-	}})
-	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	}, time.Millisecond)
 	eventually(t, func() bool { return len(managerStatus(t, manager).Forwards) == 1 })
 	backend.listeners <- []Listener{{Port: 8080}}
 	eventually(t, func() bool {

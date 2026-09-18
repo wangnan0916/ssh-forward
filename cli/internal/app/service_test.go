@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
 	"github.com/kardianos/service"
+	"github.com/stretchr/testify/require"
 )
 
 type fakeManagerService struct {
@@ -14,73 +14,37 @@ type fakeManagerService struct {
 	events    []string
 }
 
-func (s *fakeManagerService) Status() (service.Status, error) {
-	return s.status, s.statusErr
-}
-
-func (s *fakeManagerService) Stop() error {
-	s.events = append(s.events, "stop")
+func (s *fakeManagerService) Status() (service.Status, error) { return s.status, s.statusErr }
+func (s *fakeManagerService) record(event string) error {
+	s.events = append(s.events, event)
 	return nil
 }
+func (s *fakeManagerService) Stop() error      { return s.record("stop") }
+func (s *fakeManagerService) Start() error     { return s.record("start") }
+func (s *fakeManagerService) Install() error   { return s.record("install") }
+func (s *fakeManagerService) Uninstall() error { return s.record("uninstall") }
 
-func (s *fakeManagerService) Uninstall() error {
-	s.events = append(s.events, "uninstall")
-	return nil
-}
-
-func (s *fakeManagerService) Start() error {
-	s.events = append(s.events, "start")
-	return nil
-}
-
-func (s *fakeManagerService) Install() error {
-	s.events = append(s.events, "install")
-	return nil
-}
-
-func TestEnsureServiceInstallsAndStartsMissingManager(t *testing.T) {
-	svc := &fakeManagerService{statusErr: service.ErrNotInstalled}
-	if err := ensureService(svc, Layout{Dir: t.TempDir()}); err != nil {
-		t.Fatal(err)
+func TestServiceLifecycle(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		missing bool
+		run     func(*fakeManagerService, Layout) error
+		events  []string
+	}{
+		{"install", true, func(s *fakeManagerService, l Layout) error { return ensureService(s, l) }, []string{"install", "start"}},
+		{"replace", false, func(s *fakeManagerService, l Layout) error { return reinstallService(s, l) }, []string{"stop", "uninstall", "install", "start"}},
+		{"uninstall", false, func(s *fakeManagerService, l Layout) error { return uninstallService(s, l) }, []string{"stop", "uninstall"}},
+		{"idempotent uninstall", true, func(s *fakeManagerService, l Layout) error { return uninstallService(s, l) }, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &fakeManagerService{status: service.StatusRunning}
+			if tc.missing {
+				svc.statusErr = service.ErrNotInstalled
+			}
+			require.NoError(t, tc.run(svc, Layout{Dir: t.TempDir()}))
+			require.Equal(t, tc.events, svc.events)
+		})
 	}
-	wantServiceEvents(t, svc.events, "install", "start")
-}
-
-func TestReinstallServiceReplacesRunningManager(t *testing.T) {
-	svc := &fakeManagerService{status: service.StatusRunning}
-	if err := reinstallService(svc, Layout{Dir: t.TempDir()}); err != nil {
-		t.Fatal(err)
-	}
-	wantServiceEvents(t, svc.events, "stop", "uninstall", "install", "start")
-}
-
-func TestUninstallServiceStopsRunningManager(t *testing.T) {
-	svc := &fakeManagerService{status: service.StatusRunning}
-	if err := uninstallService(svc, Layout{Dir: t.TempDir()}); err != nil {
-		t.Fatal(err)
-	}
-	wantServiceEvents(t, svc.events, "stop", "uninstall")
-}
-
-func TestUninstallServiceIsIdempotent(t *testing.T) {
-	svc := &fakeManagerService{statusErr: service.ErrNotInstalled}
-	if err := uninstallService(svc, Layout{Dir: t.TempDir()}); err != nil {
-		t.Fatal(err)
-	}
-	wantServiceEvents(t, svc.events)
-}
-
-func TestUninstallServiceReportsStatusFailure(t *testing.T) {
-	want := errors.New("status unavailable")
-	svc := &fakeManagerService{statusErr: want}
-	if err := uninstallService(svc, Layout{Dir: t.TempDir()}); !errors.Is(err, want) {
-		t.Fatalf("error = %v, want %v", err, want)
-	}
-}
-
-func wantServiceEvents(t *testing.T, got []string, want ...string) {
-	t.Helper()
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Fatalf("service events mismatch (-want +got):\n%s", diff)
-	}
+	unavailable := errors.New("status unavailable")
+	require.ErrorIs(t, uninstallService(&fakeManagerService{statusErr: unavailable}, Layout{Dir: t.TempDir()}), unavailable)
 }

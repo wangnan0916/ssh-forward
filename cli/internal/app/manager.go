@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -41,16 +42,10 @@ func (o Options) WithDefaults() Options {
 		o.Layout = DefaultLayout()
 	} else {
 		filled := layoutForDir(o.Layout.Dir)
-		if o.Layout.Config == "" {
-			o.Layout.Config = filled.Config
-		}
-		if o.Layout.Socket == "" {
-			o.Layout.Socket = filled.Socket
-		}
+		o.Layout.Config = cmp.Or(o.Layout.Config, filled.Config)
+		o.Layout.Socket = cmp.Or(o.Layout.Socket, filled.Socket)
 	}
-	if o.ConfigPath == "" {
-		o.ConfigPath = o.Layout.Config
-	}
+	o.ConfigPath = cmp.Or(o.ConfigPath, o.Layout.Config)
 	if o.Stderr == nil {
 		o.Stderr = io.Discard
 	}

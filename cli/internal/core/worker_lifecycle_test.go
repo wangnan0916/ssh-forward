@@ -5,24 +5,18 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestRemoveFailedForwardDoesNotWaitForRetry(t *testing.T) {
 	backend := newFakeBackend()
 	backend.forwardError = func(ForwardTarget) error { return errors.New("offline") }
-	manager := newManager(managerOptions{host: "dev", backend: backend, retryDelay: 30 * time.Second,
-		intent: ForwardingIntent{RememberedForwards: []RememberedForward{{RemotePort: 8080}}}})
-	t.Cleanup(func() {
-		if err := manager.Close(context.Background()); err != nil {
-			t.Error(err)
-		}
-	})
+	manager := testManager(t, backend, ForwardingIntent{RememberedForwards: []RememberedForward{{RemotePort: 8080}}}, 30*time.Second)
 	eventually(t, func() bool {
 		states := managerStatus(t, manager).Forwards
 		return len(states) == 1 && states[0].State == ForwardFailed
 	})
-	if err := manager.UpdateIntent(context.Background(), ForwardingIntent{}); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, manager.UpdateIntent(context.Background(), ForwardingIntent{}))
 	eventually(t, func() bool { return len(managerStatus(t, manager).Forwards) == 0 })
 }
