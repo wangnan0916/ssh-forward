@@ -36,7 +36,22 @@ func (a *Adapter) Forward(
 		a.localPortAvailable != nil && !a.localPortAvailable(target.LocalPort) {
 		return backendError("local_port_conflict")
 	}
-	if err := a.startForward(ctx, host, target.Direction, forward); err != nil {
+	// Installation and cleanup must refer to the same transport generation.
+	// A reconnect may otherwise reuse the socket after ensureMaster returns.
+	a.mu.Lock()
+	if a.masters[host] != master {
+		a.mu.Unlock()
+		return backendError("transport_unavailable")
+	}
+	select {
+	case <-master.done:
+		a.mu.Unlock()
+		return master.failure()
+	default:
+	}
+	err = a.startForward(ctx, host, target.Direction, forward)
+	a.mu.Unlock()
+	if err != nil {
 		return err
 	}
 	defer a.cancelForward(host, master, forward)

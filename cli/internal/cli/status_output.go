@@ -49,7 +49,7 @@ type publishedForwardJSONOutput struct {
 	Kind                string                `json:"kind"`
 }
 
-func (a *App) writeStatusJSON(status core.Status) error {
+func statusJSON(status core.Status) statusJSONOutput {
 	var forwards []any
 	if status.Forwards != nil {
 		forwards = make([]any, len(status.Forwards))
@@ -57,11 +57,39 @@ func (a *App) writeStatusJSON(status core.Status) error {
 			forwards[index] = forwardJSONStatus(forward)
 		}
 	}
-	return a.writeJSON(statusJSONOutput{
+	return statusJSONOutput{
 		Host: status.Host, Discovery: status.Discovery,
 		Listeners: status.Listeners, Forwards: forwards,
 		WorkingDirectoryRules: status.WorkingDirectoryRules,
-	})
+	}
+}
+
+func (a *App) writeStatuses(statuses []core.Status, jsonOutput bool) error {
+	if jsonOutput {
+		if a.Options.HostFlag != "" && len(statuses) == 1 {
+			return a.writeJSON(statusJSON(statuses[0]))
+		}
+		output := make([]statusJSONOutput, 0, len(statuses))
+		for _, status := range statuses {
+			output = append(output, statusJSON(status))
+		}
+		return a.writeJSON(output)
+	}
+	if len(statuses) == 0 {
+		_, err := fmt.Fprintln(a.Options.Stdout, "No hosts are managed.")
+		return err
+	}
+	for index, status := range statuses {
+		if index > 0 {
+			if _, err := fmt.Fprintln(a.Options.Stdout); err != nil {
+				return err
+			}
+		}
+		if err := a.writeStatusHuman(status); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func forwardJSONStatus(forward core.ForwardStatus) any {
@@ -100,10 +128,10 @@ func forwardJSONStatus(forward core.ForwardStatus) any {
 func (a *App) runWatch(ctx context.Context, jsonOutput bool) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-	var previous core.Status
+	var previous []core.Status
 	first := true
 	for {
-		status, err := a.Manager.Status(ctx)
+		status, err := a.readStatuses(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -114,11 +142,7 @@ func (a *App) runWatch(ctx context.Context, jsonOutput bool) error {
 			if !first && !jsonOutput {
 				fmt.Fprintln(a.Options.Stdout)
 			}
-			if jsonOutput {
-				err = a.writeStatusJSON(status)
-			} else {
-				err = a.writeStatusHuman(status)
-			}
+			err = a.writeStatuses(status, jsonOutput)
 			if err != nil {
 				return err
 			}

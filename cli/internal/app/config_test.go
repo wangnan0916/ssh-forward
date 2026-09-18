@@ -1,7 +1,6 @@
 package app
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -31,7 +30,7 @@ func TestLoadConfigDefaultHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	if config.DefaultHost != "development" {
+	if config.DefaultHost != "" || config.Hosts["development"].Target != "development" {
 		t.Fatalf("DefaultHost = %q, want development", config.DefaultHost)
 	}
 }
@@ -44,7 +43,7 @@ func TestLoadConfigRejectsUnknownFields(t *testing.T) {
 }
 
 func TestLoadConfigRejectsUnsupportedSchema(t *testing.T) {
-	path := writeConfigFile(t, `{"schema_version": 6, "default_host": "development"}`)
+	path := writeConfigFile(t, `{"schema_version": 7, "default_host": "development"}`)
 	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "schema_version") {
 		t.Fatalf("LoadConfig err = %v, want a schema rejection", err)
 	}
@@ -67,7 +66,7 @@ func TestWorkingDirectoryRuleMutationsPreserveHostAndUpgradeSchema(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.SchemaVersion != 5 || config.DefaultHost != "dev" ||
+	if config.SchemaVersion != configSchemaVersion || config.DefaultHost != "" || config.Hosts["dev"].Target != "dev" ||
 		len(config.WorkingDirectoryRules["dev"]) != 1 || config.WorkingDirectoryRules["dev"][0] != "/workspace/**" ||
 		config.WorkingDirectoryRules["other"][0] != "/srv/**" {
 		t.Fatalf("config = %#v", config)
@@ -99,24 +98,9 @@ func TestLoadConfigMissingFile(t *testing.T) {
 	}
 }
 
-func TestPinnedHost(t *testing.T) {
-	path := writeConfigFile(t, `{"schema_version": 1, "default_host": "ubuntu"}`)
-	host, err := PinnedHost(path)
-	if err != nil || host != "ubuntu" {
-		t.Fatalf("PinnedHost = %q, %v; want ubuntu", host, err)
-	}
-	if _, err := PinnedHost(filepath.Join(t.TempDir(), "absent.jsonc")); !errors.Is(err, ErrNoHost) {
-		t.Fatalf("missing file err = %v, want ErrNoHost", err)
-	}
-	empty := writeConfigFile(t, `{"schema_version": 1}`)
-	if _, err := PinnedHost(empty); !errors.Is(err, ErrNoHost) {
-		t.Fatalf("empty default err = %v, want ErrNoHost", err)
-	}
-}
-
 func TestForwardMutationsPreserveHostAndOtherForwards(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.jsonc")
-	if err := SetDefaultHost(path, "dev"); err != nil {
+	if err := writeTextFile(path, `{"schema_version":5,"default_host":"dev"}`); err != nil {
 		t.Fatal(err)
 	}
 	for _, forward := range []core.RememberedForward{
@@ -141,7 +125,7 @@ func TestForwardMutationsPreserveHostAndOtherForwards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.DefaultHost != "dev" ||
+	if config.DefaultHost != "" || config.Hosts["dev"].Target != "dev" ||
 		len(config.RememberedForwards["dev"]) != 1 ||
 		config.RememberedForwards["dev"][0] != (core.RememberedForward{RemotePort: 8080, LocalPort: 28080}) ||
 		config.RememberedForwards["other"][0] != (core.RememberedForward{RemotePort: 3000, LocalPort: 13000}) {
@@ -189,7 +173,7 @@ func TestLoadConfigMigratesSchemaThreePortPolicies(t *testing.T) {
 }
 
 func TestLoadConfigIgnoresPublishedForwardsBeforeSchemaFive(t *testing.T) {
-	for schema := 1; schema < configSchemaVersion; schema++ {
+	for schema := 1; schema < 5; schema++ {
 		t.Run("schema "+strconv.Itoa(schema), func(t *testing.T) {
 			path := writeConfigFile(t, `{
 				"schema_version": `+strconv.Itoa(schema)+`,
@@ -281,7 +265,7 @@ func TestPublishedForwardMutationsDefaultRemotePortAndPreserveOtherHosts(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.SchemaVersion != 5 {
+	if config.SchemaVersion != configSchemaVersion {
 		t.Fatalf("config = %#v", config)
 	}
 	wantPublished := map[string][]core.PublishedForward{
@@ -352,27 +336,77 @@ func TestPublishedForwardAllowsFallbackRememberedPortReservation(t *testing.T) {
 	}
 }
 
-func TestSetDefaultHostWritesAndLoadsBack(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.jsonc")
-	if err := SetDefaultHost(path, "ubuntu"); err != nil {
-		t.Fatalf("SetDefaultHost: %v", err)
-	}
+func TestLegacyHostMigrationSurvivesRewrite(t *testing.T) {
+	path := writeConfigFile(t, `{"schema_version":5,"default_host":"default-only","remembered_forwards":{"dev":[{"remote_port":8080}]},"working_directory_rules":{"dirs":["/workspace/**"]}}`)
 	config, err := LoadConfig(path)
 	if err != nil {
-		t.Fatalf("LoadConfig: %v", err)
+		t.Fatal(err)
 	}
-	if config.DefaultHost != "ubuntu" {
-		t.Fatalf("DefaultHost = %q, want ubuntu", config.DefaultHost)
+	if err := saveConfig(path, config); err != nil {
+		t.Fatal(err)
 	}
-	// Overwriting is atomic and idempotent.
-	if err := SetDefaultHost(path, "devbox"); err != nil {
-		t.Fatalf("second SetDefaultHost: %v", err)
-	}
-	config, err = LoadConfig(path)
+	content, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("LoadConfig after overwrite: %v", err)
+		t.Fatal(err)
 	}
-	if config.DefaultHost != "devbox" {
-		t.Fatalf("DefaultHost = %q, want devbox", config.DefaultHost)
+	if strings.Contains(string(content), "default_host") {
+		t.Fatal("legacy default persisted")
+	}
+	again, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, host := range []string{"default-only", "dev", "dirs"} {
+		if again.Hosts[host].Target != host {
+			t.Fatalf("lost host %s", host)
+		}
+	}
+	if len(again.GlobalForwards) != 0 || len(again.GlobalWorkingDirectoryRules) != 0 {
+		t.Fatal("legacy rules broadened")
+	}
+	config.SchemaVersion = configSchemaVersion
+	if diff := cmp.Diff(config, again); diff != "" {
+		t.Fatalf("rewrite changed intent: %s", diff)
+	}
+}
+
+func TestConfigurationModelRoundTripPreservesScopes(t *testing.T) {
+	path := writeConfigFile(t, `{
+ "schema_version":6,"hosts":{"dev":{"target":"user@dev","arguments":["-p","2222"]}},"ignored_hosts":["offline"],
+ "global_forwards":[{"remote_port":8080}],"global_working_directory_rules":["/workspace/**"],
+ "remembered_forwards":{"dev":[{"remote_port":8080,"local_port":18080}]},
+ "published_forwards":{"dev":[{"local_port":9222}]},
+ "working_directory_rules":{"other":["/srv/**"]}}`)
+	before, err := loadConfigForWrite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := before.save(path); err != nil {
+		t.Fatal(err)
+	}
+	after, err := loadConfigForWrite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(before, after); diff != "" {
+		t.Fatalf("scope conversion lost data: %s", diff)
+	}
+	// Global edits must never remove the explicit mapping on dev.
+	if removed, err := RemoveRememberedForward(path, "", 8080); err != nil || !removed {
+		t.Fatalf("remove global: %v, %v", removed, err)
+	}
+	dev, err := HostIntent(path, "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dev.AutoForwards) != 0 || len(dev.RememberedForwards) != 1 || dev.RememberedForwards[0].LocalPort != 18080 || len(dev.PublishedForwards) != 1 {
+		t.Fatalf("scope leak: %+v", dev)
+	}
+	if _, err := SetPublishedForward(path, "", core.PublishedForward{LocalPort: 9000}); err == nil {
+		t.Fatal("global publish accepted")
+	}
+	after.scope("").Published = []core.PublishedForward{{LocalPort: 9000}}
+	if err := after.save(path); err == nil {
+		t.Fatal("internal model persisted global publish")
 	}
 }

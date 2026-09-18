@@ -27,6 +27,7 @@ func (forward desiredForward) key() forwardKey {
 }
 
 func normalizedForwardingIntent(intent ForwardingIntent) ForwardingIntent {
+	intent.AutoForwards = normalizedManagerRememberedForwards(intent.AutoForwards)
 	intent.RememberedForwards = normalizedManagerRememberedForwards(intent.RememberedForwards)
 	intent.PublishedForwards = normalizedManagerPublishedForwards(intent.PublishedForwards)
 	patterns := make([]string, 0, len(intent.WorkingDirectoryRules))
@@ -86,10 +87,13 @@ func normalizedManagerPublishedForwards(forwards []PublishedForward) []Published
 	return unique
 }
 
-func reservedLocalPorts(forwards []PublishedForward) map[uint16]struct{} {
+func reservedLocalPorts(forwards []PublishedForward, additional ...uint16) map[uint16]struct{} {
 	ports := make(map[uint16]struct{}, len(forwards))
 	for _, forward := range forwards {
 		ports[forward.LocalPort] = struct{}{}
+	}
+	for _, port := range additional {
+		ports[port] = struct{}{}
 	}
 	return ports
 }
@@ -99,6 +103,7 @@ func buildDesiredForwards(
 	published []PublishedForward,
 	listeners map[uint16]Listener,
 	workingDirectoryRules []string,
+	autoForwards ...RememberedForward,
 ) map[forwardKey]desiredForward {
 	desired := make(map[forwardKey]desiredForward, len(remembered)+len(published))
 	for _, forward := range remembered {
@@ -110,6 +115,20 @@ func buildDesiredForwards(
 		item := desiredPublishedForward(forward)
 		desired[item.key()] = item
 		publishedRemotePorts[forward.RemotePort] = struct{}{}
+	}
+	for _, forward := range autoForwards {
+		key := forwardKey{direction: RemoteToLocal, servicePort: forward.RemotePort}
+		if _, exists := desired[key]; exists {
+			continue
+		}
+		if _, published := publishedRemotePorts[forward.RemotePort]; published {
+			continue
+		}
+		if _, listening := listeners[forward.RemotePort]; listening {
+			item := desiredRememberedForward(forward)
+			item.automatic = true
+			desired[key] = item
+		}
 	}
 	for remotePort, listener := range listeners {
 		key := forwardKey{direction: RemoteToLocal, servicePort: remotePort}

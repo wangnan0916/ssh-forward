@@ -7,6 +7,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const (
@@ -109,7 +110,7 @@ func fitWorkingDirectories(
 		headers[workingDirectoryColumn] = shortenTail("CWD", workingDirectoryWidth)
 	}
 	for _, row := range rows {
-		row[workingDirectoryColumn] = shortenPath(row[workingDirectoryColumn], workingDirectoryWidth)
+		row[workingDirectoryColumn] = shortenTail(row[workingDirectoryColumn], workingDirectoryWidth)
 	}
 	return headers, rows
 }
@@ -135,23 +136,19 @@ func contentWidths(headers []string, rows [][]string) []int {
 	return widths
 }
 
-func shortenPath(value string, width int) string {
-	if lipgloss.Width(value) <= width {
+func shortenTail(value string, width int) string {
+	total := ansi.StringWidth(value)
+	if total <= width {
 		return value
 	}
-	return shortenTail(value, width)
-}
-
-func shortenTail(value string, width int) string {
 	if width <= 1 {
 		return "…"
 	}
-	runes := []rune(value)
-	for start := 0; start < len(runes); start++ {
-		candidate := "…" + string(runes[start:])
-		if lipgloss.Width(candidate) <= width {
-			return candidate
+	// A cut through a wide grapheme retains it. Advance until the tail fits.
+	for cut := total - width + 1; ; cut++ {
+		tail := ansi.TruncateLeft(value, cut, "")
+		if ansi.StringWidth(tail) < width {
+			return "…" + tail
 		}
 	}
-	return "…"
 }

@@ -37,15 +37,15 @@ func (a *App) publishCommand(adding bool) *cobra.Command {
 	command.Flags().Bool("json", false, "emit JSON")
 	if adding {
 		command.Flags().Uint16("remote", 0, "Development Host port (default: the local port)")
-		command.Example = "  ssh-forward publish 9222\n  ssh-forward publish 9222 --remote 19222"
+		command.Example = "  ssh-forward --host dev publish 9222\n  ssh-forward --host dev publish 9222 --remote 19222"
 	} else {
-		command.Example = "  ssh-forward unpublish 9222"
+		command.Example = "  ssh-forward --host dev unpublish 9222"
 	}
 	return grouped(groupDaily, command)
 }
 
 func (a *App) rememberCommand(adding bool) *cobra.Command {
-	name, verb, short := "add", "remember", "remember a remote port or working-directory glob"
+	name, verb, short := "add", "remember", "add a global listener port or working-directory rule"
 	if !adding {
 		name, verb, short = "remove", "forget", "forget a remembered port or working-directory glob"
 	}
@@ -88,7 +88,7 @@ func (a *App) rememberCommand(adding bool) *cobra.Command {
 	}
 	command.Example = fmt.Sprintf("  ssh-forward %s 5173  # %s port 5173\n  ssh-forward %s --pwd '/workspace/**'", name, verb, name)
 	if adding {
-		command.Example += "\n  ssh-forward add 8443 --local 18443"
+		command.Example += "\n  ssh-forward add 8443 --local 18443\n  ssh-forward --host dev add 5173\n  ssh-forward --host staging add 5173 --local 15173"
 	}
 	return grouped(groupDaily, command)
 }
@@ -98,11 +98,8 @@ func (a *App) rememberForward(
 	forward core.RememberedForward,
 	adding, jsonOutput bool,
 ) error {
-	status, err := a.Manager.Status(ctx)
-	if err != nil {
-		return err
-	}
-	host := string(status.Host)
+	host := a.Options.HostFlag
+	var err error
 	var changed bool
 	if adding {
 		changed, err = app.SetRememberedForward(a.Options.ConfigPath, host, forward)
@@ -115,9 +112,10 @@ func (a *App) rememberForward(
 	if !adding && !changed {
 		return fmt.Errorf("remote port %d is not remembered for %s", forward.RemotePort, host)
 	}
-	if err := a.updateManagerIntent(ctx, host); err != nil {
+	if err := a.Manager.Reload(ctx, host); err != nil {
 		return err
 	}
+
 	return a.writeRemember(jsonOutput, adding, changed, host, forward)
 }
 
@@ -126,11 +124,8 @@ func (a *App) publishForward(
 	forward core.PublishedForward,
 	adding, jsonOutput bool,
 ) error {
-	status, err := a.Manager.Status(ctx)
-	if err != nil {
-		return err
-	}
-	host := string(status.Host)
+	host := a.Options.HostFlag
+	var err error
 	var changed bool
 	if adding {
 		changed, err = app.SetPublishedForward(a.Options.ConfigPath, host, forward)
@@ -153,18 +148,15 @@ func (a *App) publishForward(
 	if !adding && !changed {
 		return fmt.Errorf("local port %d is not published for %s", forward.LocalPort, host)
 	}
-	if err := a.updateManagerIntent(ctx, host); err != nil {
+	if err := a.Manager.Reload(ctx, host); err != nil {
 		return err
 	}
 	return a.writePublished(jsonOutput, adding, changed, host, forward)
 }
 
 func (a *App) rememberWorkingDirectory(ctx context.Context, pattern string, adding, jsonOutput bool) error {
-	status, err := a.Manager.Status(ctx)
-	if err != nil {
-		return err
-	}
-	host := string(status.Host)
+	host := a.Options.HostFlag
+	var err error
 	var changed bool
 	if adding {
 		changed, err = app.AddWorkingDirectoryRule(a.Options.ConfigPath, host, pattern)
@@ -180,16 +172,9 @@ func (a *App) rememberWorkingDirectory(ctx context.Context, pattern string, addi
 	if !adding && !changed {
 		return fmt.Errorf("working-directory glob %q is not remembered for %s", pattern, host)
 	}
-	if err := a.updateManagerIntent(ctx, host); err != nil {
+	if err := a.Manager.Reload(ctx, host); err != nil {
 		return err
 	}
-	return a.writeRememberWorkingDirectory(jsonOutput, adding, changed, host, pattern)
-}
 
-func (a *App) updateManagerIntent(ctx context.Context, host string) error {
-	intent, err := app.HostIntent(a.Options.ConfigPath, host)
-	if err != nil {
-		return err
-	}
-	return a.Manager.UpdateIntent(ctx, intent)
+	return a.writeRememberWorkingDirectory(jsonOutput, adding, changed, host, pattern)
 }

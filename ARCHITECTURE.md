@@ -2,7 +2,7 @@
 
 The product contract is:
 
-> Select one SSH alias, see TCP listeners reachable through its IPv4 loopback,
+> Monitor configured SSH hosts concurrently, see their IPv4 loopback TCP listeners,
 > and keep remembered remote-to-local forwards plus live listeners matching
 > configured working-directory globs available on all local IPv4 interfaces,
 > while keeping explicitly published local services available on the
@@ -15,9 +15,11 @@ Anything that does not serve this sentence is outside the current design.
 ```text
 CLI
  ├─ config.jsonc (host, forwards, and directory rules)
- └─ GET /v1/status over a user-only Unix socket
+ └─ GET /v1/status + POST /v1/reload over a user-only Unix socket
                          │
-                      Manager
+             Manager service (host registry)
+                         │
+                per-host core Manager
                ┌─────────┴─────────┐
         observe listeners      one worker per directional Forward
                │                    │
@@ -33,14 +35,25 @@ CLI
   `Observe`, `Forward`, and `Close`.
 - `internal/openssh` owns the product-private multiplexed OpenSSH connection,
   dynamic forwarding commands, process invocation, the fixed remote scanner,
-  readiness checks, and bounded SSH error classification.
-- `internal/app` owns the single config file, SSH alias selection, and the thin
+  readiness checks, and bounded SSH error classification. Encrypted SSH
+  keepalives detect silent connection loss; core retry loops recreate discovery
+  and forwarding on a replacement master. Forward installation and cancellation
+  check the master generation so retiring workers cannot affect a new session.
+- `internal/app` owns configuration, SSH host discovery, and the thin
   adapters that compose HTTP/Unix Socket and the user's OS service manager.
-  A Manager loads forwarding intent at startup and accepts idempotent intent
-  updates over its user-only Unix socket. It reconciles only affected workers;
-  `Connect` restarts it when the selected host, protocol, or binary version
-  differs from the current process. `Uninstall` removes only the background
-  service; persistent intent remains user-owned configuration. Its read-only
+  A host registry starts independent core Managers and OpenSSH adapters for
+  every remembered host at startup. The shared user-only Unix socket exposes
+  all status snapshots in alias order and a reload notification. Configuration
+  is the only source of intent: CLI mutations save it, then request a reload;
+  the service derives each host's intent and reconciles affected workers.
+  The CLI filters status locally when `--host` is explicit. Published local service
+  ports are reserved across all runtimes. `Connect` adds a selected host without
+  replacing existing runtimes; only protocol or binary-version changes replace
+  the service. New rules are global unless explicitly scoped; legacy rules retain their host.
+  The service polls same-user native SSH argv and configuration every five seconds.
+  Discovered targets are merged into a separate, locked registry; ignored targets
+  stay excluded. Unsupported parameters remain visible without initiating SSH.
+  `Uninstall` removes only the background service; persistent intent remains user-owned configuration. Its read-only
   doctor module composes configuration, Manager, and true-remote discovery
   checks without repairing or mutating them.
 - `internal/diagnostics` owns the bounded human-readable diagnostic catalog,
@@ -56,17 +69,29 @@ Mechanisms are delegated to deep external modules: system OpenSSH handles SSH,
 `kardianos/service` handles resident process lifecycle, `net/http` handles local
 IPC, `ssh_config` parses Host declarations, and `hujson` parses JSONC. Product
 code keeps only their composition and the forwarding state machine. Lip Gloss
-renders human status tables, while `x/term` detects stdout capabilities.
+renders human status tables; `x/ansi` handles grapheme-aware tail truncation,
+while `x/term` detects terminal capabilities.
+`gopsutil/process` enumerates local processes and reads their exact argv;
+`gofrs/flock` provides cancellable registry locking. SSH argument selection,
+process exclusion, and host persistence remain product logic.
 
 ## State
 
-Persistent state is only:
+Persistent state consists of:
 
-- one optional default SSH alias;
+- explicit host connection records and an ignored-host list;
+- a separate registry of discovered connection targets;
+- global listener-port rules and working-directory globs;
 - a sorted remembered remote-to-preferred-local mapping list, including its
   fallback policy, per alias;
 - a sorted published local-to-remote mapping list per alias;
 - a sorted absolute working-directory glob list per alias.
+
+The on-disk schema is decoded and migrated at the configuration boundary.
+The internal model groups typed port, publish, and directory rules by scope;
+an empty scope means all hosts. Rule mutations share this model, while encoding
+preserves the existing schema 6 file layout. Published forwards are rejected
+without a named scope both by the command mutation and the model writer.
 
 Volatile state is rebuilt after restart:
 

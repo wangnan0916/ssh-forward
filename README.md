@@ -69,10 +69,10 @@ firewall when needed.
 Make a service on the local machine available only through remote loopback:
 
 ```bash
-ssh-forward publish 9222                 # local 9222 -> remote 127.0.0.1:9222
-ssh-forward publish 9222 --remote 19222  # local 9222 -> remote 127.0.0.1:19222
+ssh-forward --host my-dev publish 9222                 # local 9222 -> remote 127.0.0.1:9222
+ssh-forward --host my-dev publish 9222 --remote 19222  # local 9222 -> remote 127.0.0.1:19222
 ssh-forward status --watch
-ssh-forward unpublish 9222
+ssh-forward --host my-dev unpublish 9222
 ```
 
 The remote port is stable and strict: if it is occupied or the SSH server
@@ -105,7 +105,7 @@ Measured with `v0.1.0` on an Apple M1 Pro running macOS 26.6.2:
 
 The v0.1.0 runtime totals include the Manager and the system OpenSSH process
 layout used by that release. Current Managers use one product-owned OpenSSH
-master connection and add or cancel forwards through its control socket, so
+master connection per host and add or cancel forwards through its control socket, so
 the number of SSH transports no longer grows with the number of ports. RSS can
 count shared pages more than once. At the 256-port observation limit, a
 complete Manager status snapshot takes about 28–30 µs with two allocations,
@@ -151,19 +151,19 @@ Host my-dev
   User me
 ```
 
-Then choose the host and remember the ports you want locally:
+Remember a host (or let the Manager discover your active SSH sessions), then add global rules:
 
 ```bash
-ssh-forward default my-dev
-ssh-forward status              # see remote loopback listeners
-ssh-forward add 5173            # prefer 0.0.0.0:5173; temporarily fall back if busy
+ssh-forward host add my-dev
+ssh-forward status              # see listeners and forwards across all hosts
+ssh-forward add 5173            # forward matching listeners on every host
 ssh-forward add 8443 --local 18443  # require remote 8443 on 0.0.0.0:18443
 ssh-forward add --pwd '/home/me/Workspace/**'  # forward matching live services
-ssh-forward publish 9222       # expose local 9222 at remote 127.0.0.1:9222
+ssh-forward --host my-dev publish 9222  # publish only to this host
 ssh-forward status --watch      # follow changes
 ssh-forward remove 5173
 ssh-forward remove --pwd '/home/me/Workspace/**'
-ssh-forward unpublish 9222
+ssh-forward --host my-dev unpublish 9222
 ```
 
 For a connection that works with OpenSSH's defaults, `--host` also accepts a
@@ -176,9 +176,8 @@ ssh-forward --host ubuntu@192.168.1.20 publish 9222
 
 `--host` names the SSH target; it does not accept a complete `ssh` command or
 forward OpenSSH flags such as `-p`, `-i`, `-J`, or `-o`. Keep custom ports,
-identities, jump hosts, and other connection options in SSH config, optionally
-selected with `--ssh-config PATH`. `default ALIAS` only pins a literal `Host`
-alias from that config.
+identities and jump hosts in SSH config, or use `host add NAME` with explicit
+connection options. `--host` can select a remembered host ID.
 
 The first command that needs a connection automatically installs and starts a
 user-scoped background manager. Later commands reuse it. After an upgrade, the
@@ -191,12 +190,16 @@ ssh-forward add PORT [--local PORT]
 ssh-forward add --pwd GLOB
 ssh-forward remove PORT
 ssh-forward remove --pwd GLOB
-ssh-forward publish LOCAL [--remote REMOTE]
-ssh-forward unpublish LOCAL
+ssh-forward --host TARGET publish LOCAL [--remote REMOTE]
+ssh-forward --host TARGET unpublish LOCAL
 ssh-forward status [--json] [--watch]
-ssh-forward doctor [--json]
+ssh-forward doctor --host TARGET [--json]
 ssh-forward host [--json]
-ssh-forward default [ALIAS]
+ssh-forward host add NAME [--target TARGET] [--port PORT] [--user USER]
+ssh-forward host discover
+ssh-forward host ignore HOST
+ssh-forward host enable HOST
+ssh-forward host aliases
 ssh-forward uninstall
 ```
 
@@ -214,8 +217,8 @@ Global options are `--host TARGET` and `--ssh-config PATH`. Set
    because the forwarding target cannot reach them. Executable names and
    working directories are collected on a best-effort basis when `ss` and the
    relevant procfs links are available. No remote agent is installed.
-3. The Manager owns one product-private OpenSSH master connection and uses
-   OpenSSH control commands to add and cancel each desired remote-to-local or
+3. The Manager owns one product-private OpenSSH master connection per host
+   and uses OpenSSH control commands to add and cancel each desired remote-to-local or
    local-to-remote forward. Remote-to-local forwards bind `0.0.0.0`, including
    Remembered and Automatic Forwards, so local virtual machines can reach them.
    The local port stays available while the remote process restarts; individual
@@ -237,7 +240,13 @@ Global options are `--host TARGET` and `--ssh-config PATH`. Set
    `GatewayPorts yes`. If cancellation of an installed forward fails, it closes
    the product-owned SSH master to guarantee that the listener is removed.
 7. HTTP over a user-only Unix socket lets later CLI calls read Manager status.
-   `status --watch` polls that status.
+   `status --watch` polls status for all hosts (or the explicit `--host`).
+8. SSH masters send encrypted keepalives after 5 seconds without incoming
+   traffic and disconnect after 3 unanswered probes (roughly 15 seconds).
+   Discovery and both forwarding directions then retry automatically, so a
+   server reboot or silent network loss does not require restarting the
+   Manager. Recovery completes when the server becomes reachable again.
+   Connection attempts and control commands have bounded timeouts.
 
 The OS user service manager (launchd on macOS, the detected init system on
 Linux) owns process startup, restart, and logs. Installation and startup happen
@@ -255,43 +264,85 @@ Host must be distinct.
 
 ## Configuration
 
-All persistent intent is in one `config.jsonc`:
+`config.jsonc` contains an explicit host list, global rules, optional host-scoped
+rules, and ignored hosts. No default host is required. `add` and `remove` apply
+globally unless `--host` is supplied; `publish` and `unpublish` always require
+an explicit `--host`.
+
+```bash
+ssh-forward host add dev
+ssh-forward host add staging --target me@192.168.1.20 --port 2222
+ssh-forward add --pwd '/workspace/**'
+ssh-forward add 5173
+ssh-forward status --watch
+ssh-forward host ignore staging
+ssh-forward host enable staging
+```
+
+Global directory rules match each observed listener's working directory. Global
+port rules forward only while that port is observed on the remote host. If
+several hosts match, all participate. Host-scoped `add PORT --host HOST` retains
+the fixed remembered mapping behavior, including while the remote service is
+absent. Scoped fixed mappings take precedence over global port rules.
+
+The Manager discovers SSH processes owned by the current OS user at startup
+and every five seconds. macOS uses native process arguments; Linux reads procfs
+argv. It excludes its own process tree and control commands. It remembers
+plain SSH destinations and supported connection options (port, user, absolute
+identity/config paths, jump host, and selected `-o` settings) in the separate
+`discovered-hosts.json` registry. Different connection settings receive distinct
+host IDs. Closing the original SSH session does not forget its target. Use
+`host discover` to scan immediately and `host` to inspect IDs and ignored state.
+
+Unsupported connection parameters appear as candidates needing connection
+settings, without being connected automatically. Use `host add NAME --target
+DESTINATION` with `--port`, `--user`, `--identity`, `--jump`, and `--ssh-config` as
+needed. SSH implementations embedded inside applications, inaccessible argv,
+short-lived sessions between scans, and ambiguous/unrecognized invocations may
+not be discoverable. Relative key/config paths need manual completion.
+`host aliases` lists SSH-config candidates; aliases alone are not all connected.
+
+`host ignore HOST` persists across scans and restarts and stops that host within
+five seconds. Ignoring a destination also suppresses discovered variants of
+that destination. `host enable HOST` re-enables it. A running Manager reloads
+config changes every five seconds; command mutations also apply immediately.
+Discovered hosts use noninteractive authentication through the user's existing
+SSH configuration/agent; passwords and remote commands are never saved.
 
 ```jsonc
 {
-  "schema_version": 5,
-  "default_host": "my-dev",
+  "schema_version": 6,
+  "hosts": {
+    "dev": {"target": "dev"},
+    "staging": {"target": "me@192.168.1.20", "arguments": ["-p", "2222"]}
+  },
+  "global_forwards": [
+    {"remote_port": 5173, "local_port": 5173, "allow_fallback": true}
+  ],
+  "global_working_directory_rules": ["/workspace/**"],
+  "ignored_hosts": [],
   "remembered_forwards": {
-    "my-dev": [
-      {"remote_port": 5173, "local_port": 5173, "allow_fallback": true},
-      {"remote_port": 8443, "local_port": 18443}
-    ]
+    "dev": [{"remote_port": 8443, "local_port": 18443}]
   },
   "published_forwards": {
-    "my-dev": [
-      {"local_port": 9222, "remote_port": 9222}
-    ]
-  },
-  "working_directory_rules": {
-    "my-dev": ["/home/me/Workspace/**"]
+    "dev": [{"local_port": 9222, "remote_port": 9222}]
   }
 }
 ```
 
-`allow_fallback` is authoritative whether or not the remote and local ports
-differ. `add REMOTE` enables it, while `add REMOTE --local LOCAL` leaves it
-disabled. A manually edited schema-5 entry may explicitly choose either
-policy.
+`status` and `status --watch` show every monitored host, including disconnected
+hosts and candidates requiring settings. `status --json` emits an array;
+`status --host dev --json` emits one object. Local ports are shared across hosts:
+automatic fallback chooses another local port when needed, while an explicit
+`--local` is strict. Status shows the source host and actual local port.
+Published local service ports are reserved across all hosts.
 
-Commands send remembered-forward, published-forward, and
-working-directory-rule changes to the running Manager, which reconciles only
-the affected forwards. Unchanged forwards stay connected. A selected-host,
-protocol, or binary-version change still replaces the Manager. Schema 1–4
-files remain readable; during migration, fields introduced after the declared
-schema are ignored, legacy same-port mappings gain temporary fallback, and
-legacy custom mappings remain strict. The file upgrades to schema 5 on the next
-write. Runtime observations, temporary actual ports, and process IDs are not
-persisted.
+Schemas 1–5 remain readable and upgrade to schema 6 on the next write. Existing
+remembered mappings, published mappings, and directory rules stay scoped to
+their original host; migration never broadens them globally. Legacy
+`default_host` migrates to a remembered host and is removed on the next write.
+The old `default` command and interactive host picker are removed. Listener observations, actual fallback ports,
+and process IDs remain volatile.
 
 Default directories:
 
@@ -315,13 +366,13 @@ brew uninstall ssh-forward
 ```
 
 Delete the configuration directory separately if you also want to forget the
-selected Host and ports.
+remembered hosts and ports.
 
 ## Current limits
 
 - Linux Development Hosts only
 - macOS and Linux local clients only
-- one active SSH host per Manager
+- one shared SSH configuration file per Manager; multiple hosts run concurrently
 - TCP listeners reachable through remote `127.0.0.1`; IPv6-only listeners are
   excluded
 - Imported ports bind local `0.0.0.0` and may be reachable from virtual

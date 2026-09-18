@@ -43,11 +43,18 @@ func (a *App) writeRemember(
 			"host":                  host,
 			"remote_port":           forward.RemotePort,
 		}
+		if host == "" {
+			delete(output, "host")
+			output["scope"] = "global"
+		}
 		if adding {
 			output["local_port"] = forward.LocalPort
 			output["allow_fallback"] = forward.AllowFallback
 		}
 		return a.writeJSON(output)
+	}
+	if host == "" {
+		host = "all hosts (when listening)"
 	}
 	switch {
 	case adding && changed && forward.AllowFallback:
@@ -72,11 +79,16 @@ func (a *App) writeRemember(
 
 func (a *App) writeRememberWorkingDirectory(jsonOutput, adding, changed bool, host, pattern string) error {
 	if jsonOutput {
-		return a.writeJSON(map[string]any{
-			mutationJSONKey(adding):  changed,
-			"host":                   host,
-			"working_directory_rule": pattern,
-		})
+		output := map[string]any{mutationJSONKey(adding): changed, "working_directory_rule": pattern}
+		if host == "" {
+			output["scope"] = "global"
+		} else {
+			output["host"] = host
+		}
+		return a.writeJSON(output)
+	}
+	if host == "" {
+		host = "all hosts"
 	}
 	switch {
 	case adding && changed:

@@ -39,101 +39,58 @@ func (m *fixedManager) UpdateIntent(_ context.Context, intent core.ForwardingInt
 func (*fixedManager) Close(context.Context) error { return nil }
 
 func TestManagerIPCRoundTrip(t *testing.T) {
+	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "manager.sock")
 	listener, err := listenManager(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := core.Status{
-		Host:      "dev",
-		Discovery: core.DiscoveryStatus{State: core.DiscoveryActive},
-		Listeners: []core.Listener{{Port: 5173, App: "node", WorkingDirectory: "/workspace/app"}},
-		Forwards: []core.ForwardStatus{{
-			RemotePort: 5173, PreferredLocalPort: 5173, LocalPort: 5173,
-			State: core.ForwardActive, Automatic: true, AllowFallback: true,
-		}},
-		WorkingDirectoryRules: []string{"/workspace/**"},
-	}
-	backend := &fixedManager{status: want}
-	server := &http.Server{Handler: managerHandler(backend, "test-version")}
+	configPath := writeConfigFile(t, `{"schema_version":5,"default_host":"dev","remembered_forwards":{"dev":[{"remote_port":3000}]}}`)
+	pool := &managerPool{configPath: configPath, managers: make(map[string]core.Manager),
+		createTarget: func(host string, _ HostTarget, intent core.ForwardingIntent) (core.Manager, error) {
+			return &fixedManager{status: core.Status{Host: core.HostAlias(host)}, intent: intent}, nil
+		}}
+	server := &http.Server{Handler: managerHandler(pool, "test-version")}
 	go func() { _ = server.Serve(listener) }()
-	t.Cleanup(func() { _ = server.Close() })
-
-	manager, err := dialManager(context.Background(), path, "test-version")
+	t.Cleanup(func() { _ = server.Close(); _ = pool.Close(ctx) })
+	opts := Options{Layout: Layout{Dir: filepath.Dir(path), Socket: path}, ConfigPath: configPath, Version: "test-version", HostFlag: "user@other"}
+	session, err := Connect(ctx, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = manager.Close(context.Background()) })
-	got, err := manager.Status(context.Background())
-	if err != nil {
+	defer session.Close(ctx)
+	all, err := session.AllStatuses(ctx)
+	if err != nil || len(all) != 2 || all[0].Host != "dev" || all[1].Host != "user@other" {
+		t.Fatalf("all statuses: %+v, %v", all, err)
+	}
+	dev := pool.lookup("dev").(*fixedManager)
+	original := dev.intent
+	if _, err := SetRememberedForward(configPath, "user@other", core.RememberedForward{RemotePort: 8080}); err != nil {
 		t.Fatal(err)
 	}
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Fatalf("status mismatch (-want +got):\n%s", diff)
-	}
-	wantIntent := core.ForwardingIntent{
-		RememberedForwards: []core.RememberedForward{
-			{RemotePort: 3000, LocalPort: 13000},
-			{RemotePort: 5173, LocalPort: 5173},
-		},
-		PublishedForwards:     []core.PublishedForward{{LocalPort: 9222, RemotePort: 19222}},
-		WorkingDirectoryRules: []string{"/workspace/**"},
-	}
-	if err := manager.UpdateIntent(context.Background(), wantIntent); err != nil {
+	if err := session.Reload(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
-	if diff := cmp.Diff(wantIntent, backend.intent); diff != "" {
-		t.Fatalf("intent mismatch (-want +got):\n%s", diff)
+	if diff := cmp.Diff(original, dev.intent); diff != "" {
+		t.Fatalf("other host changed dev: %s", diff)
 	}
-	if _, err := dialManager(context.Background(), path, "other-version"); !errors.Is(err, ErrIncompatibleManager) {
-		t.Fatalf("version mismatch error = %v", err)
+	other := pool.lookup("user@other").(*fixedManager)
+	if len(other.intent.RememberedForwards) != 1 || other.intent.RememberedForwards[0].RemotePort != 8080 {
+		t.Fatalf("configuration not reloaded: %+v", other.intent)
 	}
-}
-
-func TestManagerMatchesSelectedHostAndForwardingIntent(t *testing.T) {
-	status := core.Status{
-		Host:                  "dev",
-		WorkingDirectoryRules: []string{"/workspace/**"},
-		Forwards: []core.ForwardStatus{
-			{RemotePort: 3000, PreferredLocalPort: 13000, LocalPort: 13001, State: core.ForwardActive, AllowFallback: true},
-			{RemotePort: 5173, PreferredLocalPort: 5173, LocalPort: 5173, State: core.ForwardFailed},
-			{RemotePort: 12000, PreferredLocalPort: 12000, LocalPort: 12000, State: core.ForwardActive, Automatic: true, AllowFallback: true},
-			{Direction: core.LocalToRemote, LocalPort: 9222, PreferredRemotePort: 19222, RemotePort: 19222, State: core.ForwardActive},
-		},
+	if err := session.Reload(ctx, "-invalid"); err == nil {
+		t.Fatal("invalid host accepted")
 	}
-	intent := core.ForwardingIntent{
-		RememberedForwards: []core.RememberedForward{
-			{RemotePort: 3000, LocalPort: 13000, AllowFallback: true},
-			{RemotePort: 5173, LocalPort: 5173},
-		},
-		PublishedForwards:     []core.PublishedForward{{LocalPort: 9222, RemotePort: 19222}},
-		WorkingDirectoryRules: []string{"/workspace/**"},
+	if err := writeTextFile(configPath, `{"schema_version":`); err != nil {
+		t.Fatal(err)
 	}
-	if !managerMatches(status, "dev", intent) {
-		t.Fatal("matching manager was rejected")
+	if err := session.Reload(ctx, ""); err == nil {
+		t.Fatal("invalid config accepted")
 	}
-	if managerMatches(status, "other", intent) {
-		t.Fatal("manager with another host was accepted")
+	if pool.lookup("dev") != dev {
+		t.Fatal("failed reload replaced runtime")
 	}
-	intent.RememberedForwards = intent.RememberedForwards[:1]
-	if managerMatches(status, "dev", intent) {
-		t.Fatal("manager with stale ports was accepted")
-	}
-	intent.RememberedForwards = append(intent.RememberedForwards, core.RememberedForward{
-		RemotePort: 5173, LocalPort: 5173,
-	})
-	intent.RememberedForwards[0].LocalPort = 14000
-	if managerMatches(status, "dev", intent) {
-		t.Fatal("manager with a stale local port was accepted")
-	}
-	intent.RememberedForwards[0].LocalPort = 13000
-	intent.PublishedForwards[0].RemotePort = 29222
-	if managerMatches(status, "dev", intent) {
-		t.Fatal("manager with a stale published port was accepted")
-	}
-	intent.PublishedForwards[0].RemotePort = 19222
-	intent.WorkingDirectoryRules = []string{"/srv/**"}
-	if managerMatches(status, "dev", intent) {
-		t.Fatal("manager with stale working-directory rules was accepted")
+	if _, err := dialManager(ctx, path, "other-version"); !errors.Is(err, ErrIncompatibleManager) {
+		t.Fatalf("version mismatch: %v", err)
 	}
 }

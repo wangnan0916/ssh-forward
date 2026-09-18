@@ -105,6 +105,10 @@ type ForwardTarget struct {
 // Directory Rules create Automatic Forwards only for currently matching
 // listeners.
 type ForwardingIntent struct {
+	AutoForwards []RememberedForward `json:"auto_forwards,omitempty"`
+	// ReservedLocalPorts protects published local services across all hosts.
+	// It is supplied by the service at runtime, never persisted or sent over IPC.
+	ReservedLocalPorts    []uint16            `json:"-"`
 	RememberedForwards    []RememberedForward `json:"remembered_forwards"`
 	PublishedForwards     []PublishedForward  `json:"published_forwards"`
 	WorkingDirectoryRules []string            `json:"working_directory_rules"`

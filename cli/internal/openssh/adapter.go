@@ -27,13 +27,16 @@ type Options struct {
 // through one product-private OpenSSH master per host. OpenSSH owns the
 // forwarding data plane.
 type Adapter struct {
-	executable         string
-	configFile         string
-	controlDirectory   string
-	readyTimeout       time.Duration
-	waitDelay          time.Duration
-	environment        []string
-	localPortAvailable func(uint16) bool
+	executable          string
+	configFile          string
+	connectionArguments []string
+	controlIdentity     string
+	controlDirectory    string
+	readyTimeout        time.Duration
+	controlTimeout      time.Duration
+	waitDelay           time.Duration
+	environment         []string
+	localPortAvailable  func(uint16) bool
 
 	mu      sync.Mutex
 	closed  bool
@@ -71,9 +74,19 @@ func New(options Options) (*Adapter, error) {
 		configFile:         options.ConfigFile,
 		controlDirectory:   options.ControlDirectory,
 		readyTimeout:       options.ReadyTimeout,
+		controlTimeout:     10 * time.Second,
 		waitDelay:          options.WaitDelay,
 		environment:        approvedEnvironment(),
 		localPortAvailable: localLoopbackPortAvailable,
 		masters:            make(map[core.HostAlias]*sshMaster),
 	}, nil
 }
+
+// SetConnectionArguments configures a new adapter before it starts workers.
+func (a *Adapter) SetConnectionArguments(arguments []string) {
+	a.connectionArguments = append([]string(nil), arguments...)
+}
+
+// SetControlIdentity scopes the private socket to a remembered host record.
+// Call only before starting workers. Plain aliases retain their old socket path.
+func (a *Adapter) SetControlIdentity(name string) { a.controlIdentity = name }

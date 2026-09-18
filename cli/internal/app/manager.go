@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"time"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
@@ -16,8 +15,12 @@ const (
 	managerStartWait   = 5 * time.Second
 )
 
-// HostPicker chooses one Development Host alias from a candidate list.
-type HostPicker func(hosts []string, stdin io.Reader, stdout io.Writer) (string, error)
+// Session is the service API. Configuration is the only source of intent.
+type Session interface {
+	AllStatuses(context.Context) ([]core.Status, error)
+	Reload(context.Context, string) error
+	Close(context.Context) error
+}
 
 // Options are the local files, host inputs, and command streams used by the
 // CLI and its per-user Manager.
@@ -28,7 +31,6 @@ type Options struct {
 	ConfigPath    string
 	Version       string
 	Interactive   bool
-	PickHost      HostPicker
 	Stdin         io.Reader
 	Stdout        io.Writer
 	Stderr        io.Writer
@@ -58,98 +60,47 @@ func (o Options) WithDefaults() Options {
 	return o
 }
 
-// Connect returns the Manager for the selected host. It installs or repairs
-// the user service when needed and switches a running Manager whose host no
-// longer matches the current selection.
-func Connect(ctx context.Context, opts Options) (core.Manager, error) {
+// Connect opens the service session, installing or repairing the user service
+// when needed. An explicit host adds a runtime alongside remembered hosts.
+func Connect(ctx context.Context, opts Options) (Session, error) {
 	opts = opts.WithDefaults()
-	host, err := ResolveHost(opts)
-	if err != nil {
-		return nil, err
-	}
-	intent, err := HostIntent(opts.ConfigPath, host)
-	if err != nil {
-		return nil, err
-	}
-
 	client, dialErr := dialManager(ctx, opts.Layout.Socket, opts.Version)
-	replace := dialErr != nil && socketLive(opts.Layout.Socket)
-	if dialErr == nil {
-		status, statusErr := client.Status(ctx)
-		if statusErr == nil && status.Host == core.HostAlias(host) {
-			if managerMatches(status, host, intent) {
-				return client, nil
-			}
-			updateErr := client.UpdateIntent(ctx, intent)
-			if updateErr == nil {
-				return client, nil
-			}
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				_ = client.Close(context.Background())
-				return nil, ctxErr
-			}
+	if dialErr != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
+		if err := os.MkdirAll(opts.Layout.Dir, 0700); err != nil {
+			return nil, err
+		}
+		svc, err := newManagerService(ctx, opts, "")
+		if err != nil {
+			return nil, err
+		}
+		if socketLive(opts.Layout.Socket) {
+			err = reinstallService(svc, opts.Layout)
+		} else {
+			err = ensureService(svc, opts.Layout)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("could not start the manager: %w", err)
+		}
+		client, err = waitManager(ctx, opts.Layout.Socket, opts.Version, managerStartWait)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := client.Reload(ctx, opts.HostFlag); err != nil {
 		_ = client.Close(context.Background())
-		replace = true
-	}
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
-	if err := os.MkdirAll(opts.Layout.Dir, 0o700); err != nil {
-		return nil, err
-	}
-
-	svc, err := newManagerService(ctx, opts, host)
-	if err != nil {
-		return nil, err
-	}
-	if replace {
-		err = reinstallService(svc, opts.Layout)
-	} else {
-		err = ensureService(svc, opts.Layout)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("could not start the manager: %w", err)
-	}
-	client, err = waitManager(ctx, opts.Layout.Socket, opts.Version, managerStartWait)
-	if err != nil {
 		return nil, err
 	}
 	return client, nil
-}
-
-func managerMatches(status core.Status, host string, intent core.ForwardingIntent) bool {
-	if status.Host != core.HostAlias(host) || !slices.Equal(status.WorkingDirectoryRules, intent.WorkingDirectoryRules) {
-		return false
-	}
-	rememberedForwards := make([]core.RememberedForward, 0, len(status.Forwards))
-	publishedForwards := make([]core.PublishedForward, 0, len(status.Forwards))
-	for _, forward := range status.Forwards {
-		switch {
-		case forward.Direction == core.LocalToRemote:
-			publishedForwards = append(publishedForwards, core.PublishedForward{
-				LocalPort: forward.LocalPort, RemotePort: forward.PreferredRemotePort,
-			})
-		case !forward.Automatic:
-			rememberedForwards = append(rememberedForwards, core.RememberedForward{
-				RemotePort:    forward.RemotePort,
-				LocalPort:     forward.PreferredLocalPort,
-				AllowFallback: forward.AllowFallback,
-			})
-		}
-	}
-	return slices.Equal(rememberedForwards, intent.RememberedForwards) &&
-		slices.Equal(publishedForwards, intent.PublishedForwards)
 }
 
 // Serve runs the Manager in the current process. Installed service definitions
 // invoke this hidden command.
 func Serve(ctx context.Context, opts Options) error {
 	opts = opts.WithDefaults()
-	host, err := ResolveHost(opts)
-	if err != nil {
-		return err
-	}
+	host := opts.HostFlag
 	svc, err := newManagerService(ctx, opts, host)
 	if err != nil {
 		return err

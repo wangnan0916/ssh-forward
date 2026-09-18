@@ -44,10 +44,10 @@ func (a *Adapter) validateAlias(ctx context.Context, alias string) error {
 }
 
 func (a *Adapter) configArguments() []string {
-	if a.configFile == "" {
-		return nil
+	if a.configFile == "" || slices.Contains(a.connectionArguments, "-F") {
+		return slices.Clone(a.connectionArguments)
 	}
-	return []string{"-F", a.configFile}
+	return append(slices.Clone(a.connectionArguments), "-F", a.configFile)
 }
 
 func backendError(diagnostic string) error {

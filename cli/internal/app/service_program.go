@@ -42,7 +42,7 @@ func serviceConfig(opts Options, host string, wait func()) (*service.Config, err
 	return &service.Config{
 		Name:             managerServiceName,
 		DisplayName:      "ssh-forward manager",
-		Description:      "Keeps selected Development Host ports available on local IPv4 networks.",
+		Description:      "Keeps configured Development Hosts forwarding ports concurrently.",
 		Executable:       executable,
 		Arguments:        arguments,
 		WorkingDirectory: opts.Layout.Dir,
@@ -60,13 +60,15 @@ func serviceConfig(opts Options, host string, wait func()) (*service.Config, err
 }
 
 type managerProgram struct {
-	ctx      context.Context
-	opts     Options
-	host     string
-	done     chan struct{}
-	manager  core.Manager
-	server   *http.Server
-	listener net.Listener
+	ctx           context.Context
+	opts          Options
+	host          string
+	done          chan struct{}
+	manager       *managerPool
+	server        *http.Server
+	listener      net.Listener
+	cancelMonitor context.CancelFunc
+	monitorDone   chan struct{}
 }
 
 func newManagerProgram(ctx context.Context, opts Options, host string) *managerProgram {
@@ -81,12 +83,41 @@ func (p *managerProgram) Start(service.Service) error {
 	if err != nil {
 		return err
 	}
-	manager, err := inProcess(p.host, p.opts.SSHConfigPath, p.opts.ConfigPath, p.opts.Layout.Dir)
-	if err != nil {
+	manager := &managerPool{
+		configPath: p.opts.ConfigPath,
+		managers:   make(map[string]core.Manager),
+		createTarget: func(host string, target HostTarget, intent core.ForwardingIntent) (core.Manager, error) {
+			return targetManager(host, target, intent, p.opts)
+		},
+	}
+	_ = DiscoverHosts(p.ctx, p.opts.ConfigPath)
+	if err := manager.reload(p.ctx, p.host); err != nil {
+		_ = manager.Close(context.Background())
 		_ = listener.Close()
 		_ = os.Remove(p.opts.Layout.Socket)
 		return err
 	}
+	monitorCtx, cancel := context.WithCancel(p.ctx)
+	p.cancelMonitor = cancel
+	p.monitorDone = make(chan struct{})
+	go func() {
+		defer close(p.monitorDone)
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			if err := DiscoverHosts(monitorCtx, p.opts.ConfigPath); err != nil && monitorCtx.Err() == nil {
+				fmt.Fprintln(p.opts.Stderr, "Host discovery:", err)
+			}
+			if err := manager.reload(monitorCtx, ""); err != nil && monitorCtx.Err() == nil {
+				fmt.Fprintln(p.opts.Stderr, "Reload hosts:", err)
+			}
+			select {
+			case <-monitorCtx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 	p.listener = listener
 	p.manager = manager
 	p.server = &http.Server{
@@ -113,6 +144,10 @@ func (p *managerProgram) Stop(service.Service) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	var err error
+	if p.cancelMonitor != nil {
+		p.cancelMonitor()
+		<-p.monitorDone
+	}
 	if p.server != nil {
 		err = p.server.Shutdown(ctx)
 	}

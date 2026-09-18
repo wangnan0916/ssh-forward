@@ -19,7 +19,7 @@
   Development Host for a Published Forward.
 - **Remembered Forward**: persistent intent to map one Remote Port to a
   Preferred Local Port, with or without temporary fallback.
-- **Working Directory Rule**: persistent, host-scoped absolute glob pattern
+- **Working Directory Rule**: persistent absolute glob pattern, global unless explicitly scoped,
   matched against a Remote Listener's observed working directory. `**`
   matches across directory levels.
 - **Automatic Forward**: a Forward that exists only while a Remote Listener
@@ -38,6 +38,14 @@
   Process name and working directory are best-effort volatile metadata.
 - **Discovery**: the live remote scan, in `connecting`, `active`, or `failed`
   state.
-- **Manager**: one background process per OS user. It observes one Development
-  Host, keeps its Remembered and Published Forwards active, and reconciles
-  Automatic Forwards from Working Directory Rules.
+- **Manager**: one background process per OS user. It observes configured Development
+  Hosts concurrently, keeps their Remembered and Published Forwards active,
+  and reconciles Automatic Forwards from global listener-port and working-directory
+  rules, with optional host-specific rules. Each host has its own runtime and
+  OpenSSH connection. Active local SSH targets are remembered automatically;
+  ignored hosts remain excluded until explicitly enabled.
+
+- **Global Rule**: a listener-port mapping or working-directory glob applied to
+  every enabled host. It only creates forwards for observed matching listeners.
+- **Discovered Host**: an SSH destination and supported connection parameters
+  observed in a same-user SSH process, persisted separately from user rules.

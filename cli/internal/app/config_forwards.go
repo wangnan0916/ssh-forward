@@ -9,90 +9,59 @@ import (
 )
 
 func RemoveRememberedForward(path, host string, remotePort uint16) (bool, error) {
-	if host == "" || remotePort == 0 {
-		return false, errors.New("host and remote port are required")
-	}
-	config, err := loadConfigForWrite(path)
-	if err != nil {
-		return false, err
-	}
-	forwards := config.RememberedForwards[host]
-	index, found := rememberedForwardIndex(forwards, remotePort)
-	if !found {
-		return false, nil
-	}
-	forwards = slices.Delete(forwards, index, index+1)
-	if len(forwards) == 0 {
-		delete(config.RememberedForwards, host)
-	} else {
-		config.RememberedForwards[host] = forwards
-	}
-	return true, saveConfig(path, config)
+	return updateRememberedForward(path, host, core.RememberedForward{RemotePort: remotePort}, false)
 }
 
-func SetRememberedForward(configPath, host string, forward core.RememberedForward) (bool, error) {
-	if host == "" {
-		return false, errors.New("host is required")
-	}
+func SetRememberedForward(path, host string, forward core.RememberedForward) (bool, error) {
+	return updateRememberedForward(path, host, forward, true)
+}
+
+func updateRememberedForward(path, host string, forward core.RememberedForward, adding bool) (bool, error) {
 	forward, err := normalizedRememberedForward(forward)
 	if err != nil {
 		return false, err
 	}
-	config, err := loadConfigForWrite(configPath)
-	if err != nil {
-		return false, err
-	}
-	if config.RememberedForwards == nil {
-		config.RememberedForwards = make(map[string][]core.RememberedForward)
-	}
-	forwards := config.RememberedForwards[host]
-	index, found := rememberedForwardIndex(forwards, forward.RemotePort)
-	if found && forwards[index] == forward {
-		return false, nil
-	}
-	for _, existing := range forwards {
-		if existing.RemotePort != forward.RemotePort && existing.LocalPort == forward.LocalPort {
-			return false, fmt.Errorf(
-				"config.jsonc: local port %d is already used by remote port %d for %s",
-				forward.LocalPort, existing.RemotePort, host,
-			)
-		}
-	}
-	if found {
-		forwards[index] = forward
-	} else {
-		forwards = slices.Insert(forwards, index, forward)
-	}
-	if err := validateLocalPortReservations(forwards, config.PublishedForwards[host]); err != nil {
-		return false, err
-	}
-	config.RememberedForwards[host] = forwards
-	return true, saveConfig(configPath, config)
-}
-
-func RemovePublishedForward(path, host string, localPort uint16) (bool, error) {
-	if host == "" || localPort == 0 {
-		return false, errors.New("host and local port are required")
-	}
 	config, err := loadConfigForWrite(path)
 	if err != nil {
 		return false, err
 	}
-	forwards := config.PublishedForwards[host]
-	index, found := publishedForwardIndex(forwards, localPort)
-	if !found {
-		return false, nil
-	}
-	forwards = slices.Delete(forwards, index, index+1)
-	if len(forwards) == 0 {
-		delete(config.PublishedForwards, host)
+	rules := config.scope(host)
+	index, found := rememberedForwardIndex(rules.Forwards, forward.RemotePort)
+	if !adding {
+		if !found {
+			return false, nil
+		}
+		rules.Forwards = slices.Delete(rules.Forwards, index, index+1)
 	} else {
-		config.PublishedForwards[host] = forwards
+		if found && rules.Forwards[index] == forward {
+			return false, nil
+		}
+		for _, existing := range rules.Forwards {
+			if existing.RemotePort != forward.RemotePort && existing.LocalPort == forward.LocalPort {
+				return false, fmt.Errorf("config.jsonc: local port %d is already used by remote port %d for %s", forward.LocalPort, existing.RemotePort, host)
+			}
+		}
+		if found {
+			rules.Forwards[index] = forward
+		} else {
+			rules.Forwards = slices.Insert(rules.Forwards, index, forward)
+		}
+		if err := validateLocalPortReservations(rules.Forwards, rules.Published); err != nil {
+			return false, err
+		}
 	}
-	return true, saveConfig(path, config)
+	return true, config.save(path)
 }
 
-func SetPublishedForward(configPath, host string, forward core.PublishedForward) (bool, error) {
+func RemovePublishedForward(path, host string, localPort uint16) (bool, error) {
+	return updatePublishedForward(path, host, core.PublishedForward{LocalPort: localPort}, false)
+}
+
+func SetPublishedForward(path, host string, forward core.PublishedForward) (bool, error) {
+	return updatePublishedForward(path, host, forward, true)
+}
+
+func updatePublishedForward(path, host string, forward core.PublishedForward, adding bool) (bool, error) {
 	if host == "" {
 		return false, errors.New("host is required")
 	}
@@ -100,36 +69,36 @@ func SetPublishedForward(configPath, host string, forward core.PublishedForward)
 	if err != nil {
 		return false, err
 	}
-	config, err := loadConfigForWrite(configPath)
+	config, err := loadConfigForWrite(path)
 	if err != nil {
 		return false, err
 	}
-	if config.PublishedForwards == nil {
-		config.PublishedForwards = make(map[string][]core.PublishedForward)
-	}
-	forwards := config.PublishedForwards[host]
-	index, found := publishedForwardIndex(forwards, forward.LocalPort)
-	if found && forwards[index] == forward {
-		return false, nil
-	}
-	for _, existing := range forwards {
-		if existing.LocalPort != forward.LocalPort && existing.RemotePort == forward.RemotePort {
-			return false, fmt.Errorf(
-				"config.jsonc: published remote port %d is already used by local port %d for %s",
-				forward.RemotePort, existing.LocalPort, host,
-			)
+	rules := config.scope(host)
+	index, found := publishedForwardIndex(rules.Published, forward.LocalPort)
+	if !adding {
+		if !found {
+			return false, nil
+		}
+		rules.Published = slices.Delete(rules.Published, index, index+1)
+	} else {
+		if found && rules.Published[index] == forward {
+			return false, nil
+		}
+		for _, existing := range rules.Published {
+			if existing.LocalPort != forward.LocalPort && existing.RemotePort == forward.RemotePort {
+				return false, fmt.Errorf("config.jsonc: published remote port %d is already used by local port %d for %s", forward.RemotePort, existing.LocalPort, host)
+			}
+		}
+		if found {
+			rules.Published[index] = forward
+		} else {
+			rules.Published = slices.Insert(rules.Published, index, forward)
+		}
+		if err := validateLocalPortReservations(rules.Forwards, rules.Published); err != nil {
+			return false, err
 		}
 	}
-	if found {
-		forwards[index] = forward
-	} else {
-		forwards = slices.Insert(forwards, index, forward)
-	}
-	if err := validateLocalPortReservations(config.RememberedForwards[host], forwards); err != nil {
-		return false, err
-	}
-	config.PublishedForwards[host] = forwards
-	return true, saveConfig(configPath, config)
+	return true, config.save(path)
 }
 
 func rememberedForwardIndex(forwards []core.RememberedForward, remotePort uint16) (int, bool) {

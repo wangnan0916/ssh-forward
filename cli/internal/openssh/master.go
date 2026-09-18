@@ -75,6 +75,11 @@ func (a *Adapter) startMaster(host core.HostAlias) (*sshMaster, error) {
 		"-M", "-N", "-T", "-g", "-S", a.controlPath(host),
 		"-o", "ClearAllForwardings=yes",
 		"-o", "ControlMaster=yes", "-o", "ControlPersist=no",
+		// TCP can remain apparently established after a reboot or a dropped
+		// network path. Encrypted keepalives force the master to exit so the
+		// existing discovery/forward retry loops can establish a fresh session.
+		"-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3",
+		"-o", "ConnectTimeout=10", "-o", "ConnectionAttempts=1",
 		string(host),
 	)
 	command := a.command(arguments...)
@@ -139,6 +144,8 @@ func (a *Adapter) runLegacyControl(
 }
 
 func (a *Adapter) runControlCommand(ctx context.Context, arguments []string) error {
+	ctx, cancel := context.WithTimeout(ctx, a.controlTimeout)
+	defer cancel()
 	command := a.commandContext(ctx, arguments...)
 	stderr := &boundedBuffer{limit: maxStderrTailBytes}
 	command.Stdout = io.Discard
@@ -184,6 +191,19 @@ func (a *Adapter) cancelForward(
 	master *sshMaster,
 	forward controlForward,
 ) {
+	// A retiring worker must never cancel a forward on a replacement master
+	// that has reused this host's control socket. Serialize this check with
+	// replacement and skip cleanup once the original transport has exited.
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.masters[host] != master {
+		return
+	}
+	select {
+	case <-master.done:
+		return
+	default:
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), a.waitDelay)
 	defer cancel()
 	if err := a.runControl(ctx, host, "cancel", &forward); err != nil {
@@ -192,7 +212,11 @@ func (a *Adapter) cancelForward(
 }
 
 func (a *Adapter) controlPath(host core.HostAlias) string {
-	digest := sha256.Sum256([]byte(host))
+	identity := string(host)
+	if a.controlIdentity != "" {
+		identity = a.controlIdentity
+	}
+	digest := sha256.Sum256([]byte(identity))
 	// Commands run inside the private control directory. A bounded relative
 	// path avoids the short Unix-domain socket path limit on macOS while still
 	// ignoring any user-configured ControlPath.
