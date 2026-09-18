@@ -127,7 +127,8 @@ Manager, forward failures, and a real remote scan without repairing anything.
 
 The remote scanner reads Linux procfs and reports at most 256 listeners reachable
 at IPv4 loopback. Same-user IPv4 and dual-stack wildcard listeners are included;
-IPv6-only listeners are excluded. Executable names and working directories are
+IPv6-only listeners are excluded. Loopback listeners that speak SSH (or whose
+executable is `sshd`) are omitted. Executable names and working directories are
 best effort. UDP, Unix sockets, arbitrary publication bind addresses, and dynamic
 remote ports are not supported.
 
