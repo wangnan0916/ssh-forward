@@ -54,7 +54,7 @@ type publishCommand struct {
 type unpublishCommand struct{ publishOptions }
 type statusCommand struct {
 	jsonOption
-	Watch bool `help:"Refresh until interrupted."`
+	Watch bool `help:"Replace status until interrupted."`
 }
 type doctorCommand struct{ jsonOption }
 type hostCommands struct {
