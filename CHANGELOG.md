@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.0](https://github.com/wangnan0916/ssh-forward/compare/v0.8.0...v0.9.0) (2026-09-18)
+
+
+### Features
+
+* omit SSH listeners and enrich Docker published ports ([#24](https://github.com/wangnan0916/ssh-forward/issues/24)) ([5c7619e](https://github.com/wangnan0916/ssh-forward/commit/5c7619eef26c4bafebbec51217e487b09f59eda6))
+
+
+### Bug Fixes
+
+* auto-monitor discovered SSH hosts without host add ([#22](https://github.com/wangnan0916/ssh-forward/issues/22)) ([90fbdbf](https://github.com/wangnan0916/ssh-forward/commit/90fbdbf0076c7e87b6d5f709af64a27fea868db0))
+
 ## [0.8.0](https://github.com/wangnan0916/ssh-forward/compare/v0.7.0...v0.8.0) (2026-09-18)
 
 
