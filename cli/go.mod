@@ -4,7 +4,7 @@ go 1.26.6
 
 require (
 	github.com/alecthomas/kong v1.16.1
-	github.com/bmatcuk/doublestar/v4 v4.10.0
+	github.com/bmatcuk/doublestar/v4 v4.10.2
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/gofrs/flock v0.13.1
 	github.com/google/renameio/v2 v2.0.2
