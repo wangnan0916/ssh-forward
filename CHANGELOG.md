@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/wangnan0916/ssh-forward/compare/v0.12.0...v0.12.1) (2026-09-28)
+
+
+### Bug Fixes
+
+* hide ignored apps and use app ignore ([#33](https://github.com/wangnan0916/ssh-forward/issues/33)) ([aac28b5](https://github.com/wangnan0916/ssh-forward/commit/aac28b579da92346141e974a306a05517b1c07b5))
+
 ## [0.12.0](https://github.com/wangnan0916/ssh-forward/compare/v0.11.0...v0.12.0) (2026-09-28)
 
 
