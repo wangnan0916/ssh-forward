@@ -43,7 +43,7 @@ when its listener matches. `*` matches within a path component; `**` crosses
 components. Quote globs to prevent local shell expansion. Automatic forwards
 stop when the matching listener disappears; missing process metadata cannot
 match a directory rule. `add --app NAME` skips automatic forwards for that
-status APP name on every host. An explicit remembered port still forwards.
+status APP name on every host, including the available list. An explicit remembered port still forwards.
 
 Use `--host` to scope a rule or retain a fixed mapping while the service is absent:
 

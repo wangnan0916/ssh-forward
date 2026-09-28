@@ -77,7 +77,7 @@ port for publications. Scoped fixed imports override global listener-port rules,
 which override directory matches. A globally ignored app name skips listeners
 with that executable before either automatic rule. Automatic imports disappear with the listener;
 fixed imports and publications persist. Desired published remote ports cannot
-create automatic imports; only active publications hide available listeners.
+create automatic imports; active publications and ignored apps hide available listeners.
 
 Implicit same-port imports and automatic imports may try 20 higher local ports.
 Explicit local mappings and all remote publication ports are strict. Actual

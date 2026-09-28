@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -51,14 +52,15 @@ func Render(writer io.Writer, status core.Status, options Options) error {
 
 	available := make([]core.Listener, 0, len(status.Listeners))
 	for _, listener := range status.Listeners {
-		if _, found := forwardedPorts[listener.Port]; !found {
+		_, forwarded := forwardedPorts[listener.Port]
+		if !forwarded && !ignoredListener(status.IgnoredApps, listener) {
 			available = append(available, listener)
 		}
 	}
 	if len(available) != 0 {
 		sections = append(sections, renderAvailable(available, options))
 	}
-	if len(status.Forwards) == 0 && len(available) == 0 && status.Discovery.State == core.DiscoveryActive {
+	if len(status.Forwards) == 0 && len(status.Listeners) == 0 && status.Discovery.State == core.DiscoveryActive {
 		sections = append(sections, "No loopback TCP listeners found.")
 	}
 
@@ -78,6 +80,10 @@ func renderSummary(status core.Status, options Options) string {
 		summary += "\n" + detailLabel + "  " + detail
 	}
 	return summary
+}
+
+func ignoredListener(ignored []string, listener core.Listener) bool {
+	return listener.App != "" && slices.Contains(ignored, listener.App)
 }
 
 func hidesAvailableListener(forward core.ForwardStatus) bool {

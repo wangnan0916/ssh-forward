@@ -38,6 +38,7 @@ func (m *manager) Status(ctx context.Context) (Status, error) {
 		Listeners:             listeners,
 		Forwards:              forwards,
 		WorkingDirectoryRules: slices.Clone(m.intent.WorkingDirectoryRules),
+		IgnoredApps:           slices.Clone(m.intent.IgnoredApps),
 	}, nil
 }
 

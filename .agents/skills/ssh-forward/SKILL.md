@@ -108,7 +108,7 @@ ssh-forward remove --app hunk --json
 ```
 
 Use the APP column value. `--app` is global and rejects `--host`. After adding,
-automatic forwards for that app disappear. An explicit remembered port remains.
+that app disappears from FORWARDS and AVAILABLE. An explicit remembered port remains.
 
 ### Local service to Development Host
 

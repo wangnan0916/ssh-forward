@@ -69,6 +69,7 @@ type Status struct {
 	Listeners             []Listener      `json:"listeners"`
 	Forwards              []ForwardStatus `json:"forwards"`
 	WorkingDirectoryRules []string        `json:"working_directory_rules,omitempty"`
+	IgnoredApps           []string        `json:"ignored_apps,omitempty"`
 }
 
 type RememberedForward struct {

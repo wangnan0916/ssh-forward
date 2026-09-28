@@ -74,6 +74,14 @@ func TestRenderStatusFeatures(t *testing.T) {
 				{Direction: core.LocalToRemote, LocalPort: 9333, PreferredRemotePort: 19333, RemotePort: 19333, State: core.ForwardFailed, Diagnostic: "remote_port_unavailable"},
 			},
 		}, options: Options{Hyperlinks: true}, contains: []string{"PUBLISHED", "LOCAL  REMOTE TARGET    KIND", " 9222  127.0.0.1:19222  published", "PUBLISH NEEDS ATTENTION", "9333  127.0.0.1:19333  published  the Development Host port could not be opened"}, absent: []string{"/should/not/appear", "http://127.0.0.1:19222"}},
+		{name: "ignored app", status: core.Status{
+			Listeners: []core.Listener{
+				{Port: 15173, App: "node", WorkingDirectory: "/home/shampoo/Workspace/nears/workspaces/daily-development/caoliao-editor"},
+				{Port: 47657, App: "hunk", WorkingDirectory: "/home/shampoo/Workspace/nears/workspaces/daily-development/caoliao-editor"},
+			},
+			Forwards:    []core.ForwardStatus{{RemotePort: 15173, LocalPort: 15173, State: core.ForwardActive, Automatic: true}},
+			IgnoredApps: []string{"hunk"},
+		}, contains: []string{"caoliao-editor   15173"}, absent: []string{"47657", "AVAILABLE"}},
 		{name: "empty", contains: []string{"No loopback TCP listeners found."}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
