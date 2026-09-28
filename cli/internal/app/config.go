@@ -16,6 +16,7 @@ type configFile struct {
 	IgnoredHosts                []string                            `json:"ignored_hosts,omitempty"`
 	GlobalForwards              []core.RememberedForward            `json:"global_forwards,omitempty"`
 	GlobalWorkingDirectoryRules []string                            `json:"global_working_directory_rules,omitempty"`
+	GlobalIgnoredApps           []string                            `json:"global_ignored_apps,omitempty"`
 	SchemaVersion               int                                 `json:"schema_version"`
 	DefaultHost                 string                              `json:"default_host,omitempty"`
 	LegacyForwards              map[string][]uint16                 `json:"forwards,omitempty"`
@@ -44,6 +45,7 @@ type scopeRules struct {
 	Forwards    []core.RememberedForward
 	Published   []core.PublishedForward
 	Directories []string
+	IgnoredApps []string
 }
 
 func (c configuration) scope(host string) *scopeRules {
@@ -55,7 +57,7 @@ func (c configuration) scope(host string) *scopeRules {
 
 func (file configFile) model() configuration {
 	c := configuration{Hosts: file.Hosts, IgnoredHosts: file.IgnoredHosts, Rules: make(map[string]*scopeRules)}
-	c.Rules[""] = &scopeRules{Forwards: file.GlobalForwards, Directories: file.GlobalWorkingDirectoryRules}
+	c.Rules[""] = &scopeRules{Forwards: file.GlobalForwards, Directories: file.GlobalWorkingDirectoryRules, IgnoredApps: file.GlobalIgnoredApps}
 	for host, rules := range file.RememberedForwards {
 		c.scope(host).Forwards = rules
 	}
@@ -86,7 +88,7 @@ func (c configuration) file() (configFile, error) {
 			if len(rules.Published) > 0 {
 				return configFile{}, errors.New("published forwards require a host")
 			}
-			file.GlobalForwards, file.GlobalWorkingDirectoryRules = rules.Forwards, rules.Directories
+			file.GlobalForwards, file.GlobalWorkingDirectoryRules, file.GlobalIgnoredApps = rules.Forwards, rules.Directories, rules.IgnoredApps
 			continue
 		}
 		if len(rules.Forwards) > 0 {
@@ -136,5 +138,6 @@ func effectiveIntent(config configuration, host string) core.ForwardingIntent {
 		RememberedForwards:    slices.Clone(scoped.Forwards),
 		PublishedForwards:     slices.Clone(scoped.Published),
 		WorkingDirectoryRules: append(slices.Clone(global.Directories), scoped.Directories...),
+		IgnoredApps:           slices.Clone(global.IgnoredApps),
 	}
 }

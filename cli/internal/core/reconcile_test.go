@@ -146,7 +146,7 @@ func FuzzReconciliationSequence(f *testing.F) {
 				PublishedForwards:     slices.Collect(maps.Values(published)),
 				WorkingDirectoryRules: []string{"/workspace/**"},
 			})
-			desired := buildDesiredForwards(intent.RememberedForwards, intent.PublishedForwards, listeners, intent.WorkingDirectoryRules)
+			desired := buildDesiredForwards(intent.RememberedForwards, intent.PublishedForwards, listeners, intent.WorkingDirectoryRules, intent.IgnoredApps)
 			plan := planReconciliation(desired, workers, reservedLocalPorts(intent.PublishedForwards))
 			assertReconciliationPlan(t, plan, desired, workers)
 

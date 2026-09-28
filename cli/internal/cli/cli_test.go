@@ -89,8 +89,8 @@ func TestCommandSurface(t *testing.T) {
 		present, absent []string
 	}{
 		{"", []string{"hostname, IP, or user@host", "doctor", "uninstall"}, []string{"  manager", "  policy", "  watch"}},
-		{"add", []string{"--pwd", "--local"}, []string{"--dir"}},
-		{"remove", []string{"--pwd"}, []string{"--local"}},
+		{"add", []string{"--pwd", "--local", "--app"}, []string{"--dir"}},
+		{"remove", []string{"--pwd", "--app"}, []string{"--local"}},
 		{"publish", []string{"--remote"}, nil},
 		{"unpublish", nil, []string{"--remote"}},
 		{"status", []string{"--watch", "--json"}, nil},
@@ -150,6 +150,8 @@ func TestRuleCommandValidation(t *testing.T) {
 		{[]string{"unpublish", "invalid", "--host", "dev"}, "unpublish requires one local port 1..65535"},
 		{[]string{"add", "--pwd", "workspace/**"}, ""},
 		{[]string{"add", "--pwd", "/workspace/**", "--local", "15173"}, ""},
+		{[]string{"add", "--app", "hunk", "--host", "dev"}, "add --app NAME is a global rule"},
+		{[]string{"add", "--app", "hunk name"}, `invalid app name: "hunk name"`},
 		{[]string{"add", "8080", "--host=-bad"}, "invalid host name"},
 		{[]string{"add", "0"}, ""}, {[]string{"add", "5173", "--local", "0"}, ""},
 		{[]string{"publish", "9222", "--remote", "0", "--host", "dev"}, ""},

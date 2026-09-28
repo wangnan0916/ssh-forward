@@ -42,7 +42,8 @@ Rules are global by default. Every remembered or discovered host participates
 when its listener matches. `*` matches within a path component; `**` crosses
 components. Quote globs to prevent local shell expansion. Automatic forwards
 stop when the matching listener disappears; missing process metadata cannot
-match a directory rule.
+match a directory rule. `add --app NAME` skips automatic forwards for that
+status APP name on every host. An explicit remembered port still forwards.
 
 Use `--host` to scope a rule or retain a fixed mapping while the service is absent:
 
@@ -51,6 +52,8 @@ ssh-forward --host my-dev add 8443 --local 18443
 ssh-forward --host my-dev status --json
 ssh-forward --host my-dev remove 8443
 ssh-forward remove --pwd '/home/me/Workspace/**'
+ssh-forward add --app hunk
+ssh-forward remove --app hunk
 ```
 
 Imports bind **local `0.0.0.0`** and target remote `127.0.0.1`. They are reachable
@@ -148,6 +151,7 @@ addresses, and dynamic remote ports are not supported.
   "hosts": {"dev": {"target": "dev"}},
   "global_forwards": [{"remote_port": 5173}],
   "global_working_directory_rules": ["/workspace/**"],
+  "global_ignored_apps": ["hunk"],
   "remembered_forwards": {"dev": [{"remote_port": 8443, "local_port": 18443}]},
   "published_forwards": {"dev": [{"local_port": 9222}]},
   "ignored_hosts": []

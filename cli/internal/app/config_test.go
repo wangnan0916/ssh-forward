@@ -206,6 +206,7 @@ func TestConfigRejectsInvalidInput(t *testing.T) {
 		{"unsupported schema", `{"schema_version":7}`, "schema_version"},
 		{"relative directory", `{"schema_version":2,"working_directory_rules":{"dev":["workspace/**"]}}`, "working-directory glob"},
 		{"malformed glob", `{"schema_version":2,"working_directory_rules":{"dev":["/workspace/["]}}`, "working-directory glob"},
+		{"invalid app", `{"schema_version":6,"global_ignored_apps":["hunk name"]}`, "invalid app name"},
 		{"truncated JSONC", `{"schema_version":1,`, ""},
 		{"duplicate remote publication", `{"schema_version":5,"published_forwards":{"dev":[{"local_port":9222,"remote_port":19222},{"local_port":9333,"remote_port":19222}]}}`, "published remote port 19222"},
 	} {
