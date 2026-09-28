@@ -4,6 +4,9 @@ import (
 	"maps"
 	"path"
 	"slices"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/bmatcuk/doublestar/v4"
 )
@@ -35,7 +38,29 @@ func normalizedForwardingIntent(intent ForwardingIntent) ForwardingIntent {
 	}
 	slices.Sort(patterns)
 	intent.WorkingDirectoryRules = slices.Compact(patterns)
+	intent.IgnoredApps = normalizedIgnoredApps(intent.IgnoredApps)
 	return intent
+}
+
+// ValidAppName accepts one executable name as shown in the status APP column.
+func ValidAppName(name string) bool {
+	return name != "" && len(name) <= 255 && utf8.ValidString(name) &&
+		!strings.ContainsAny(name, " \t\r\n/") &&
+		strings.IndexFunc(name, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }) < 0
+}
+
+func normalizedIgnoredApps(apps []string) []string {
+	valid := make([]string, 0, len(apps))
+	for _, app := range apps {
+		if ValidAppName(app) {
+			valid = append(valid, app)
+		}
+	}
+	return slices.Compact(slices.Sorted(slices.Values(valid)))
+}
+
+func appIgnored(ignored []string, app string) bool {
+	return app != "" && slices.Contains(ignored, app)
 }
 
 func normalizedManagerRememberedForwards(forwards []RememberedForward) []RememberedForward {
@@ -80,6 +105,7 @@ func buildDesiredForwards(
 	published []PublishedForward,
 	listeners map[uint16]Listener,
 	workingDirectoryRules []string,
+	ignoredApps []string,
 	autoForwards ...RememberedForward,
 ) map[forwardKey]desiredForward {
 	desired := make(map[forwardKey]desiredForward, len(remembered)+len(published))
@@ -102,6 +128,9 @@ func buildDesiredForwards(
 		}
 	}
 	for port, listener := range listeners {
+		if appIgnored(ignoredApps, listener.App) {
+			continue
+		}
 		candidate, matched := automatic[port]
 		if !matched {
 			if !matchesWorkingDirectory(workingDirectoryRules, listener.WorkingDirectory) {

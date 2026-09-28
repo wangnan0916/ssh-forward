@@ -19,7 +19,25 @@ func TestBuildDesiredForwardsCombinesPersistentAndDiscoveredIntent(t *testing.T)
 			19222: {Port: 19222, WorkingDirectory: "/workspace/published"},
 		},
 		[]string{"/workspace/**"},
+		nil,
 	)
 	want := desiredForwardMap(desiredRememberedForward(remembered), desiredAutomaticForward(5173), desiredPublishedForward(published))
+	require.Equal(t, want, got)
+}
+
+func TestIgnoredAppSkipsAutomaticListeners(t *testing.T) {
+	remembered := RememberedForward{RemotePort: 47657, LocalPort: 47657}
+	got := buildDesiredForwards(
+		[]RememberedForward{remembered},
+		nil,
+		map[uint16]Listener{
+			47657: {Port: 47657, App: "hunk", WorkingDirectory: "/workspace/app"},
+			47658: {Port: 47658, App: "hunk", WorkingDirectory: "/workspace/app"},
+			15173: {Port: 15173, App: "node", WorkingDirectory: "/workspace/app"},
+		},
+		[]string{"/workspace/**"},
+		[]string{"hunk"},
+	)
+	want := desiredForwardMap(desiredRememberedForward(remembered), desiredAutomaticForward(15173))
 	require.Equal(t, want, got)
 }

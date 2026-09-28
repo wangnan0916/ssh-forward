@@ -87,6 +87,13 @@ func TestGlobalRuleCommandsIgnoreDefaultHost(t *testing.T) {
 	intent, err := app.HostIntent(path, "another")
 	require.NoError(t, err)
 	require.Falsef(t, len(intent.AutoForwards) != 0 || len(intent.WorkingDirectoryRules) != 1, "remove leaked: %+v", intent)
+	require.NoError(t, surface.Run(context.Background(), []string{"add", "--app", "hunk"}))
+	intent, err = app.HostIntent(path, "another")
+	require.NoError(t, err)
+	require.Equal(t, []string{"hunk"}, intent.IgnoredApps)
+	intent, err = app.HostIntent(path, "dev")
+	require.NoError(t, err)
+	require.Equal(t, []string{"hunk"}, intent.IgnoredApps)
 }
 
 func TestPublishRequiresExplicitHostEvenWithDefault(t *testing.T) {

@@ -70,7 +70,7 @@ func newManager(options managerOptions) *manager {
 
 	if m.backend == nil || m.host == "" {
 		m.discovery = DiscoveryStatus{State: DiscoveryFailed, Diagnostic: "not_configured"}
-		desiredForwards := buildDesiredForwards(m.intent.RememberedForwards, m.intent.PublishedForwards, m.listeners, m.intent.WorkingDirectoryRules, m.intent.AutoForwards...)
+		desiredForwards := buildDesiredForwards(m.intent.RememberedForwards, m.intent.PublishedForwards, m.listeners, m.intent.WorkingDirectoryRules, m.intent.IgnoredApps, m.intent.AutoForwards...)
 		for key, desired := range desiredForwards {
 			m.states[key] = forwardStatus(desired, ForwardFailed, "not_configured", desired.preferred)
 		}
@@ -105,7 +105,7 @@ func (m *manager) UpdateIntent(ctx context.Context, intent ForwardingIntent) err
 }
 
 func (m *manager) reconcileForwardsLocked() {
-	desiredForwards := buildDesiredForwards(m.intent.RememberedForwards, m.intent.PublishedForwards, m.listeners, m.intent.WorkingDirectoryRules, m.intent.AutoForwards...)
+	desiredForwards := buildDesiredForwards(m.intent.RememberedForwards, m.intent.PublishedForwards, m.listeners, m.intent.WorkingDirectoryRules, m.intent.IgnoredApps, m.intent.AutoForwards...)
 	for key := range m.states {
 		_, desired := desiredForwards[key]
 		_, running := m.forwardWorkers[key]

@@ -46,6 +46,7 @@ func normalizeConfig(file configFile) (configFile, error) {
 		file.IgnoredHosts = nil
 		file.GlobalForwards = nil
 		file.GlobalWorkingDirectoryRules = nil
+		file.GlobalIgnoredApps = nil
 	}
 	// Empty keys in historical per-host maps must not become global rules.
 	_, imports := file.RememberedForwards[""]
@@ -85,6 +86,7 @@ func (rules *scopeRules) normalize() error {
 		normalizeInto(&rules.Forwards, normalizedRememberedForwards),
 		normalizeInto(&rules.Published, normalizedPublishedForwards),
 		normalizeInto(&rules.Directories, normalizedWorkingDirectoryRules),
+		normalizeInto(&rules.IgnoredApps, normalizedIgnoredApps),
 	); err != nil {
 		return err
 	}

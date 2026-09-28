@@ -16,8 +16,8 @@ type commands struct {
 	Host      string           `help:"SSH target: alias, hostname, IP, or user@host; omit for global rules or all-host status."`
 	SSHConfig string           `help:"SSH client config file (default: ~/.ssh/config)."`
 	Version   kong.VersionFlag `help:"Print version and exit."`
-	Add       addCommand       `cmd:"" help:"Remember a global listener port or working-directory glob."`
-	Remove    removeCommand    `cmd:"" help:"Forget a remembered port or working-directory glob."`
+	Add       addCommand       `cmd:"" help:"Remember a global listener port, working-directory glob, or ignored app."`
+	Remove    removeCommand    `cmd:"" help:"Forget a remembered port, working-directory glob, or ignored app."`
 	Publish   publishCommand   `cmd:"" help:"Publish a local port on the Development Host; requires --host."`
 	Unpublish unpublishCommand `cmd:"" help:"Stop publishing a local port; requires --host."`
 	Status    statusCommand    `cmd:"" help:"Show listeners and forwards for all hosts."`
@@ -37,6 +37,7 @@ type importOptions struct {
 	jsonOption
 	Port string  `arg:"" optional:"" name:"PORT"`
 	Pwd  *string `help:"Absolute glob for remote process working directories."`
+	App  *string `help:"App name to leave out of automatic forwards. Global."`
 }
 type addCommand struct {
 	importOptions
@@ -103,6 +104,12 @@ func (c importOptions) edit(a *App, ctx context.Context, local *uint16, adding b
 	name := "add"
 	if !adding {
 		name = "remove"
+	}
+	if c.App != nil {
+		if c.Port != "" || c.Pwd != nil || local != nil || a.Options.HostFlag != "" {
+			return UsageError(fmt.Errorf("%s --app NAME is a global rule", name))
+		}
+		return a.rememberApp(ctx, *c.App, adding, c.JSON)
 	}
 	if c.Pwd != nil {
 		if c.Port != "" || local != nil {

@@ -74,7 +74,8 @@ reserved across all runtimes, even when the local application is absent.
 
 Worker identity is `(direction, service port)`: remote port for imports, local
 port for publications. Scoped fixed imports override global listener-port rules,
-which override directory matches. Automatic imports disappear with the listener;
+which override directory matches. A globally ignored app name skips listeners
+with that executable before either automatic rule. Automatic imports disappear with the listener;
 fixed imports and publications persist. Desired published remote ports cannot
 create automatic imports; only active publications hide available listeners.
 

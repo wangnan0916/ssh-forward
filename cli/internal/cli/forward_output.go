@@ -74,3 +74,18 @@ func (a *App) writeRememberWorkingDirectory(jsonOutput, adding, changed bool, ho
 	}
 	return nil
 }
+
+func (a *App) writeIgnoredApp(jsonOutput, adding, changed bool, name string) error {
+	if jsonOutput {
+		return a.writeJSON(map[string]any{mutationJSONKey(adding): changed, "app": name, "scope": "global"})
+	}
+	switch {
+	case adding && changed:
+		fmt.Fprintf(a.Options.Stdout, "Ignoring app %s.\n", name)
+	case adding:
+		fmt.Fprintf(a.Options.Stdout, "Already ignoring app %s.\n", name)
+	default:
+		fmt.Fprintf(a.Options.Stdout, "No longer ignoring app %s.\n", name)
+	}
+	return nil
+}

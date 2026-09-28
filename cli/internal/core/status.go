@@ -106,7 +106,7 @@ type ForwardTarget struct {
 // ForwardingIntent is the persistent intent a Manager reconciles. Remembered
 // and Published Forwards stay live independently of listener state. Working
 // Directory Rules create Automatic Forwards only for currently matching
-// listeners.
+// listeners. Ignored app names skip that automatic selection.
 type ForwardingIntent struct {
 	AutoForwards []RememberedForward `json:"auto_forwards,omitempty"`
 	// ReservedLocalPorts protects published local services across all hosts.
@@ -115,6 +115,7 @@ type ForwardingIntent struct {
 	RememberedForwards    []RememberedForward `json:"remembered_forwards"`
 	PublishedForwards     []PublishedForward  `json:"published_forwards"`
 	WorkingDirectoryRules []string            `json:"working_directory_rules"`
+	IgnoredApps           []string            `json:"ignored_apps,omitempty"`
 }
 
 var ErrManagerClosed = errors.New("manager is closed")

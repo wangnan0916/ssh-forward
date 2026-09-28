@@ -100,6 +100,16 @@ After adding a rule, confirm it appears in `working_directory_rules` from
 is `active` or `failed`. After removing a rule, confirm it is absent and any
 Forward selected only by that rule disappears.
 
+Skip automatic forwards for one status APP name on every host:
+
+```bash
+ssh-forward add --app hunk --json
+ssh-forward remove --app hunk --json
+```
+
+Use the APP column value. `--app` is global and rejects `--host`. After adding,
+automatic forwards for that app disappear. An explicit remembered port remains.
+
 ### Local service to Development Host
 
 Publish the Local Service on the same remote port or an explicit one:

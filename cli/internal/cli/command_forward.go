@@ -39,6 +39,17 @@ func (a *App) rememberWorkingDirectory(ctx context.Context, pattern string, addi
 	return a.writeRememberWorkingDirectory(jsonOutput, adding, changed, host, pattern)
 }
 
+func (a *App) rememberApp(ctx context.Context, name string, adding, jsonOutput bool) error {
+	changed, err := app.EditIgnoredApp(a.Options.ConfigPath, name, adding)
+	if errors.Is(err, app.ErrInvalidAppName) {
+		return UsageError(err)
+	}
+	if err := a.finishEdit(ctx, adding, changed, err, fmt.Sprintf("app %q is not ignored", name)); err != nil {
+		return err
+	}
+	return a.writeIgnoredApp(jsonOutput, adding, changed, name)
+}
+
 func (a *App) finishEdit(ctx context.Context, adding, changed bool, err error, missing string) error {
 	if err != nil {
 		return err
