@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/wangnan0916/ssh-forward/compare/v0.10.0...v0.11.0) (2026-09-28)
+
+
+### Features
+
+* collapse SSH targets that share a user and hostname ([#28](https://github.com/wangnan0916/ssh-forward/issues/28)) ([7d82da0](https://github.com/wangnan0916/ssh-forward/commit/7d82da0594f930030ef5a1df70f2144a662e1dd9))
+
 ## [0.10.0](https://github.com/wangnan0916/ssh-forward/compare/v0.9.0...v0.10.0) (2026-09-18)
 
 
