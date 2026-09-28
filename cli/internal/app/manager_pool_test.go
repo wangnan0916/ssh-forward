@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -45,7 +46,14 @@ func testPool(t *testing.T, config configFile) (*managerPool, map[string]*poolBa
 	path := filepath.Join(t.TempDir(), "config.jsonc")
 	require.NoError(t, saveConfig(path, config))
 	backends := make(map[string]*poolBackend)
-	pool := &managerPool{configPath: path, managers: make(map[string]core.Manager)}
+	pool := &managerPool{
+		configPath: path,
+		sshConfig:  filepath.Join(filepath.Dir(path), "missing-ssh-config"),
+		managers:   make(map[string]core.Manager),
+		resolve: func(_ context.Context, _ string, target HostTarget) (string, string, bool) {
+			return "test", target.Target + "\x00" + strings.Join(target.Arguments, "\x00"), true
+		},
+	}
 	pool.createTarget = func(host string, _ HostTarget, intent core.ForwardingIntent) (core.Manager, error) {
 		backend := &poolBackend{host: host}
 		backends[host] = backend
@@ -144,6 +152,24 @@ func TestPoolLoadsWithoutDefaultAndPreservesLiveStateOnInvalidConfig(t *testing.
 		awaitPoolStatus(t, pool, host, allPoolForwardsActive(1))
 		require.EqualValuesf(t, 0, backends[host].stops.Load(), "invalid config disrupted %s", host)
 	}
+}
+
+func TestSameUserAndHostShareOneRuntime(t *testing.T) {
+	pool, backends := testPool(t, configFile{Hosts: map[string]HostTarget{
+		"ubuntu": {Target: "ubuntu"}, "shampoo@ubuntu": {Target: "shampoo@ubuntu"},
+	}})
+	require.NotNil(t, pool.lookup("ubuntu"))
+	require.NotNil(t, pool.lookup("shampoo@ubuntu"))
+	pool.resolve = func(_ context.Context, _ string, target HostTarget) (string, string, bool) {
+		if target.Target == "ubuntu" || target.Target == "shampoo@ubuntu" {
+			return "shampoo", "100.83.29.59", true
+		}
+		return "", "", false
+	}
+	require.NoError(t, pool.reload(context.Background(), ""))
+	require.NotNil(t, pool.lookup("ubuntu"))
+	require.Nil(t, pool.lookup("shampoo@ubuntu"))
+	require.True(t, backends["shampoo@ubuntu"].closed.Load())
 }
 
 func TestPoolReservesPublishedServicePortsAcrossHosts(t *testing.T) {

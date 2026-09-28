@@ -93,7 +93,11 @@ reading exact native argv and excluding its own process tree. It remembers new
 targets in a locked `discovered-hosts.json` registry; closing the original SSH
 session does not forget them. Supported options include port, user, absolute
 identity/config paths, jump hosts, and selected `-o` settings. Different settings
-receive distinct IDs. Unsupported argv options are dropped; the destination still
+receive distinct IDs. Targets that OpenSSH resolves to the same user and hostname are one host.
+Port, jump host, and identity files do not split that machine. The SSH
+config alias is kept, such as `ubuntu` when `Host ubuntu` already sets `User`.
+If several aliases match, the host recorded in config.jsonc is kept.
+Unsupported argv options are dropped; the destination still
 auto-monitors through OpenSSH defaults and SSH config. Use `host add` only when
 you need explicit overrides (`--target`, `--port`, `--user`, `--identity`,
 `--jump`, or `--ssh-config`).

@@ -61,7 +61,10 @@ tree and control commands. Discovered targets persist separately under a
 cancellable file lock. Unsupported options are dropped so the destination still
 auto-monitors via OpenSSH config and defaults; remote commands and process
 environments are never persisted. Explicit host records override discoveries.
-Ignoring a destination excludes its variants.
+Ignoring a destination excludes its variants. Destinations that OpenSSH
+resolves to the same user and hostname share one runtime. Port, jump, and
+identity files do not split that machine. An SSH config alias is kept. If several
+aliases match, the host recorded in config.jsonc is kept.
 
 Each runtime owns its transport and failures. Only changed/removed targets are
 replaced; equivalent intent preserves workers. Published local service ports are

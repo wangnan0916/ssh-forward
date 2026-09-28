@@ -19,6 +19,8 @@ type managerPool struct {
 	mu           sync.Mutex
 	closed       bool
 	configPath   string
+	sshConfig    string
+	resolve      destinationResolver
 	requested    map[string]HostTarget
 	managers     map[string]core.Manager
 	targets      map[string]HostTarget
@@ -35,20 +37,15 @@ func (p *managerPool) reload(ctx context.Context, host string) error {
 	if err != nil {
 		return err
 	}
-	targets, err := config.hostTargets(p.configPath)
-	if err != nil {
-		return err
-	}
 	if p.requested == nil {
 		p.requested = make(map[string]HostTarget)
 	}
 	if host != "" {
 		p.requested[host] = HostTarget{Target: host}
 	}
-	for name, target := range p.requested {
-		if _, ok := targets[name]; !ok {
-			targets[name] = target
-		}
+	targets, err := config.hostTargets(ctx, p.configPath, p.sshConfig, p.requested, p.resolve)
+	if err != nil {
+		return err
 	}
 	for name, target := range targets {
 		if slices.Contains(config.IgnoredHosts, name) || slices.Contains(config.IgnoredHosts, target.Target) {
