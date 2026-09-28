@@ -85,6 +85,7 @@ func (p *managerProgram) Start(service.Service) error {
 	}
 	manager := &managerPool{
 		configPath: p.opts.ConfigPath,
+		sshConfig:  SSHConfigPath(p.opts.SSHConfigPath),
 		managers:   make(map[string]core.Manager),
 		createTarget: func(host string, target HostTarget, intent core.ForwardingIntent) (core.Manager, error) {
 			return targetManager(host, target, intent, p.opts)

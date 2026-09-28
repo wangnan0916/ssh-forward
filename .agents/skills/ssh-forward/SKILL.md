@@ -23,7 +23,8 @@ ssh-forward status --json
 ```
 
 Active same-user SSH sessions are discovered automatically every five seconds and
-monitored without `host add`. Use `--host TARGET` to select an alias, hostname,
+monitored without `host add`. Destinations that OpenSSH resolves to the same
+user and hostname share one host. Port, jump host, and identity files do not split it. Use `--host TARGET` to select an alias, hostname,
 IP address, or `user@host` for a scoped command. Keep custom ports, identities,
 jump hosts, and other SSH options in SSH config; `host add` is only for explicit
 overrides or destinations that never appear as a live SSH process. `-h` shows

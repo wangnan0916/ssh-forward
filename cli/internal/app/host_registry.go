@@ -116,23 +116,31 @@ func HostList(path string) (map[string]HostTarget, []string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	targets, err := config.hostTargets(path)
+	targets, err := config.hostTargets(context.Background(), path, "", nil, nil)
 	if err != nil {
 		return nil, nil, err
+	}
+	return targets, config.IgnoredHosts, nil
+}
+
+// hostTargets is the only host set. Discovered targets, explicit records, and
+// any extra names are collapsed here, so later status and diagnostics see one
+// entry per user and hostname.
+func (config configuration) hostTargets(ctx context.Context, path, sshConfig string, extra map[string]HostTarget, resolve destinationResolver) (map[string]HostTarget, error) {
+	targets, err := loadDiscovered(path)
+	if err != nil {
+		return nil, err
+	}
+	maps.Copy(targets, config.Hosts)
+	for name, target := range extra {
+		if _, ok := targets[name]; !ok {
+			targets[name] = target
+		}
 	}
 	for _, name := range config.IgnoredHosts {
 		if _, ok := targets[name]; !ok {
 			targets[name] = HostTarget{Target: name}
 		}
 	}
-	return targets, config.IgnoredHosts, nil
-}
-
-func (config configuration) hostTargets(path string) (map[string]HostTarget, error) {
-	targets, err := loadDiscovered(path)
-	if err != nil {
-		return nil, err
-	}
-	maps.Copy(targets, config.Hosts)
-	return targets, nil
+	return collapseSameHosts(ctx, sshConfig, targets, config.Hosts, resolve), nil
 }
