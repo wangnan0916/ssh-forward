@@ -138,8 +138,9 @@ IPv6-only listeners are excluded. Loopback listeners that speak SSH (or whose
 executable is `sshd`) are omitted. Executable names and working directories are best
 effort; when Docker is reachable for the scanning user, published container
 ports can show the Compose service name and project directory so working-
-directory rules may select them. UDP, Unix sockets, arbitrary publication bind
-addresses, and dynamic remote ports are not supported.
+directory rules may select them. Imported and available listeners lead with that
+directory's project name and still show the full path. UDP, Unix sockets,
+arbitrary publication bind addresses, and dynamic remote ports are not supported.
 
 ## Configuration and lifecycle
 

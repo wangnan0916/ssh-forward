@@ -31,7 +31,11 @@ func styled(text, code string, enabled bool) string {
 func renderSection(title string, headers []string, rows [][]string, accent string, options Options) string {
 	columns := append([][]string{headers}, rows...)
 	widths := make([]int, len(headers))
-	widths[0] = portWidth
+	for col, header := range headers {
+		if isPortColumn(header) {
+			widths[col] = portWidth
+		}
+	}
 	for _, row := range columns {
 		for col, cell := range row {
 			widths[col] = max(widths[col], ansi.StringWidth(cell))
@@ -53,18 +57,20 @@ func renderSection(title string, headers []string, rows [][]string, accent strin
 			row[cwd] = shortenTail(row[cwd], widths[cwd])
 		}
 	}
-	colors := map[string]string{"TARGET": cyan, "APP": magenta, "ISSUE": red, "WORKING DIRECTORY": gray}
+	colors := map[string]string{"TARGET": cyan, "APP": magenta, "ISSUE": red}
 	lines := []string{styled(title, "1;"+accent, options.Color)}
 	for index, row := range columns {
 		var line strings.Builder
 		for col, cell := range row {
 			padding := strings.Repeat(" ", max(widths[col]-ansi.StringWidth(cell), 0))
 			code := colors[headers[col]]
-			if col == cwd {
-				code = gray
-			}
-			if col == 0 {
+			switch {
+			case headers[col] == "PROJECT":
+				code = "1;" + accent
+			case isPortColumn(headers[col]):
 				code = accent
+			}
+			if isPortColumn(headers[col]) {
 				line.WriteString(padding)
 			}
 			if index == 0 {
@@ -72,7 +78,7 @@ func renderSection(title string, headers []string, rows [][]string, accent strin
 			}
 			line.WriteString(styled(cell, code, options.Color))
 			if col < len(headers)-1 {
-				if col > 0 {
+				if !isPortColumn(headers[col]) {
 					line.WriteString(padding)
 				}
 				line.WriteString("  ")
@@ -81,6 +87,15 @@ func renderSection(title string, headers []string, rows [][]string, accent strin
 		lines = append(lines, line.String())
 	}
 	return strings.Join(lines, "\n")
+}
+
+func isPortColumn(header string) bool {
+	switch header {
+	case "PORT", "REMOTE", "LOCAL":
+		return true
+	default:
+		return false
+	}
 }
 
 func shortenTail(value string, width int) string {

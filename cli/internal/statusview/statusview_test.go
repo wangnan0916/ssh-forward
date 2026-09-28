@@ -35,16 +35,16 @@ func TestRenderPlainStatus(t *testing.T) {
 	want := `Host  ubuntu    Discovery  active
 
 FORWARDS
-REMOTE  TARGET         KIND        APP   WORKING DIRECTORY
-   631  0.0.0.0:10631  remembered  —     —
-  5173  0.0.0.0:15173  remembered  —     —
- 12000  0.0.0.0:12000  remembered  node  /home/shampoo/Workspace/project/console.cli.im
+PROJECT         REMOTE  TARGET         KIND        APP   WORKING DIRECTORY
+—                  631  0.0.0.0:10631  remembered  —     —
+—                 5173  0.0.0.0:15173  remembered  —     —
+console.cli.im   12000  0.0.0.0:12000  remembered  node  /home/shampoo/Workspace/project/console.cli.im
 
 AVAILABLE
- PORT  APP           WORKING DIRECTORY
-  922  —             —
- 7897  verge-mihomo  /home/shampoo
-33331  clash-verge   /home/shampoo
+PROJECT   PORT  APP           WORKING DIRECTORY
+—          922  —             —
+shampoo   7897  verge-mihomo  /home/shampoo
+shampoo  33331  clash-verge   /home/shampoo
 `
 	require.EqualValuesf(t, want, output, "output:\n%s\nwant:\n%s", output, want)
 }
@@ -57,7 +57,11 @@ func TestRenderStatusFeatures(t *testing.T) {
 		contains, absent []string
 	}{
 		{name: "narrow paths", status: core.Status{Listeners: []core.Listener{{Port: 12000, App: "node", WorkingDirectory: "/home/shampoo/Workspace/nears/worktrees/feature/console.cli.im"}}}, options: Options{Width: 48}, contains: []string{"…", "console.cli.im"}},
-		{name: "missing metadata", status: core.Status{Listeners: []core.Listener{{Port: 3000, App: "node"}, {Port: 4000, WorkingDirectory: "/workspace"}}}, contains: []string{" 3000  node  —", " 4000  —     /workspace"}},
+		{name: "project names", status: core.Status{
+			Listeners: []core.Listener{{Port: 15173, App: "node", WorkingDirectory: "/home/shampoo/Workspace/nears/workspaces/daily-development/caoliao-editor"}},
+			Forwards:  []core.ForwardStatus{{RemotePort: 15173, LocalPort: 15173, State: core.ForwardActive, Automatic: true}},
+		}, contains: []string{"PROJECT", "caoliao-editor   15173", "/home/shampoo/Workspace/nears/workspaces/daily-development/caoliao-editor"}},
+		{name: "missing metadata", status: core.Status{Listeners: []core.Listener{{Port: 3000, App: "node"}, {Port: 4000, WorkingDirectory: "/workspace"}}}, contains: []string{"—           3000  node  —", "workspace   4000  —     /workspace"}},
 		{name: "diagnostics", status: core.Status{
 			Discovery: core.DiscoveryStatus{State: core.DiscoveryFailed, Diagnostic: "authentication_failed"},
 			Forwards:  []core.ForwardStatus{{RemotePort: 3000, LocalPort: 13000, State: core.ForwardStarting}, {RemotePort: 8080, LocalPort: 8080, State: core.ForwardFailed, Diagnostic: "local_port_conflict", Automatic: true}},

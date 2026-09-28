@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"fmt"
 	"io"
+	"path"
 	"strconv"
 	"strings"
 
@@ -94,7 +95,7 @@ func renderForwardSection(forwards []core.ForwardStatus, listeners map[uint16]co
 	case state == core.ForwardFailed:
 		headers = append(headers, "ISSUE")
 	case !published:
-		headers = append(headers, "APP", "WORKING DIRECTORY")
+		headers = []string{"PROJECT", "REMOTE", "TARGET", "KIND", "APP", "WORKING DIRECTORY"}
 	}
 	rows := make([][]string, 0, len(forwards))
 	for _, forward := range forwards {
@@ -106,8 +107,8 @@ func renderForwardSection(forwards []core.ForwardStatus, listeners map[uint16]co
 		case state == core.ForwardFailed:
 			row = append(row, diagnostics.Text(forward.Diagnostic))
 		case !published:
-			listener := listeners[forward.RemotePort]
-			row = append(row, cmp.Or(listener.App, "—"), cmp.Or(listener.WorkingDirectory, "—"))
+			project, app, directory := listenerColumns(listeners[forward.RemotePort])
+			row = []string{project, row[0], row[1], row[2], app, directory}
 		}
 		rows = append(rows, row)
 	}
@@ -124,7 +125,25 @@ func forwardKind(forward core.ForwardStatus) string {
 func renderAvailable(listeners []core.Listener, options Options) string {
 	rows := make([][]string, 0, len(listeners))
 	for _, listener := range listeners {
-		rows = append(rows, []string{strconv.Itoa(int(listener.Port)), cmp.Or(listener.App, "—"), cmp.Or(listener.WorkingDirectory, "—")})
+		project, app, directory := listenerColumns(listener)
+		rows = append(rows, []string{project, strconv.Itoa(int(listener.Port)), app, directory})
 	}
-	return renderSection("AVAILABLE", []string{"PORT", "APP", "WORKING DIRECTORY"}, rows, brightCyan, options)
+	return renderSection("AVAILABLE", []string{"PROJECT", "PORT", "APP", "WORKING DIRECTORY"}, rows, brightCyan, options)
+}
+
+func listenerColumns(listener core.Listener) (project, app, directory string) {
+	return cmp.Or(projectName(listener.WorkingDirectory), "—"), cmp.Or(listener.App, "—"), cmp.Or(listener.WorkingDirectory, "—")
+}
+
+// projectName is the last path segment. It is the name used to tell services
+// apart when several listeners share a long remote prefix.
+func projectName(directory string) string {
+	if directory == "" {
+		return ""
+	}
+	name := path.Base(path.Clean(directory))
+	if name == "." || name == "/" {
+		return ""
+	}
+	return name
 }
