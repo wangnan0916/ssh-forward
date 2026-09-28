@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.0](https://github.com/wangnan0916/ssh-forward/compare/v0.11.0...v0.12.0) (2026-09-28)
+
+
+### Features
+
+* ignore automatic forwards by app name ([#31](https://github.com/wangnan0916/ssh-forward/issues/31)) ([aaa3563](https://github.com/wangnan0916/ssh-forward/commit/aaa3563e99cb3188549077eb35de55d14160313e))
+* show the project name first in status tables ([#30](https://github.com/wangnan0916/ssh-forward/issues/30)) ([5587eb9](https://github.com/wangnan0916/ssh-forward/commit/5587eb9f173f94553d6005785fbc550f8fe12173))
+
 ## [0.11.0](https://github.com/wangnan0916/ssh-forward/compare/v0.10.0...v0.11.0) (2026-09-28)
 
 
