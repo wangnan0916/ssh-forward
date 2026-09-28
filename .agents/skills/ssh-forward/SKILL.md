@@ -103,12 +103,13 @@ Forward selected only by that rule disappears.
 Skip automatic forwards for one status APP name on every host:
 
 ```bash
-ssh-forward add --app hunk --json
-ssh-forward remove --app hunk --json
+ssh-forward app ignore hunk --json
+ssh-forward app enable hunk --json
 ```
 
-Use the APP column value. `--app` is global and rejects `--host`. After adding,
-that app disappears from FORWARDS and AVAILABLE. An explicit remembered port remains.
+Use the APP column value. `app ignore` and `app enable` are global and reject
+`--host`. After ignoring, that app disappears from FORWARDS and AVAILABLE. An
+explicit remembered port remains.
 
 ### Local service to Development Host
 

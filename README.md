@@ -42,8 +42,9 @@ Rules are global by default. Every remembered or discovered host participates
 when its listener matches. `*` matches within a path component; `**` crosses
 components. Quote globs to prevent local shell expansion. Automatic forwards
 stop when the matching listener disappears; missing process metadata cannot
-match a directory rule. `add --app NAME` skips automatic forwards for that
-status APP name on every host, including the available list. An explicit remembered port still forwards.
+match a directory rule. `app ignore NAME` skips automatic forwards for that
+status APP name on every host, including the available list. `app enable NAME`
+forwards it again. An explicit remembered port still forwards.
 
 Use `--host` to scope a rule or retain a fixed mapping while the service is absent:
 
@@ -52,8 +53,8 @@ ssh-forward --host my-dev add 8443 --local 18443
 ssh-forward --host my-dev status --json
 ssh-forward --host my-dev remove 8443
 ssh-forward remove --pwd '/home/me/Workspace/**'
-ssh-forward add --app hunk
-ssh-forward remove --app hunk
+ssh-forward app ignore hunk
+ssh-forward app enable hunk
 ```
 
 Imports bind **local `0.0.0.0`** and target remote `127.0.0.1`. They are reachable
