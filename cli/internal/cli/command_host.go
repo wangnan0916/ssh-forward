@@ -24,9 +24,6 @@ func (a *App) runHostList(jsonOutput bool) error {
 	for _, name := range names {
 		target := targets[name]
 		state := "enabled"
-		if target.Diagnostic != "" {
-			state = "needs connection settings"
-		}
 		if slices.Contains(ignored, name) || slices.Contains(ignored, target.Target) {
 			state = "ignored"
 		}

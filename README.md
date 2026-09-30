@@ -160,9 +160,8 @@ arbitrary publication bind addresses, and dynamic remote ports are not supported
 }
 ```
 
-Schemas 1–5 upgrade on the next write without broadening scoped rules. Legacy
-`default_host` becomes a remembered host; there is no default-host selection or
-interactive picker. Explicit mappings override global port rules for that host.
+Only schema 6 is accepted. There is no default-host selection or interactive
+picker. Explicit mappings override global port rules for that host.
 
 Default state directories are `~/Library/Application Support/ssh-forward/` on
 macOS and `$XDG_CONFIG_HOME/ssh-forward/` (otherwise `~/.config/ssh-forward/`) on

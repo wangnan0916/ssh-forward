@@ -10,8 +10,6 @@ import (
 
 var errAdapterClosed = errors.New("OpenSSH adapter is closed")
 
-const legacyControlSocketTemplate = "master-%C"
-
 type sshMaster struct {
 	command *exec.Cmd
 	stderr  *boundedBuffer
@@ -44,11 +42,6 @@ func (a *Adapter) ensureMaster(ctx context.Context) (*sshMaster, error) {
 	}
 
 	// A previous Manager may have died before closing its product-owned master.
-	// Stop the pre-alias-hash master first, then ask any current-format stale
-	// master to exit before creating the replacement.
-	if err := a.stopLegacyMaster(ctx); err != nil {
-		return nil, err
-	}
 	_ = a.runControl(ctx, "exit", nil)
 	master, err := a.startMaster()
 	if err != nil {

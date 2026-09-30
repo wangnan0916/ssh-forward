@@ -69,31 +69,6 @@ func TestEnsureMasterValidatesAliasBeforeStarting(t *testing.T) {
 	require.EqualValues(t, "-G dev", strings.TrimSpace(commands))
 }
 
-func TestEnsureMasterCleansLegacySocketBeforeStarting(t *testing.T) {
-	adapter, logPath := newLoggingAdapter(t, `
-case " $* " in
-*" -O exit "*) exit 1 ;;
-esac
-`)
-	adapter.configFile = filepath.Join(adapter.controlDirectory, "ssh-config")
-
-	_, _ = adapter.ensureMaster(context.Background())
-	commands := readCommands(t, logPath)
-	lines := strings.Split(strings.TrimSpace(commands), "\n")
-	legacyExit := strings.Join([]string{"-F", adapter.configFile, "-S master-%C -O exit dev"}, " ")
-	legacyIndex := -1
-	startIndex := -1
-	for index, line := range lines {
-		if line == legacyExit {
-			legacyIndex = index
-		}
-		if strings.Contains(line, " -M -N -T -g -S "+adapter.controlPath()+" ") {
-			startIndex = index
-		}
-	}
-	require.Falsef(t, legacyIndex == -1 || startIndex == -1 || legacyIndex >= startIndex, "commands = %q; want legacy socket cleanup %q before replacement master", lines, legacyExit)
-}
-
 func TestForwardEndpointsAndRejectedInstallation(t *testing.T) {
 	for _, tc := range []struct {
 		direction              core.ForwardDirection

@@ -35,11 +35,6 @@ func loadDiscovered(configPath string) (map[string]HostTarget, error) {
 		targets = make(map[string]HostTarget)
 	}
 	for name, target := range targets {
-		// Heal pre-0.8.1 registries that stored diagnostic-only discoveries.
-		if target.Diagnostic != "" {
-			target = keepValidArguments(target)
-			targets[name] = target
-		}
 		if err := validateTarget(name, target); err != nil {
 			return nil, err
 		}
@@ -71,7 +66,7 @@ func rememberDiscovered(ctx context.Context, configPath string, found map[string
 	}
 	changed := false
 	for name, target := range found {
-		if old, ok := existing[name]; ok && (old.Diagnostic == "" || target.Diagnostic != "") {
+		if _, ok := existing[name]; ok {
 			continue
 		}
 		existing[name] = target

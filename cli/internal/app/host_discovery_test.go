@@ -49,15 +49,6 @@ func TestParseSSHConnectionTargets(t *testing.T) {
 	require.False(t, targetID(a) == targetID(b), "distinct connections merged")
 }
 
-func TestLoadDiscoveredHealsUnsupportedDiagnostic(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.jsonc")
-	require.NoError(t, writeJSONC(discoveryPath(path), map[string]HostTarget{
-		"ubuntu": {Target: "ubuntu", Diagnostic: "discovered_unsupported"},
-	}))
-	targets, err := loadDiscovered(path)
-	require.NoError(t, err)
-	require.Equal(t, HostTarget{Target: "ubuntu"}, targets["ubuntu"])
-}
 func TestDiscoveryExcludesOtherUsersAndProductProcesses(t *testing.T) {
 	input := []hostProcess{
 		{10, 1, 501, "ssh-forward"}, {11, 10, 501, "ssh"}, {12, 11, 501, "ssh"},

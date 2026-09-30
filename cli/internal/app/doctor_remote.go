@@ -29,9 +29,6 @@ func diagnoseDiscovery(ctx context.Context, opts Options, host string) DoctorChe
 	if !found {
 		target = HostTarget{Target: host}
 	}
-	if target.Diagnostic != "" {
-		return failedDoctorCheck("discovery", "Discovered target needs connection settings.", "Use host add NAME --target DESTINATION with explicit options.")
-	}
 	adapter, err := NewOpenSSHAdapter(opts.SSHConfigPath, controlDirectory, host, target)
 	if err != nil {
 		return failedDoctorCheck("discovery", err.Error(), "Check the OpenSSH executable and --ssh-config path.")

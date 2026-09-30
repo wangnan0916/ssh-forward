@@ -56,7 +56,7 @@ func TestPrivateMasterReusesAliasWithoutConfiguredForwards(t *testing.T) {
 		defer cancel()
 		_ = environment.adapter.Close(ctx)
 	})
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	emitted := false
 	err := environment.adapter.Observe(ctx, func(listeners []core.Listener) {
@@ -72,25 +72,6 @@ func TestPrivateMasterReusesAliasWithoutConfiguredForwards(t *testing.T) {
 	}
 	configuredRemote := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_CONFIG_REMOTE")
 	wantRemotePortClosed(t, environment, configuredRemote)
-}
-
-func TestUpgradeCleansLegacyMasterBeforeRebinding(t *testing.T) {
-	environment := loadTestEnvironment(t)
-	remotePort := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_V4")
-	localPort := availableLocalPort(t)
-	legacyDone := startLegacyForward(t, environment, localPort, remotePort)
-	wantForwardedEcho(t, localPort, "legacy-forward")
-
-	manager := environment.manager(t, core.ForwardingIntent{RememberedForwards: []core.RememberedForward{{RemotePort: remotePort, LocalPort: localPort}}})
-	waitForStatus(t, manager, func(status core.Status) bool {
-		return len(status.Forwards) == 1 && status.Forwards[0].State == core.ForwardActive
-	})
-	select {
-	case <-legacyDone:
-	default:
-		t.Fatal("replacement Forward became active before the legacy master exited")
-	}
-	wantForwardedEcho(t, localPort, "replacement-forward")
 }
 
 func TestEndpointConflictsAndPublicationSafety(t *testing.T) {
@@ -222,14 +203,14 @@ func TestSharedConnectionLifecycle(t *testing.T) {
 	wantRemoteLoopbackListener(t, env, publication)
 
 	intent.RememberedForwards = intent.RememberedForwards[:1]
-	require.NoError(t, manager.UpdateIntent(context.Background(), intent))
+	require.NoError(t, manager.UpdateIntent(t.Context(), intent))
 	active(3)
 	require.Eventually(t, func() bool { return !localPortOpen(second) }, 3*time.Second, 20*time.Millisecond)
 	echo("after-import-removal")
 	wantPublishedEcho(t, env, secondPublication, "publication-survives-import-removal")
 
 	intent.PublishedForwards = intent.PublishedForwards[:1]
-	require.NoError(t, manager.UpdateIntent(context.Background(), intent))
+	require.NoError(t, manager.UpdateIntent(t.Context(), intent))
 	active(2)
 	wantRemotePortClosed(t, env, secondPublication)
 	echo("after-publication-removal")

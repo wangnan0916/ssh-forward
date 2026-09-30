@@ -26,9 +26,6 @@ func NewOpenSSHAdapter(sshConfig, controlDirectory, name string, target HostTarg
 }
 
 func targetManager(name string, target HostTarget, intent core.ForwardingIntent, opts Options) (core.Manager, error) {
-	if target.Diagnostic != "" {
-		return core.NewManager(core.HostAlias(name), nil, intent), nil
-	}
 	adapter, err := NewOpenSSHAdapter(opts.SSHConfigPath, opts.Layout.Dir, name, target)
 	if err != nil {
 		return nil, err

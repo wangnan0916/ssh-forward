@@ -36,7 +36,7 @@ func TestUnpublishJSONReportsRemovedMapping(t *testing.T) {
 	var stdout bytes.Buffer
 	manager := &fakeManager{status: core.Status{Host: "dev"}}
 	surface := &App{Manager: manager, Options: app.Options{ConfigPath: configPath, Stdout: &stdout}}
-	require.NoError(t, surface.Run(context.Background(), []string{"unpublish", "9222", "--json", "--host", "dev"}))
+	require.NoError(t, surface.Run(t.Context(), []string{"unpublish", "9222", "--json", "--host", "dev"}))
 	want := "{\"host\":\"dev\",\"local_port\":9222,\"remote_port\":19222,\"removed\":true}\n"
 	require.EqualValuesf(t, want, stdout.String(), "output = %q, want %q", stdout.String(), want)
 	intent, err := app.HostIntent(configPath, "dev")
@@ -47,7 +47,7 @@ func TestUnpublishJSONReportsRemovedMapping(t *testing.T) {
 func TestNoCommandDisplaysGeneratedHelp(t *testing.T) {
 	var stdout bytes.Buffer
 	surface := &App{Options: app.Options{Stdout: &stdout}}
-	require.NoError(t, surface.Run(context.Background(), nil))
+	require.NoError(t, surface.Run(t.Context(), nil))
 	for _, text := range []string{"publish <LOCAL>", "unpublish <LOCAL>", "Publish a local port on the Development Host"} {
 		require.Contains(t, stdout.String(), text)
 	}
@@ -56,27 +56,27 @@ func TestNoCommandDisplaysGeneratedHelp(t *testing.T) {
 func TestStatusDelegatesHumanRenderingAndPreservesJSONEnvelope(t *testing.T) {
 	surface, manager, output := testCLI(t)
 	manager.status = core.Status{Host: "dev", Discovery: core.DiscoveryStatus{State: core.DiscoveryActive}, Listeners: []core.Listener{{Port: 631}}}
-	require.NoError(t, surface.Run(context.Background(), []string{"status"}))
+	require.NoError(t, surface.Run(t.Context(), []string{"status"}))
 	require.Contains(t, output.String(), "Host  dev    Discovery  active")
 	require.Contains(t, output.String(), "AVAILABLE")
 	require.NotContains(t, output.String(), "ssh-forward add")
 	output.Reset()
-	require.NoError(t, surface.Run(context.Background(), []string{"status", "--host", "dev", "--json"}))
+	require.NoError(t, surface.Run(t.Context(), []string{"status", "--host", "dev", "--json"}))
 	require.JSONEq(t, `{"host":"dev","discovery":{"state":"active"},"listeners":[{"port":631}],"forwards":null}`, output.String())
 }
 
-func TestForwardJSONCompatibility(t *testing.T) {
+func TestStatusForwardJSON(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		forward core.ForwardStatus
 		json    string
 	}{
-		{"same port", core.ForwardStatus{RemotePort: 8443, PreferredLocalPort: 8443, LocalPort: 8443, State: core.ForwardActive, AllowFallback: true}, `{"port":8443,"state":"active"}`},
-		{"fallback", core.ForwardStatus{RemotePort: 8443, PreferredLocalPort: 8443, LocalPort: 8444, State: core.ForwardActive, AllowFallback: true}, `{"remote_port":8443,"preferred_local_port":8443,"local_port":8444,"state":"active","allow_fallback":true}`},
-		{"publication", core.ForwardStatus{Direction: core.LocalToRemote, LocalPort: 9222, PreferredRemotePort: 19222, RemotePort: 19222, State: core.ForwardActive}, `{"direction":"local_to_remote","local_port":9222,"preferred_remote_port":19222,"remote_port":19222,"state":"active","kind":"published"}`},
+		{"same port", core.ForwardStatus{Direction: core.RemoteToLocal, RemotePort: 8443, PreferredLocalPort: 8443, LocalPort: 8443, State: core.ForwardActive, AllowFallback: true}, `{"direction":"remote_to_local","remote_port":8443,"preferred_local_port":8443,"local_port":8443,"state":"active","allow_fallback":true}`},
+		{"fallback", core.ForwardStatus{Direction: core.RemoteToLocal, RemotePort: 8443, PreferredLocalPort: 8443, LocalPort: 8444, State: core.ForwardActive, AllowFallback: true}, `{"direction":"remote_to_local","remote_port":8443,"preferred_local_port":8443,"local_port":8444,"state":"active","allow_fallback":true}`},
+		{"publication", core.ForwardStatus{Direction: core.LocalToRemote, LocalPort: 9222, PreferredRemotePort: 19222, RemotePort: 19222, State: core.ForwardActive}, `{"direction":"local_to_remote","remote_port":19222,"preferred_remote_port":19222,"local_port":9222,"state":"active"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			output, err := json.Marshal(statusJSON(core.Status{Forwards: []core.ForwardStatus{tc.forward}}).Forwards)
+			output, err := json.Marshal([]core.ForwardStatus{tc.forward})
 			require.NoError(t, err)
 			require.JSONEq(t, "["+tc.json+"]", string(output))
 		})
@@ -103,7 +103,7 @@ func TestCommandSurface(t *testing.T) {
 			if tc.command != "" {
 				args = append([]string{tc.command}, args...)
 			}
-			require.NoError(t, surface.Run(context.Background(), args))
+			require.NoError(t, surface.Run(t.Context(), args))
 			for _, text := range tc.present {
 				require.Contains(t, output.String(), text)
 			}
@@ -114,7 +114,7 @@ func TestCommandSurface(t *testing.T) {
 		})
 	}
 	for _, args := range [][]string{{"policy"}, {"watch"}, {"add", "--dir", "/workspace"}, {"remove", "5173", "--local", "15173"}, {"unpublish", "9222", "--remote", "19222"}} {
-		require.ErrorIs(t, (&App{}).Run(context.Background(), args), ErrUsage)
+		require.ErrorIs(t, (&App{}).Run(t.Context(), args), ErrUsage)
 	}
 }
 
@@ -132,7 +132,7 @@ func TestRuleCommandsPersistIntent(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			surface, manager, output := testCLI(t)
-			require.NoError(t, surface.Run(context.Background(), append(tc.args, "--host", "dev")))
+			require.NoError(t, surface.Run(t.Context(), append(tc.args, "--host", "dev")))
 			intent, err := app.HostIntent(surface.Options.ConfigPath, "dev")
 			require.NoError(t, err)
 			require.Equal(t, tc.want, intent)
@@ -159,7 +159,7 @@ func TestRuleCommandValidation(t *testing.T) {
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			surface, manager, _ := testCLI(t)
-			err := surface.Run(context.Background(), tc.args)
+			err := surface.Run(t.Context(), tc.args)
 			require.ErrorIs(t, err, ErrUsage)
 			if tc.message != "" {
 				require.Equal(t, tc.message, err.Error())
@@ -179,25 +179,25 @@ func testCLI(t *testing.T) (*App, *fakeManager, *bytes.Buffer) {
 func TestHostCommandsPersistSettingsAcrossIgnoreAndEnable(t *testing.T) {
 	surface, _, output := testCLI(t)
 	args := []string{"host", "add", "dev", "--target", "me@dev", "--port", "2222", "--user", "me", "--identity", "/keys/dev", "--jump", "jump", "--ssh-config", "/ssh/config"}
-	require.NoError(t, surface.Run(context.Background(), args))
+	require.NoError(t, surface.Run(t.Context(), args))
 	hosts, _, err := app.HostList(surface.Options.ConfigPath)
 	require.NoError(t, err)
 	target := hosts["dev"]
 	require.Equal(t, "me@dev", target.Target)
 	require.Equal(t, []string{"-l", "me", "-i", "/keys/dev", "-J", "jump", "-F", "/ssh/config", "-p", "2222"}, target.Arguments)
 	for _, action := range []string{"ignore", "enable"} {
-		require.NoError(t, surface.Run(context.Background(), []string{"host", action, "dev"}))
+		require.NoError(t, surface.Run(t.Context(), []string{"host", action, "dev"}))
 		hosts, ignored, err := app.HostList(surface.Options.ConfigPath)
 		require.NoError(t, err)
 		require.Equal(t, target, hosts["dev"])
 		require.Equal(t, action == "ignore", slices.Contains(ignored, "dev"))
 		output.Reset()
-		require.NoError(t, surface.Run(context.Background(), []string{"host", "--json"}))
+		require.NoError(t, surface.Run(t.Context(), []string{"host", "--json"}))
 		require.True(t, json.Valid(output.Bytes()))
 		require.Contains(t, output.String(), "me@dev")
 	}
 	output.Reset()
 	surface.Options.Version = "test"
-	require.NoError(t, surface.Run(context.Background(), []string{"--version"}))
+	require.NoError(t, surface.Run(t.Context(), []string{"--version"}))
 	require.Equal(t, "ssh-forward test\n", output.String())
 }

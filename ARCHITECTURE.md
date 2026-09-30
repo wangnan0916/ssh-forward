@@ -22,20 +22,20 @@ status ← GET /v1/status ← all runtimes (including offline hosts)
 
 | Package | Entry points and responsibilities |
 | --- | --- |
-| `cli` | Kong's typed `commands` grammar dispatches domain `Run` methods. Human status delegates to `statusview`; public JSON has one compatibility projection. |
-| `app/config*` | Strict JSONC decoding, schemas 1–6 migration, scoped normalization, atomic rule edits. Configuration is the only source of intent. |
+| `cli` | Kong's typed `commands` grammar dispatches domain `Run` methods. Human status delegates to `statusview`; public JSON uses explicit ports. |
+| `app/config*` | Strict JSONC decoding, schema 6 normalization, atomic rule edits. Configuration is the only source of intent. |
 | `app/host_target` | Target identity, option allowlist, exact SSH argv parsing. |
 | `app/host_discovery` | Same-user process discovery and product-process exclusion. |
 | `app/host_registry` | Locked merge of discovered hosts, explicit hosts, and persistent ignore state. |
 | `app/manager_pool` | Runtime composition, global port reservations, targeted reload, sorted all-host status. |
-| `app/service*`, `ipc*` | OS service lifecycle, upgrades, bounded HTTP over a user-only Unix socket. |
+| `app/service*`, `ipc*` | OS service lifecycle and bounded HTTP over a user-only Unix socket. |
 | `app/doctor*` | Read-only configuration, service, forwarding, and remote discovery checks. |
 | `core/desired`, `reconcile` | Pure selection and keep/stop/wait/start planning. |
 | `core/manager*`, `worker` | Synchronized status, observation, worker ownership, retry and cleanup. |
 | `openssh` | One immutable connection target per adapter, master lifecycle, forwarding, procfs scanner, readiness and bounded diagnostics. |
 | `statusview`, `diagnostics` | Human layout and ANSI-aware widths; shared diagnostic descriptions and remediation. |
 
-Libraries handle parsing and mechanisms: Kong, hujson, renameio, ssh_config,
+Libraries handle parsing and mechanisms: Kong, hujson, renameio,
 gopsutil/process, flock, doublestar, x/ansi, x/term, kardianos/service, and Go's
 HTTP/concurrency primitives. System OpenSSH handles authentication and transport.
 Kong is the single command grammar; generated help follows it. The renderer uses
@@ -53,7 +53,6 @@ transport behavior; parser and planner fuzz tests cover pure boundaries.
 The schema-6 wire format is isolated from the internal map of typed rule scopes.
 An empty scope is global; publications require a named scope. Every rule edit
 uses the same normalize/validate/save path, including cross-direction conflicts.
-Legacy scoped rules stay scoped; `default_host` migrates into explicit hosts.
 Invalid configuration leaves existing runtimes intact.
 
 A five-second scan reads native same-user SSH argv, excluding the product process
@@ -105,5 +104,4 @@ Install and cancel operations check the master generation under the same lock.
 
 Keepalives (5 seconds, 3 unanswered probes) detect silent loss; independent retry
 loops reestablish the master, observation, and desired forwards. Commands have
-bounded timeouts. Upgrade cleanup retires legacy `master-%C` sockets and old PID
-services before rebinding. See [Security](SECURITY.md) for exposure boundaries.
+bounded timeouts. See [Security](SECURITY.md) for exposure boundaries.
