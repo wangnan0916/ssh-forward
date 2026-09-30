@@ -28,13 +28,13 @@ func TestCollapseSameHostsKeepsConfigAlias(t *testing.T) {
 	}
 	config := filepath.Join(t.TempDir(), "ssh_config")
 	require.NoError(t, os.WriteFile(config, []byte("Host ubuntu\n"), 0o600))
-	collapsed := collapseSameHosts(context.Background(), config, targets, map[string]HostTarget{"shampoo@ubuntu": {Target: "shampoo@ubuntu"}}, resolve)
+	collapsed := collapseSameHosts(t.Context(), config, targets, map[string]HostTarget{"shampoo@ubuntu": {Target: "shampoo@ubuntu"}}, resolve)
 	require.Equal(t, map[string]HostTarget{
 		"ubuntu":         {Target: "ubuntu"},
 		"git@github.com": {Target: "git@github.com"},
 	}, collapsed)
 
-	recorded := collapseSameHosts(context.Background(), filepath.Join(t.TempDir(), "missing"), map[string]HostTarget{
+	recorded := collapseSameHosts(t.Context(), filepath.Join(t.TempDir(), "missing"), map[string]HostTarget{
 		"dev": {Target: "dev"}, "server": {Target: "server"},
 	}, map[string]HostTarget{"server": {Target: "server"}}, func(_ context.Context, _ string, _ HostTarget) (string, string, bool) {
 		return "me", "10.0.0.8", true
@@ -49,7 +49,7 @@ func TestResolveUserHostReadsUserAndHostname(t *testing.T) {
 	dir := t.TempDir()
 	config := filepath.Join(dir, "ssh_config")
 	require.NoError(t, os.WriteFile(config, []byte("Host ubuntu\n  HostName 127.0.0.1\n  Port 2222\n  User shampoo\n"), 0o600))
-	ctx := context.Background()
+	ctx := t.Context()
 	aliasUser, aliasHost, ok := resolveUserHost(ctx, config, HostTarget{Target: "ubuntu"})
 	require.True(t, ok)
 	user, host, ok := resolveUserHost(ctx, config, HostTarget{Target: "shampoo@ubuntu"})

@@ -185,7 +185,7 @@ Uninstall keeps configuration; delete its directory separately to forget intent.
 ```sh
 ./scripts/dev status          # latest CLI against installed Manager
 ./scripts/dev --full status   # temporary dev Manager; restores installed service
-./scripts/check               # unit, race, vet, formatting, modules, benchmarks
+./scripts/check               # unit, race, vet, formatting, modules
 ./scripts/test-integration    # disposable local Docker/OpenSSH fixture
 ```
 

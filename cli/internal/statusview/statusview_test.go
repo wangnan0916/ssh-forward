@@ -137,7 +137,7 @@ func renderStatus(t *testing.T, status core.Status, options Options) string {
 
 func requireMaxWidth(t *testing.T, output string, width int) {
 	t.Helper()
-	for _, line := range strings.Split(output, "\n") {
+	for line := range strings.SplitSeq(output, "\n") {
 		require.LessOrEqual(t, ansi.StringWidth(line), width, "%q", line)
 	}
 }

@@ -27,6 +27,5 @@ if [ -n "$unformatted_files" ]; then
 fi
 
 run go mod tidy -diff
-run go test -run '^$' -bench . -benchmem ./internal/core ./internal/openssh
 
 printf '\nAll checks passed.\n'

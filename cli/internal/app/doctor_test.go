@@ -34,7 +34,7 @@ func TestProbeDiscoveryFirstResult(t *testing.T) {
 	for _, backend := range []doctorBackend{
 		{listeners: listeners}, {listeners: listeners, errAfterSnapshot: failure}, {err: failure}, {},
 	} {
-		got, err := probeDiscovery(context.Background(), backend)
+		got, err := probeDiscovery(t.Context(), backend)
 		require.ErrorIs(t, err, backend.err)
 		require.Equal(t, backend.listeners, got)
 	}

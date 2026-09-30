@@ -3,7 +3,6 @@
 package sshhost
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net"
@@ -78,7 +77,7 @@ func waitForStatus(t *testing.T, manager core.Manager, condition func(core.Statu
 	var status core.Status
 	for time.Now().Before(deadline) {
 		var err error
-		status, err = manager.Status(context.Background())
+		status, err = manager.Status(t.Context())
 		require.NoError(t, err)
 		if condition(status) {
 			return status
