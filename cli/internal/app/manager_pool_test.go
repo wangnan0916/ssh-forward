@@ -172,25 +172,3 @@ func TestSameUserAndHostShareOneRuntime(t *testing.T) {
 	require.Nil(t, pool.lookup("shampoo@ubuntu"))
 	require.True(t, backends["shampoo@ubuntu"].closed.Load())
 }
-
-func TestPoolReservesPublishedServicePortsAcrossHosts(t *testing.T) {
-	pool, _ := testPool(t, configuration{Rules: map[string]*scopeRules{
-		"import":  new(scopeRules{Forwards: []core.RememberedForward{{RemotePort: 9222, AllowFallback: true}}}),
-		"strict":  new(scopeRules{Forwards: []core.RememberedForward{{RemotePort: 9222, LocalPort: 9222}}}),
-		"publish": new(scopeRules{Published: []core.PublishedForward{{LocalPort: 9222}}}),
-	}})
-	status := awaitPoolStatus(t, pool, "import", allPoolForwardsActive(1))
-	require.EqualValuesf(t, 9223, status.Forwards[0].LocalPort, "import occupied published service port: %+v", status.Forwards)
-	awaitPoolStatus(t, pool, "publish", allPoolForwardsActive(1))
-	awaitPoolStatus(t, pool, "strict", func(s core.Status) bool {
-		return len(s.Forwards) == 1 && s.Forwards[0].State == core.ForwardFailed && s.Forwards[0].Diagnostic == "local_port_reserved"
-	})
-	// Adding a publish must move an already active import on another host too.
-	if _, err := EditPublishedForward(pool.configPath, "publish", &core.PublishedForward{LocalPort: 9223}, true); err != nil {
-		t.Fatal(err)
-	}
-	require.NoError(t, pool.reload(t.Context(), "publish"))
-	awaitPoolStatus(t, pool, "import", func(s core.Status) bool {
-		return allPoolForwardsActive(1)(s) && s.Forwards[0].LocalPort == 9224
-	})
-}

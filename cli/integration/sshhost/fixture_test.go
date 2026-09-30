@@ -25,18 +25,14 @@ type testEnvironment struct {
 	adapter          *openssh.Adapter
 }
 
-func loadTestEnvironment(t *testing.T, unsafe ...bool) testEnvironment {
+func loadTestEnvironment(t *testing.T) testEnvironment {
 	t.Helper()
 	config := os.Getenv("SSH_FORWARD_TEST_SSH_CONFIG")
 	require.False(t, config == "", "SSH_FORWARD_TEST_SSH_CONFIG is not set; run scripts/test-integration")
 	ssh, err := exec.LookPath("ssh")
 	require.NoError(t, err)
 	controlDirectory := t.TempDir()
-	key := "SSH_FORWARD_TEST_HOST_ALIAS"
-	if len(unsafe) > 0 && unsafe[0] {
-		key = "SSH_FORWARD_TEST_UNSAFE_HOST_ALIAS"
-	}
-	host := os.Getenv(key)
+	host := os.Getenv("SSH_FORWARD_TEST_HOST_ALIAS")
 	require.NotEmpty(t, host, "run scripts/test-integration")
 	adapter, err := openssh.New(openssh.Options{Executable: ssh, ConfigFile: config, ControlDirectory: controlDirectory, Target: host})
 	require.NoError(t, err)

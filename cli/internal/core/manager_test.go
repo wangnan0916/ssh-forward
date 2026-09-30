@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -13,6 +14,12 @@ import (
 // Run equivalent updates, promotion from automatic to fixed intent, removal,
 // and remapping against one live runtime so unintended restarts are observable.
 func TestManagerIntentLifecycle(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		testManagerIntentLifecycle(t)
+	})
+}
+
+func testManagerIntentLifecycle(t *testing.T) {
 	backend := newFakeBackend()
 	manager := testManager(t, backend, ForwardingIntent{RememberedForwards: []RememberedForward{{RemotePort: 3000}}})
 	first := ForwardTarget{Direction: RemoteToLocal, RemotePort: 3000, LocalPort: 3000}
@@ -70,6 +77,12 @@ func TestManagerCloseClosesBackendOnceAndReturnsItsError(t *testing.T) {
 }
 
 func TestAutomaticForwardTracksListenerAndRuleRemoval(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		testAutomaticForwardTracksListenerAndRuleRemoval(t)
+	})
+}
+
+func testAutomaticForwardTracksListenerAndRuleRemoval(t *testing.T) {
 	backend := newFakeBackend()
 	manager := testManager(t, backend, ForwardingIntent{WorkingDirectoryRules: []string{"/workspace/app/**"}})
 	backend.listeners <- []Listener{{Port: 3000, WorkingDirectory: "/workspace/application"}}
@@ -96,6 +109,12 @@ func TestAutomaticForwardTracksListenerAndRuleRemoval(t *testing.T) {
 }
 
 func TestManagerReportsActualFallbackPortWithoutChangingIntent(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		testManagerReportsActualFallbackPortWithoutChangingIntent(t)
+	})
+}
+
+func testManagerReportsActualFallbackPortWithoutChangingIntent(t *testing.T) {
 	backend := newFakeBackend()
 	backend.forwardError = conflictOnLocalPort(13000)
 	forward := RememberedForward{RemotePort: 3000, LocalPort: 13000, AllowFallback: true}
@@ -117,6 +136,12 @@ func TestManagerReportsActualFallbackPortWithoutChangingIntent(t *testing.T) {
 }
 
 func TestManagerPublishesLocalPortAndHidesItsRemoteListener(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		testManagerPublishesLocalPortAndHidesItsRemoteListener(t)
+	})
+}
+
+func testManagerPublishesLocalPortAndHidesItsRemoteListener(t *testing.T) {
 	backend := newFakeBackend()
 	published := PublishedForward{LocalPort: 9222, RemotePort: 19222}
 	manager := testManager(t, backend, ForwardingIntent{
@@ -153,6 +178,12 @@ func TestPublishedLocalPortIsSkippedByRememberedFallback(t *testing.T) {
 }
 
 func TestPublishedForwardWaitsForActiveFallbackBindingToStop(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		testPublishedForwardWaitsForActiveFallbackBindingToStop(t)
+	})
+}
+
+func testPublishedForwardWaitsForActiveFallbackBindingToStop(t *testing.T) {
 	backend := newFakeBackend()
 	stopGate := make(chan struct{})
 	backend.stopGate = stopGate
@@ -196,6 +227,12 @@ func TestPublishedForwardWaitsForActiveFallbackBindingToStop(t *testing.T) {
 }
 
 func TestStrictRememberedForwardFailsOnPublishedLocalPortReservation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		testStrictRememberedForwardFailsOnPublishedLocalPortReservation(t)
+	})
+}
+
+func testStrictRememberedForwardFailsOnPublishedLocalPortReservation(t *testing.T) {
 	backend := newFakeBackend()
 	manager := testManager(t, backend, ForwardingIntent{
 		RememberedForwards: []RememberedForward{{RemotePort: 3000, LocalPort: 9222}},

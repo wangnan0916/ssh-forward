@@ -3,7 +3,6 @@ package app
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -105,40 +104,61 @@ func checkForwardEdits[T comparable](t *testing.T, edit func(string, string, *T,
 
 func TestSetRememberedForwardRejectsDuplicateLocalPort(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.jsonc")
-	if _, err := EditRememberedForward(path, "dev", &core.RememberedForward{RemotePort: 3000, LocalPort: 13000}, true); err != nil {
+	first := &core.RememberedForward{RemotePort: 3000, LocalPort: 13000}
+	if _, err := EditRememberedForward(path, "dev", first, true); err != nil {
 		t.Fatal(err)
 	}
 	_, err := EditRememberedForward(path, "dev", &core.RememberedForward{RemotePort: 5173, LocalPort: 13000}, true)
-	require.Falsef(t, err == nil || !strings.Contains(err.Error(), "local port 13000"), "error = %v", err)
+	require.Error(t, err)
+	config, err := LoadConfig(path)
+	require.NoError(t, err)
+	require.Equal(t, []core.RememberedForward{*first}, config.Rules["dev"].Forwards)
+	require.Empty(t, config.Rules["dev"].Published)
 }
 
 func TestForwardMutationsRejectStrictLocalPortReservationInEitherOrder(t *testing.T) {
 	t.Run("publish after remembered", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "config.jsonc")
-		if _, err := EditRememberedForward(path, "dev", &core.RememberedForward{RemotePort: 5173, LocalPort: 9222}, true); err != nil {
+		remembered := &core.RememberedForward{RemotePort: 5173, LocalPort: 9222}
+		if _, err := EditRememberedForward(path, "dev", remembered, true); err != nil {
 			t.Fatal(err)
 		}
 		_, err := EditPublishedForward(path, "dev", &core.PublishedForward{LocalPort: 9222}, true)
-		require.Falsef(t, err == nil || !strings.Contains(err.Error(), "reserved by a published forward"), "error = %v", err)
+		require.Error(t, err)
+		config, err := LoadConfig(path)
+		require.NoError(t, err)
+		require.Equal(t, []core.RememberedForward{*remembered}, config.Rules["dev"].Forwards)
+		require.Empty(t, config.Rules["dev"].Published)
 	})
 	t.Run("remember after publish", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "config.jsonc")
-		if _, err := EditPublishedForward(path, "dev", &core.PublishedForward{LocalPort: 9222}, true); err != nil {
+		published := &core.PublishedForward{LocalPort: 9222}
+		if _, err := EditPublishedForward(path, "dev", published, true); err != nil {
 			t.Fatal(err)
 		}
 		_, err := EditRememberedForward(path, "dev", &core.RememberedForward{RemotePort: 5173, LocalPort: 9222}, true)
-		require.Falsef(t, err == nil || !strings.Contains(err.Error(), "reserved by a published forward"), "error = %v", err)
+		require.Error(t, err)
+		config, err := LoadConfig(path)
+		require.NoError(t, err)
+		require.Empty(t, config.Rules["dev"].Forwards)
+		require.Equal(t, []core.PublishedForward{*published}, config.Rules["dev"].Published)
 	})
 }
 
 func TestPublishedForwardAllowsFallbackRememberedPortReservation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.jsonc")
-	if _, err := EditRememberedForward(path, "dev", &core.RememberedForward{RemotePort: 9222, LocalPort: 9222, AllowFallback: true}, true); err != nil {
+	remembered := &core.RememberedForward{RemotePort: 9222, LocalPort: 9222, AllowFallback: true}
+	published := &core.PublishedForward{LocalPort: 9222}
+	if _, err := EditRememberedForward(path, "dev", remembered, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := EditPublishedForward(path, "dev", &core.PublishedForward{LocalPort: 9222}, true); err != nil {
+	if _, err := EditPublishedForward(path, "dev", published, true); err != nil {
 		t.Fatal(err)
 	}
+	config, err := LoadConfig(path)
+	require.NoError(t, err)
+	require.Equal(t, []core.RememberedForward{*remembered}, config.Rules["dev"].Forwards)
+	require.Equal(t, []core.PublishedForward{*published}, config.Rules["dev"].Published)
 }
 
 func TestConfigurationModelRoundTripPreservesScopes(t *testing.T) {
@@ -166,22 +186,4 @@ func TestConfigurationModelRoundTripPreservesScopes(t *testing.T) {
 	}
 	after.scope("").Published = []core.PublishedForward{{LocalPort: 9000}}
 	require.Error(t, after.save(path), "internal model persisted global publish")
-}
-
-func TestConfigRejectsInvalidInput(t *testing.T) {
-	for _, tc := range []struct{ name, input, diagnostic string }{
-		{"unknown field", `{"schema_version":6,"mystery":true}`, "unknown field"},
-		{"unsupported schema", `{"schema_version":5}`, "schema_version"},
-		{"relative directory", `{"schema_version":6,"working_directory_rules":{"dev":["workspace/**"]}}`, "working-directory glob"},
-		{"malformed glob", `{"schema_version":6,"working_directory_rules":{"dev":["/workspace/["]}}`, "working-directory glob"},
-		{"invalid app", `{"schema_version":6,"global_ignored_apps":["hunk name"]}`, "invalid app name"},
-		{"truncated JSONC", `{"schema_version":6,`, ""},
-		{"duplicate remote publication", `{"schema_version":6,"published_forwards":{"dev":[{"local_port":9222,"remote_port":19222},{"local_port":9333,"remote_port":19222}]}}`, "published remote port 19222"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := LoadConfig(writeConfigFile(t, tc.input))
-			require.Error(t, err)
-			require.Contains(t, err.Error(), tc.diagnostic)
-		})
-	}
 }

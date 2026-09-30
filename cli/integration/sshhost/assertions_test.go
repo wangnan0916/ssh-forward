@@ -87,15 +87,3 @@ func waitForStatus(t *testing.T, manager core.Manager, condition func(core.Statu
 	t.Fatalf("manager status did not converge: %#v", status)
 	return core.Status{}
 }
-
-func isSocat(listener core.Listener) bool {
-	return strings.HasPrefix(listener.App, "socat")
-}
-
-func listenersByPort(listeners []core.Listener) map[uint16]core.Listener {
-	indexed := make(map[uint16]core.Listener, len(listeners))
-	for _, listener := range listeners {
-		indexed[listener.Port] = listener
-	}
-	return indexed
-}

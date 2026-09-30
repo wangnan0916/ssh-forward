@@ -83,17 +83,16 @@ def main():
         authorized.write_bytes(key.with_suffix(".pub").read_bytes())
         try:
             run(*compose, "up", "-d", "--build")
-            ports = [run(*compose, "port", "ssh-host", port, capture=True).rsplit(":", 1)[1]
-                     for port in ("22", "2222")]
+            port = run(*compose, "port", "ssh-host", "22", capture=True).rsplit(":", 1)[1]
             known_hosts = state / "known_hosts"
-            known_hosts.write_text("\n".join(retry(lambda p=p: run(
-                "ssh-keyscan", "-T", "2", "-p", p, "127.0.0.1", capture=True,
-                stderr=subprocess.DEVNULL, timeout=5)) for p in ports) + "\n")
+            known_hosts.write_text(retry(lambda: run(
+                "ssh-keyscan", "-T", "2", "-p", port, "127.0.0.1", capture=True,
+                stderr=subprocess.DEVNULL, timeout=5)) + "\n")
             host = os.environ["SSH_FORWARD_TEST_HOST_ALIAS"]
-            unsafe = os.environ["SSH_FORWARD_TEST_UNSAFE_HOST_ALIAS"]
             config = state / "ssh_config"
-            config.write_text(f"""Host {host} {unsafe}
+            config.write_text(f"""Host {host}
     HostName 127.0.0.1
+    Port {port}
     User {os.environ['SSH_FORWARD_TEST_USER']}
     IdentityFile {key}
     IdentitiesOnly yes
@@ -113,15 +112,8 @@ def main():
     ServerAliveInterval 5
     ServerAliveCountMax 2
     LogLevel ERROR
-Host {host}
-    Port {ports[0]}
-    LocalForward 127.0.0.1:{os.environ['SSH_FORWARD_FIXTURE_PORT_CONFIG_LOCAL']} 127.0.0.1:{os.environ['SSH_FORWARD_FIXTURE_PORT_V4']}
-    RemoteForward 127.0.0.1:{os.environ['SSH_FORWARD_FIXTURE_PORT_CONFIG_REMOTE']} 127.0.0.1:{os.environ['SSH_FORWARD_FIXTURE_PORT_CONFIG_LOCAL']}
-Host {unsafe}
-    Port {ports[1]}
 """)
-            for alias in (host, unsafe):
-                run("ssh", "-F", str(config), "-o", "ClearAllForwardings=yes", alias, "true", stdin=subprocess.DEVNULL)
+            run("ssh", "-F", str(config), "-o", "ClearAllForwardings=yes", host, "true", stdin=subprocess.DEVNULL)
             os.environ["SSH_FORWARD_TEST_SSH_CONFIG"] = str(config)
             run("go", "test", "-count=1", "-tags=integration", "./integration/...", cwd=ROOT / "cli", timeout=600)
         finally:

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -120,10 +121,11 @@ func wantTargets(t *testing.T, events <-chan ForwardTarget, targets ...ForwardTa
 
 func wantNoEvent(t *testing.T, events <-chan ForwardTarget) {
 	t.Helper()
+	synctest.Wait()
 	select {
 	case got := <-events:
 		t.Fatalf("unexpected target event %#v", got)
-	case <-time.After(20 * time.Millisecond):
+	default:
 	}
 }
 

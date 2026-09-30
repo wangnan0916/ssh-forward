@@ -45,8 +45,13 @@ a widget framework. Tests share `testify/require` assertions and behavioral fixt
 A supervisor library does not own the forwarding policy: removal must await
 cleanup, failures are isolated per port, and replacement cannot overlap a retiring
 worker. `sync.WaitGroup.Go` and cancellable contexts express those requirements
-without an additional lifecycle framework. The Docker/OpenSSH fixture tests real
-transport behavior; parser and planner fuzz tests cover pure boundaries.
+without an additional lifecycle framework.
+
+Every test keeps the lowest layer that can observe its fact. A rule decided in
+the manager is not re-run against a more realistic double, and an assertion that
+restates a return value is removed. The Docker/OpenSSH fixture therefore covers
+only what real transport alone shows: bytes crossing the tunnel, and recovery in
+both directions after a silent connection loss.
 
 ## Configuration and discovery
 
