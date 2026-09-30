@@ -50,7 +50,7 @@ transport behavior; parser and planner fuzz tests cover pure boundaries.
 
 ## Configuration and discovery
 
-The schema-6 wire format is isolated from the internal map of typed rule scopes.
+Schema 6 is the JSON encoding of one scoped rule map.
 An empty scope is global; publications require a named scope. Every rule edit
 uses the same normalize/validate/save path, including cross-direction conflicts.
 Invalid configuration leaves existing runtimes intact.

@@ -141,11 +141,14 @@ func FuzzReconciliationSequence(f *testing.F) {
 				}
 			}
 
-			intent := normalizedForwardingIntent(ForwardingIntent{
+			intent, err := NormalizeIntent(ForwardingIntent{
 				RememberedForwards:    slices.Collect(maps.Values(remembered)),
 				PublishedForwards:     slices.Collect(maps.Values(published)),
 				WorkingDirectoryRules: []string{"/workspace/**"},
 			})
+			if err != nil {
+				return
+			}
 			desired := buildDesiredForwards(intent.RememberedForwards, intent.PublishedForwards, listeners, intent.WorkingDirectoryRules, intent.IgnoredApps)
 			plan := planReconciliation(desired, workers, reservedLocalPorts(intent.PublishedForwards))
 			assertReconciliationPlan(t, plan, desired, workers)

@@ -1,10 +1,8 @@
 package app
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -24,8 +22,8 @@ func writeConfigFile(t *testing.T, content string) string {
 	return path
 }
 
-func TestWorkingDirectoryRuleMutationsPreserveHostAndUpgradeSchema(t *testing.T) {
-	path := writeConfigFile(t, `{"schema_version": 1, "default_host": "dev"}`)
+func TestWorkingDirectoryRuleMutationsPreserveHost(t *testing.T) {
+	path := writeConfigFile(t, `{"schema_version":6,"hosts":{"dev":{"target":"dev"}}}`)
 	for _, pattern := range []string{"/workspace/**", "/workspace/apps/*", "/workspace/**"} {
 		if _, err := EditWorkingDirectoryRule(path, "dev", pattern, true); err != nil {
 			t.Fatal(err)
@@ -39,9 +37,9 @@ func TestWorkingDirectoryRuleMutationsPreserveHostAndUpgradeSchema(t *testing.T)
 	}
 	config, err := LoadConfig(path)
 	require.NoError(t, err)
-	require.Falsef(t, config.SchemaVersion != configSchemaVersion || config.DefaultHost != "" || config.Hosts["dev"].Target != "dev" ||
-		len(config.WorkingDirectoryRules["dev"]) != 1 || config.WorkingDirectoryRules["dev"][0] != "/workspace/**" ||
-		config.WorkingDirectoryRules["other"][0] != "/srv/**", "config = %#v", config)
+	require.Falsef(t, config.SchemaVersion != configSchemaVersion || config.Hosts["dev"].Target != "dev" ||
+		len(config.Rules["dev"].Directories) != 1 || config.Rules["dev"].Directories[0] != "/workspace/**" ||
+		config.Rules["other"].Directories[0] != "/srv/**", "config = %#v", config)
 }
 
 func TestLoadConfigMissingFile(t *testing.T) {
@@ -55,19 +53,36 @@ func TestForwardEditsPreserveScopesAndMappings(t *testing.T) {
 		checkForwardEdits(t, EditRememberedForward,
 			[]core.RememberedForward{{RemotePort: 8080, LocalPort: 18080}, {RemotePort: 5173, LocalPort: 5173}, {RemotePort: 8080, LocalPort: 28080}},
 			core.RememberedForward{RemotePort: 3000, LocalPort: 13000},
-			func(c configFile) map[string][]core.RememberedForward { return c.RememberedForwards })
+			func(c configuration) map[string][]core.RememberedForward {
+				return rulesByHost(c, func(rules *scopeRules) []core.RememberedForward { return rules.Forwards })
+			})
 	})
 	t.Run("publications", func(t *testing.T) {
 		checkForwardEdits(t, EditPublishedForward,
 			[]core.PublishedForward{{LocalPort: 9222}, {LocalPort: 3000, RemotePort: 13000}, {LocalPort: 9222, RemotePort: 19222}},
 			core.PublishedForward{LocalPort: 8080, RemotePort: 8080},
-			func(c configFile) map[string][]core.PublishedForward { return c.PublishedForwards })
+			func(c configuration) map[string][]core.PublishedForward {
+				return rulesByHost(c, func(rules *scopeRules) []core.PublishedForward { return rules.Published })
+			})
 	})
 }
 
-func checkForwardEdits[T comparable](t *testing.T, edit func(string, string, *T, bool) (bool, error), steps []T, other T, read func(configFile) map[string][]T) {
+func rulesByHost[T any](config configuration, read func(*scopeRules) []T) map[string][]T {
+	out := map[string][]T{}
+	for host, rules := range config.Rules {
+		if host == "" || rules == nil {
+			continue
+		}
+		if values := read(rules); len(values) > 0 {
+			out[host] = values
+		}
+	}
+	return out
+}
+
+func checkForwardEdits[T comparable](t *testing.T, edit func(string, string, *T, bool) (bool, error), steps []T, other T, read func(configuration) map[string][]T) {
 	t.Helper()
-	path := writeConfigFile(t, `{"schema_version":5,"default_host":"dev"}`)
+	path := writeConfigFile(t, `{"schema_version":6,"hosts":{"dev":{"target":"dev"}}}`)
 	for _, forward := range steps {
 		changed, err := edit(path, "dev", &forward, true)
 		require.NoError(t, err)
@@ -84,7 +99,6 @@ func checkForwardEdits[T comparable](t *testing.T, edit func(string, string, *T,
 	config, err := LoadConfig(path)
 	require.NoError(t, err)
 	require.Equal(t, configSchemaVersion, config.SchemaVersion)
-	require.Empty(t, config.DefaultHost)
 	require.Equal(t, "dev", config.Hosts["dev"].Target)
 	require.Equal(t, map[string][]T{"dev": {steps[2]}, "other": {other}}, read(config))
 }
@@ -127,24 +141,6 @@ func TestPublishedForwardAllowsFallbackRememberedPortReservation(t *testing.T) {
 	}
 }
 
-func TestLegacyHostMigrationSurvivesRewrite(t *testing.T) {
-	path := writeConfigFile(t, `{"schema_version":5,"default_host":"default-only","remembered_forwards":{"dev":[{"remote_port":8080}]},"working_directory_rules":{"dirs":["/workspace/**"]}}`)
-	config, err := LoadConfig(path)
-	require.NoError(t, err)
-	require.NoError(t, saveConfig(path, config))
-	content, err := os.ReadFile(path)
-	require.NoError(t, err)
-	require.False(t, strings.Contains(string(content), "default_host"), "legacy default persisted")
-	again, err := LoadConfig(path)
-	require.NoError(t, err)
-	for _, host := range []string{"default-only", "dev", "dirs"} {
-		require.EqualValuesf(t, host, again.Hosts[host].Target, "lost host %s", host)
-	}
-	require.False(t, len(again.GlobalForwards) != 0 || len(again.GlobalWorkingDirectoryRules) != 0, "legacy rules broadened")
-	config.SchemaVersion = configSchemaVersion
-	require.Equal(t, config, again)
-}
-
 func TestConfigurationModelRoundTripPreservesScopes(t *testing.T) {
 	path := writeConfigFile(t, `{
  "schema_version":6,"hosts":{"dev":{"target":"user@dev","arguments":["-p","2222"]}},"ignored_hosts":["offline"],
@@ -172,43 +168,15 @@ func TestConfigurationModelRoundTripPreservesScopes(t *testing.T) {
 	require.Error(t, after.save(path), "internal model persisted global publish")
 }
 
-func TestConfigMigrations(t *testing.T) {
-	for _, tc := range []struct {
-		name, input string
-		want        []core.RememberedForward
-	}{
-		{"legacy ports", `{"schema_version":2,"forwards":{"dev":[5173,3000]}}`, []core.RememberedForward{{RemotePort: 3000, LocalPort: 3000, AllowFallback: true}, {RemotePort: 5173, LocalPort: 5173, AllowFallback: true}}},
-		{"schema 3 policy", `{"schema_version":3,"remembered_forwards":{"dev":[{"remote_port":3000,"local_port":3000},{"remote_port":5173,"local_port":15173,"allow_fallback":true}]}}`, []core.RememberedForward{{RemotePort: 3000, LocalPort: 3000, AllowFallback: true}, {RemotePort: 5173, LocalPort: 15173}}},
-		{"omitted local port", `{"schema_version":4,"remembered_forwards":{"dev":[{"remote_port":3000}]}}`, []core.RememberedForward{{RemotePort: 3000, LocalPort: 3000, AllowFallback: true}}},
-		{"explicit fallback", `{"schema_version":4,"remembered_forwards":{"dev":[{"remote_port":3000,"local_port":13000,"allow_fallback":true},{"remote_port":5173,"local_port":15173}]}}`, []core.RememberedForward{{RemotePort: 3000, LocalPort: 13000, AllowFallback: true}, {RemotePort: 5173, LocalPort: 15173}}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			config, err := LoadConfig(writeConfigFile(t, tc.input))
-			require.NoError(t, err)
-			require.Nil(t, config.LegacyForwards)
-			require.Equal(t, tc.want, config.RememberedForwards["dev"])
-		})
-	}
-	for schema := 1; schema < 5; schema++ {
-		t.Run("ignore pre-v5 publications/"+strconv.Itoa(schema), func(t *testing.T) {
-			config, err := parseConfig([]byte(fmt.Sprintf(`{"schema_version":%d,"default_host":"dev","published_forwards":{"dev":[{"local_port":9222}]}}`, schema)))
-			require.NoError(t, err)
-			require.Empty(t, config.PublishedForwards)
-			require.Empty(t, config.DefaultHost)
-			require.Equal(t, "dev", config.Hosts["dev"].Target)
-		})
-	}
-}
-
 func TestConfigRejectsInvalidInput(t *testing.T) {
 	for _, tc := range []struct{ name, input, diagnostic string }{
-		{"unknown field", `{"schema_version":1,"mystery":true}`, "unknown field"},
-		{"unsupported schema", `{"schema_version":7}`, "schema_version"},
-		{"relative directory", `{"schema_version":2,"working_directory_rules":{"dev":["workspace/**"]}}`, "working-directory glob"},
-		{"malformed glob", `{"schema_version":2,"working_directory_rules":{"dev":["/workspace/["]}}`, "working-directory glob"},
+		{"unknown field", `{"schema_version":6,"mystery":true}`, "unknown field"},
+		{"unsupported schema", `{"schema_version":5}`, "schema_version"},
+		{"relative directory", `{"schema_version":6,"working_directory_rules":{"dev":["workspace/**"]}}`, "working-directory glob"},
+		{"malformed glob", `{"schema_version":6,"working_directory_rules":{"dev":["/workspace/["]}}`, "working-directory glob"},
 		{"invalid app", `{"schema_version":6,"global_ignored_apps":["hunk name"]}`, "invalid app name"},
-		{"truncated JSONC", `{"schema_version":1,`, ""},
-		{"duplicate remote publication", `{"schema_version":5,"published_forwards":{"dev":[{"local_port":9222,"remote_port":19222},{"local_port":9333,"remote_port":19222}]}}`, "published remote port 19222"},
+		{"truncated JSONC", `{"schema_version":6,`, ""},
+		{"duplicate remote publication", `{"schema_version":6,"published_forwards":{"dev":[{"local_port":9222,"remote_port":19222},{"local_port":9333,"remote_port":19222}]}}`, "published remote port 19222"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := LoadConfig(writeConfigFile(t, tc.input))

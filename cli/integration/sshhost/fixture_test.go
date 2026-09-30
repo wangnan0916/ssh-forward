@@ -62,7 +62,8 @@ func fixturePort(t *testing.T, name string) uint16 {
 
 func (e testEnvironment) manager(t *testing.T, intent core.ForwardingIntent) core.Manager {
 	t.Helper()
-	manager := core.NewManager(core.HostAlias(e.host), e.adapter, intent)
+	manager, err := core.NewManager(core.HostAlias(e.host), e.adapter, intent)
+	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, manager.Close(context.Background())) })
 	return manager
 }

@@ -71,7 +71,7 @@ func samePortForwards(ports ...uint16) []RememberedForward {
 
 func managerStatus(t *testing.T, manager Manager) Status {
 	t.Helper()
-	status, err := manager.Status(context.Background())
+	status, err := manager.Status(t.Context())
 	require.NoError(t, err)
 	return status
 }
@@ -133,7 +133,8 @@ func testManager(t *testing.T, backend Backend, intent ForwardingIntent, retry .
 	if len(retry) > 0 {
 		delay = retry[0]
 	}
-	manager := newManager(managerOptions{host: "dev", backend: backend, intent: intent, retryDelay: delay})
+	manager, err := newManager(managerOptions{host: "dev", backend: backend, intent: intent, retryDelay: delay})
+	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 	return manager
 }

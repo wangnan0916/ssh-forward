@@ -30,5 +30,5 @@ func targetManager(name string, target HostTarget, intent core.ForwardingIntent,
 	if err != nil {
 		return nil, err
 	}
-	return core.NewManager(core.HostAlias(name), adapter, intent), nil
+	return core.NewManager(core.HostAlias(name), adapter, intent)
 }

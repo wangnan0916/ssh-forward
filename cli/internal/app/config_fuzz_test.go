@@ -10,18 +10,16 @@ import (
 
 func FuzzParseConfig(f *testing.F) {
 	for _, seed := range []string{
-		`{"schema_version":1,"forwards":{"dev":[5173,3000]}}`,
-		`{"schema_version":2,"default_host":"dev"}`,
-		`{"schema_version":3,"remembered_forwards":{"dev":[{"remote_port":5173}]}}`,
-		`{"schema_version":4,"remembered_forwards":{"dev":[{"remote_port":5173,"local_port":15173}]}}`,
+		`{"schema_version":6,"remembered_forwards":{"dev":[{"remote_port":5173,"local_port":15173}]}}`,
 		`{
 			// JSONC comments and trailing commas are supported.
-			"schema_version": 5,
+			"schema_version": 6,
 			"published_forwards": {"dev": [{"local_port": 9222},]},
 			"working_directory_rules": {"dev": ["/workspace/**",]},
 		}`,
-		`{"schema_version":5,"unknown":true}`,
-		`{"schema_version":5,`,
+		`{"schema_version":6,"unknown":true}`,
+		`{"schema_version":6,`,
+		`{"schema_version":5,"hosts":{"dev":{"target":"dev"}}}`,
 	} {
 		f.Add([]byte(seed))
 	}
@@ -35,19 +33,17 @@ func FuzzParseConfig(f *testing.F) {
 }
 
 func FuzzNormalizeConfig(f *testing.F) {
-	f.Add(uint8(1), uint16(5173), uint16(0), uint16(9222), uint16(0), false)
-	f.Add(uint8(3), uint16(5173), uint16(15173), uint16(9222), uint16(19222), true)
-	f.Add(uint8(5), uint16(5173), uint16(5173), uint16(9222), uint16(19222), true)
-	f.Fuzz(func(t *testing.T, schemaIndex uint8, remotePort, localPort, publishedLocalPort, publishedRemotePort uint16, allowFallback bool) {
-		schema := int(schemaIndex%configSchemaVersion) + 1
-		config := configFile{SchemaVersion: schema}
-		if schema <= 2 {
-			config.LegacyForwards = map[string][]uint16{"dev": {remotePort}}
-		} else {
-			config.RememberedForwards = map[string][]core.RememberedForward{"dev": {{RemotePort: remotePort, LocalPort: localPort, AllowFallback: allowFallback}}}
-		}
-		if schema == configSchemaVersion {
-			config.PublishedForwards = map[string][]core.PublishedForward{"dev": {{LocalPort: publishedLocalPort, RemotePort: publishedRemotePort}}}
+	f.Add(uint16(5173), uint16(0), uint16(9222), uint16(0), false)
+	f.Add(uint16(5173), uint16(15173), uint16(9222), uint16(19222), true)
+	f.Fuzz(func(t *testing.T, remotePort, localPort, publishedLocalPort, publishedRemotePort uint16, allowFallback bool) {
+		config := configuration{
+			SchemaVersion: configSchemaVersion,
+			Rules: map[string]*scopeRules{
+				"dev": new(scopeRules{
+					Forwards:  []core.RememberedForward{{RemotePort: remotePort, LocalPort: localPort, AllowFallback: allowFallback}},
+					Published: []core.PublishedForward{{LocalPort: publishedLocalPort, RemotePort: publishedRemotePort}},
+				}),
+			},
 		}
 		normalized, err := normalizeConfig(config)
 		if err != nil {
@@ -57,12 +53,13 @@ func FuzzNormalizeConfig(f *testing.F) {
 	})
 }
 
-func assertNormalizedConfig(t *testing.T, config configFile) {
+func assertNormalizedConfig(t *testing.T, config configuration) {
 	t.Helper()
-	require.GreaterOrEqual(t, config.SchemaVersion, 1)
-	require.LessOrEqual(t, config.SchemaVersion, configSchemaVersion)
-	require.Nil(t, config.LegacyForwards)
-	for host, rules := range config.model().Rules {
+	require.Equal(t, configSchemaVersion, config.SchemaVersion)
+	for host, rules := range config.Rules {
+		if rules == nil {
+			continue
+		}
 		assertPortMappings(t, rules.Forwards, func(f core.RememberedForward) (uint16, uint16) { return f.RemotePort, f.LocalPort })
 		assertPortMappings(t, rules.Published, func(f core.PublishedForward) (uint16, uint16) { return f.LocalPort, f.RemotePort })
 		for _, publication := range rules.Published {
@@ -72,7 +69,7 @@ func assertNormalizedConfig(t *testing.T, config configFile) {
 			}
 		}
 		for i, pattern := range rules.Directories {
-			require.NoError(t, validateWorkingDirectoryRule(pattern))
+			require.NoError(t, core.ValidWorkingDirectoryRule(pattern))
 			if i > 0 {
 				require.Less(t, rules.Directories[i-1], pattern)
 			}

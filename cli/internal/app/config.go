@@ -1,6 +1,8 @@
 package app
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"slices"
@@ -10,7 +12,7 @@ import (
 
 const configSchemaVersion = 6
 
-// configFile is the disk format; migration and encoding stay at this boundary.
+// configFile is only the schema 6 JSON object. Rules live in configuration.
 type configFile struct {
 	Hosts                       map[string]HostTarget               `json:"hosts,omitempty"`
 	IgnoredHosts                []string                            `json:"ignored_hosts,omitempty"`
@@ -18,27 +20,18 @@ type configFile struct {
 	GlobalWorkingDirectoryRules []string                            `json:"global_working_directory_rules,omitempty"`
 	GlobalIgnoredApps           []string                            `json:"global_ignored_apps,omitempty"`
 	SchemaVersion               int                                 `json:"schema_version"`
-	DefaultHost                 string                              `json:"default_host,omitempty"`
-	LegacyForwards              map[string][]uint16                 `json:"forwards,omitempty"`
 	RememberedForwards          map[string][]core.RememberedForward `json:"remembered_forwards,omitempty"`
 	PublishedForwards           map[string][]core.PublishedForward  `json:"published_forwards,omitempty"`
 	WorkingDirectoryRules       map[string][]string                 `json:"working_directory_rules,omitempty"`
 }
 
-func LoadConfig(path string) (configFile, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return configFile{}, err
-	}
-	return parseConfig(content)
-}
-
-// configuration is independent of the JSON schema. The empty scope applies
-// to all hosts; published forwards always require a named scope.
+// configuration is the config. An empty scope applies to all hosts.
+// Publications require a named scope. MarshalJSON writes schema 6.
 type configuration struct {
-	Hosts        map[string]HostTarget
-	IgnoredHosts []string
-	Rules        map[string]*scopeRules
+	SchemaVersion int
+	Hosts         map[string]HostTarget
+	IgnoredHosts  []string
+	Rules         map[string]*scopeRules
 }
 
 type scopeRules struct {
@@ -48,47 +41,89 @@ type scopeRules struct {
 	IgnoredApps []string
 }
 
-func (c configuration) scope(host string) *scopeRules {
+func (c *configuration) scope(host string) *scopeRules {
+	if c.Rules == nil {
+		c.Rules = map[string]*scopeRules{}
+	}
 	if c.Rules[host] == nil {
 		c.Rules[host] = &scopeRules{}
 	}
 	return c.Rules[host]
 }
 
-func (file configFile) model() configuration {
-	c := configuration{Hosts: file.Hosts, IgnoredHosts: file.IgnoredHosts, Rules: make(map[string]*scopeRules)}
-	c.Rules[""] = &scopeRules{Forwards: file.GlobalForwards, Directories: file.GlobalWorkingDirectoryRules, IgnoredApps: file.GlobalIgnoredApps}
+func (c configuration) MarshalJSON() ([]byte, error) {
+	file, err := c.wire()
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(file)
+}
+
+func (c *configuration) UnmarshalJSON(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var file configFile
+	if err := decoder.Decode(&file); err != nil {
+		return err
+	}
+	parsed, err := file.configuration()
+	if err != nil {
+		return err
+	}
+	*c = parsed
+	return nil
+}
+
+func (file configFile) configuration() (configuration, error) {
+	_, imports := file.RememberedForwards[""]
+	_, publications := file.PublishedForwards[""]
+	_, directories := file.WorkingDirectoryRules[""]
+	if imports || publications || directories {
+		return configuration{}, errors.New("empty host alias")
+	}
+	config := configuration{
+		SchemaVersion: file.SchemaVersion,
+		Hosts:         file.Hosts,
+		IgnoredHosts:  file.IgnoredHosts,
+		Rules:         map[string]*scopeRules{},
+	}
+	config.Rules[""] = &scopeRules{
+		Forwards:    file.GlobalForwards,
+		Directories: file.GlobalWorkingDirectoryRules,
+		IgnoredApps: file.GlobalIgnoredApps,
+	}
 	for host, rules := range file.RememberedForwards {
-		c.scope(host).Forwards = rules
+		config.scope(host).Forwards = rules
 	}
 	for host, rules := range file.PublishedForwards {
-		c.scope(host).Published = rules
+		config.scope(host).Published = rules
 	}
 	for host, rules := range file.WorkingDirectoryRules {
-		c.scope(host).Directories = rules
+		config.scope(host).Directories = rules
 	}
-	return c
+	return config, nil
 }
 
-func loadConfigForWrite(path string) (configuration, error) {
-	file, err := LoadConfig(path)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return configuration{}, err
+func (c configuration) wire() (configFile, error) {
+	file := configFile{
+		Hosts:                 c.Hosts,
+		IgnoredHosts:          c.IgnoredHosts,
+		SchemaVersion:         configSchemaVersion,
+		RememberedForwards:    map[string][]core.RememberedForward{},
+		PublishedForwards:     map[string][]core.PublishedForward{},
+		WorkingDirectoryRules: map[string][]string{},
 	}
-	return file.model(), nil
-}
-
-func (c configuration) file() (configFile, error) {
-	file := configFile{Hosts: c.Hosts, IgnoredHosts: c.IgnoredHosts,
-		RememberedForwards:    make(map[string][]core.RememberedForward),
-		PublishedForwards:     make(map[string][]core.PublishedForward),
-		WorkingDirectoryRules: make(map[string][]string)}
 	for host, rules := range c.Rules {
+		if rules == nil {
+			continue
+		}
 		if host == "" {
 			if len(rules.Published) > 0 {
 				return configFile{}, errors.New("published forwards require a host")
 			}
-			file.GlobalForwards, file.GlobalWorkingDirectoryRules, file.GlobalIgnoredApps = rules.Forwards, rules.Directories, rules.IgnoredApps
+			file.GlobalForwards = rules.Forwards
+			file.GlobalWorkingDirectoryRules = rules.Directories
+			file.GlobalIgnoredApps = rules.IgnoredApps
 			continue
 		}
 		if len(rules.Forwards) > 0 {
@@ -104,18 +139,24 @@ func (c configuration) file() (configFile, error) {
 	return file, nil
 }
 
-func (c configuration) save(path string) error {
-	file, err := c.file()
+func LoadConfig(path string) (configuration, error) {
+	content, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return configuration{}, err
 	}
-	return saveConfig(path, file)
+	return parseConfig(content)
 }
 
-func saveConfig(path string, config configFile) error {
-	config.SchemaVersion = configSchemaVersion
-	config.LegacyForwards = nil
-	return writeJSONC(path, config)
+func loadConfigForWrite(path string) (configuration, error) {
+	config, err := LoadConfig(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return configuration{Rules: map[string]*scopeRules{}}, nil
+	}
+	return config, err
+}
+
+func (c configuration) save(path string) error {
+	return writeJSONC(path, c)
 }
 
 // HostIntent returns persistent forwarding intent for host.

@@ -36,18 +36,18 @@ func (m *fixedManager) UpdateIntent(_ context.Context, intent core.ForwardingInt
 func (*fixedManager) Close(context.Context) error { return nil }
 
 func TestManagerIPCRoundTrip(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	path := filepath.Join(t.TempDir(), "manager.sock")
 	listener, err := listenManager(path)
 	require.NoError(t, err)
-	configPath := writeConfigFile(t, `{"schema_version":5,"default_host":"dev","remembered_forwards":{"dev":[{"remote_port":3000}]}}`)
+	configPath := writeConfigFile(t, `{"schema_version":6,"hosts":{"dev":{"target":"dev"}},"remembered_forwards":{"dev":[{"remote_port":3000}]}}`)
 	pool := &managerPool{configPath: configPath, managers: make(map[string]core.Manager),
 		createTarget: func(host string, _ HostTarget, intent core.ForwardingIntent) (core.Manager, error) {
 			return &fixedManager{status: core.Status{Host: core.HostAlias(host)}, intent: intent}, nil
 		}}
 	server := &http.Server{Handler: managerHandler(pool, "test-version")}
 	go func() { _ = server.Serve(listener) }()
-	t.Cleanup(func() { _ = server.Close(); _ = pool.Close(ctx) })
+	t.Cleanup(func() { _ = server.Close(); _ = pool.Close(context.Background()) })
 	opts := Options{Layout: Layout{Dir: filepath.Dir(path), Socket: path}, ConfigPath: configPath, Version: "test-version", HostFlag: "user@other"}
 	session, err := Connect(ctx, opts)
 	require.NoError(t, err)

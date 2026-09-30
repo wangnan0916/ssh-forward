@@ -18,11 +18,6 @@ import (
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
 
-func TestProcessArgumentsPreserveExactArgv(t *testing.T) {
-	args, err := processArguments(context.Background(), int32(os.Getpid()))
-	require.NoError(t, err)
-	require.Equal(t, os.Args, args)
-}
 func TestParseSSHConnectionTargets(t *testing.T) {
 	tests := []struct {
 		name string
@@ -67,8 +62,13 @@ func TestDiscoveryExcludesOtherUsersAndProductProcesses(t *testing.T) {
 	require.Falsef(t, len(got) != 2 || got["user@direct"].Target == "" || got["dev"].Target == "", "unexpected discovery: %+v", got)
 }
 func TestGlobalRulesAndDiscoverySurviveRestartAndIgnore(t *testing.T) {
-	ctx := context.Background()
-	pool, _ := testPool(t, configFile{Hosts: map[string]HostTarget{"manual": {Target: "manual"}}, GlobalForwards: []core.RememberedForward{{RemotePort: 8080}}, GlobalWorkingDirectoryRules: []string{"/other/**"}})
+	ctx := t.Context()
+	pool, _ := testPool(t, configuration{
+		Hosts: map[string]HostTarget{"manual": {Target: "manual"}},
+		Rules: map[string]*scopeRules{
+			"": new(scopeRules{Forwards: []core.RememberedForward{{RemotePort: 8080}}, Directories: []string{"/other/**"}}),
+		},
+	})
 	require.NoError(t, writeJSONC(discoveryPath(pool.configPath), map[string]HostTarget{"found": {Target: "found"}}))
 	require.NoError(t, pool.reload(ctx, ""))
 	for _, host := range []string{"manual", "found"} {
@@ -86,9 +86,9 @@ func TestGlobalRulesAndDiscoverySurviveRestartAndIgnore(t *testing.T) {
 	require.NoError(t, pool.reload(ctx, ""))
 	awaitPoolStatus(t, pool, "found", allPoolForwardsActive(1))
 }
-func TestSchemaFiveMigrationKeepsPublishedAndScopedRules(t *testing.T) {
+func TestScopedRulesStayScopedWhenGlobalRulesChange(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.jsonc")
-	require.NoError(t, writeAtomic(path, []byte(`{"schema_version":5,"remembered_forwards":{"dev":[{"remote_port":3000,"local_port":3000}]},"published_forwards":{"dev":[{"local_port":9222}]},"working_directory_rules":{"dev":["/work/**"]}}`)))
+	require.NoError(t, writeAtomic(path, []byte(`{"schema_version":6,"hosts":{"dev":{"target":"dev"}},"remembered_forwards":{"dev":[{"remote_port":3000,"local_port":3000}]},"published_forwards":{"dev":[{"local_port":9222}]},"working_directory_rules":{"dev":["/work/**"]}}`)))
 	if _, err := EditRememberedForward(path, "", &core.RememberedForward{RemotePort: 8080}, true); err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestProcessArgumentsPreserveBoundaries(t *testing.T) {
 		_, _ = io.Copy(io.Discard, os.Stdin)
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestProcessArgumentsPreserveBoundaries$", "--", "a key with spaces", "", "quote'\"", "你好", "last-argument")
 	cmd.Env = append(os.Environ(), "SSH_FORWARD_ARGV_PROBE=1", "SSH_FORWARD_ARGV_SECRET=must-not-be-argv")
@@ -150,7 +150,7 @@ func TestDiscoveredRegistryLockCancellationAndMerge(t *testing.T) {
 	lock := flock.New(discoveryPath(path) + ".lock")
 	require.NoError(t, lock.Lock())
 	defer lock.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
 	defer cancel()
 	require.ErrorIs(t, rememberDiscovered(ctx, path, map[string]HostTarget{"blocked": {Target: "blocked"}}), context.DeadlineExceeded)
 	if _, err := os.Stat(discoveryPath(path)); !errors.Is(err, os.ErrNotExist) {
@@ -163,7 +163,7 @@ func TestDiscoveredRegistryLockCancellationAndMerge(t *testing.T) {
 	results := make(chan error, 2)
 	for _, name := range []string{"one", "two"} {
 		go func() {
-			results <- rememberDiscovered(context.Background(), path, map[string]HostTarget{name: {Target: name}})
+			results <- rememberDiscovered(t.Context(), path, map[string]HostTarget{name: {Target: name}})
 		}()
 	}
 	for range 2 {
