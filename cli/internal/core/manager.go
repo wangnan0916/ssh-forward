@@ -48,7 +48,7 @@ func NewManager(host HostAlias, backend Backend, intent ForwardingIntent) (Manag
 }
 
 func newManager(options managerOptions) (*manager, error) {
-	intent, err := NormalizeIntent(options.intent)
+	intent, err := normalizeIntent(options.intent)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +84,7 @@ func (m *manager) UpdateIntent(ctx context.Context, intent ForwardingIntent) err
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	intent, err := NormalizeIntent(intent)
+	intent, err := normalizeIntent(intent)
 	if err != nil {
 		return err
 	}

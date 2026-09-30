@@ -31,9 +31,9 @@ func (forward desiredForward) key() forwardKey {
 var ErrInvalidWorkingDirectoryRule = errors.New("invalid working-directory glob")
 var ErrInvalidAppName = errors.New("invalid app name")
 
-// NormalizeIntent canonicalizes one host's rules. Zero ports and duplicates are
+// normalizeIntent canonicalizes one host's rules. Zero ports and duplicates are
 // rejected. Omitted bind ports still receive the same-port default.
-func NormalizeIntent(intent ForwardingIntent) (ForwardingIntent, error) {
+func normalizeIntent(intent ForwardingIntent) (ForwardingIntent, error) {
 	var err error
 	if intent.AutoForwards, err = NormalizeRememberedForwards(intent.AutoForwards); err != nil {
 		return ForwardingIntent{}, err
@@ -53,42 +53,39 @@ func NormalizeIntent(intent ForwardingIntent) (ForwardingIntent, error) {
 	return intent, nil
 }
 
-// ValidAppName accepts one executable name as shown in the status APP column.
-func ValidAppName(name string) bool {
+// validAppName accepts one executable name as shown in the status APP column.
+func validAppName(name string) bool {
 	return name != "" && len(name) <= 255 && utf8.ValidString(name) &&
-		!strings.ContainsAny(name, " \t\r\n/") &&
+		!strings.Contains(name, "/") &&
 		strings.IndexFunc(name, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }) < 0
 }
 
 func NormalizeIgnoredApps(apps []string) ([]string, error) {
-	if len(apps) == 0 {
-		return apps, nil
-	}
-	for _, app := range apps {
-		if err := ValidIgnoredApp(app); err != nil {
-			return nil, err
-		}
-	}
-	return slices.Compact(slices.Sorted(slices.Values(apps))), nil
+	return normalizeRuleNames(apps, ValidIgnoredApp)
 }
 
 func ValidIgnoredApp(name string) error {
-	if !ValidAppName(name) {
+	if !validAppName(name) {
 		return fmt.Errorf("%w: %q", ErrInvalidAppName, name)
 	}
 	return nil
 }
 
 func NormalizeWorkingDirectoryRules(patterns []string) ([]string, error) {
-	if len(patterns) == 0 {
-		return patterns, nil
+	return normalizeRuleNames(patterns, ValidWorkingDirectoryRule)
+}
+
+// normalizeRuleNames validates every entry before sorting and deduplicating.
+func normalizeRuleNames(values []string, valid func(string) error) ([]string, error) {
+	if len(values) == 0 {
+		return values, nil
 	}
-	for _, pattern := range patterns {
-		if err := ValidWorkingDirectoryRule(pattern); err != nil {
+	for _, value := range values {
+		if err := valid(value); err != nil {
 			return nil, err
 		}
 	}
-	return slices.Compact(slices.Sorted(slices.Values(patterns))), nil
+	return slices.Compact(slices.Sorted(slices.Values(values))), nil
 }
 
 func ValidWorkingDirectoryRule(pattern string) error {
