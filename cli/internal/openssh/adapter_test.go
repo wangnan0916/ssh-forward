@@ -28,7 +28,7 @@ func TestRemoteToLocalForwardRejectsOccupiedLoopbackPortBeforeOpenSSH(t *testing
 	adapter.master = &sshMaster{done: make(chan struct{})}
 	adapter.localPortAvailable = func(uint16) bool { return false }
 
-	err := adapter.Forward(context.Background(), core.ForwardTarget{Direction: core.RemoteToLocal, LocalPort: 15173, RemotePort: 5173}, func() { t.Fatal("occupied local port became ready") })
+	err := adapter.Forward(t.Context(), core.ForwardTarget{Direction: core.RemoteToLocal, LocalPort: 15173, RemotePort: 5173}, func() { t.Fatal("occupied local port became ready") })
 	require.EqualValues(t, "local_port_conflict", core.ErrorDiagnostic(err))
 	commands, readErr := os.ReadFile(logPath)
 	require.False(t, readErr != nil && !errors.Is(readErr, os.ErrNotExist), readErr)
@@ -39,7 +39,7 @@ func TestCloseHonorsCanceledContext(t *testing.T) {
 	master := newTestMaster(t, true)
 
 	adapter := &Adapter{waitDelay: 50 * time.Millisecond, master: master}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	require.ErrorIs(t, adapter.Close(ctx), context.Canceled)
 	select {
@@ -53,7 +53,7 @@ func TestObserveReusesMasterWithoutAliasValidation(t *testing.T) {
 	adapter, logPath := newLoggingAdapter(t, "")
 	adapter.master = &sshMaster{done: make(chan struct{})}
 
-	err := adapter.Observe(context.Background(), func([]core.Listener) {})
+	err := adapter.Observe(t.Context(), func([]core.Listener) {})
 	require.EqualValuesf(t, "transport_unavailable", core.ErrorDiagnostic(err), "Observe error = %v", err)
 	commands := readCommands(t, logPath)
 	lines := strings.Split(strings.TrimSpace(commands), "\n")
@@ -63,7 +63,7 @@ func TestObserveReusesMasterWithoutAliasValidation(t *testing.T) {
 func TestEnsureMasterValidatesAliasBeforeStarting(t *testing.T) {
 	adapter, logPath := newLoggingAdapter(t, "exit 1\n")
 
-	_, err := adapter.ensureMaster(context.Background())
+	_, err := adapter.ensureMaster(t.Context())
 	require.EqualValuesf(t, "invalid_alias", core.ErrorDiagnostic(err), "ensureMaster error = %v", err)
 	commands := readCommands(t, logPath)
 	require.EqualValues(t, "-G dev", strings.TrimSpace(commands))
@@ -91,7 +91,7 @@ case " $* " in
 esac
 `)
 			adapter.master = newTestMaster(t, false)
-			err = adapter.Forward(context.Background(), target, func() { t.Fatal("rejected forward became ready") })
+			err = adapter.Forward(t.Context(), target, func() { t.Fatal("rejected forward became ready") })
 			require.Equal(t, tc.diagnostic, core.ErrorDiagnostic(err))
 			select {
 			case <-adapter.master.done:
@@ -106,7 +106,7 @@ esac
 func TestRunControlUsesPrivateConfigurationAndExactFlag(t *testing.T) {
 	adapter, logPath := newLoggingAdapter(t, "")
 	forward := controlForward{flag: "-R", spec: "127.0.0.1:19222:127.0.0.1:9222"}
-	require.NoError(t, adapter.runControl(context.Background(), "forward", &forward))
+	require.NoError(t, adapter.runControl(t.Context(), "forward", &forward))
 	commands := readCommands(t, logPath)
 	want := strings.Join([]string{"-F /dev/null -S", adapter.controlPath(), "-O forward -o ExitOnForwardFailure=yes -R", forward.spec, "dev"}, " ")
 	require.EqualValues(t, want, strings.TrimSpace(commands))
@@ -143,7 +143,7 @@ func TestControlCommandTimeoutDoesNotHangReconnect(t *testing.T) {
 	adapter, _ := newLoggingAdapter(t, "exec sleep 30\n")
 	adapter.controlTimeout = 30 * time.Millisecond
 	start := time.Now()
-	require.Error(t, adapter.runControl(context.Background(), "check", nil), "hung control command succeeded")
+	require.Error(t, adapter.runControl(t.Context(), "check", nil), "hung control command succeeded")
 	require.False(t, time.Since(start) > time.Second, "control command exceeded timeout")
 }
 
@@ -164,15 +164,24 @@ func TestRememberedHostControlsHaveIndependentIdentities(t *testing.T) {
 	require.False(t, adapter.controlPath() == oldPath, "different connection settings share a control socket")
 }
 
+func TestClassifyRemoteBind(t *testing.T) {
+	require.NoError(t, classifyRemoteBind(procV4Loopback+"\n"+procV4Mapped))
+	require.EqualError(t, classifyRemoteBind(procV4Wildcard), "remote_bind_not_loopback")
+	require.EqualError(t, classifyRemoteBind(procV4Loopback+"\n"+procV4Wildcard), "remote_bind_not_loopback")
+	require.EqualError(t, classifyRemoteBind("unavailable"), "remote_bind_unverified")
+	require.EqualError(t, classifyRemoteBind(""), "remote_bind_unverified")
+	require.EqualError(t, classifyRemoteBind("noise"), "remote_bind_unverified")
+}
+
 func TestPublishedForwardReadinessFailures(t *testing.T) {
 	for _, tc := range []struct {
 		name, probe, diagnostic string
 		cancelFails             bool
 	}{
-		{"wildcard bind", "printf 'unsafe\\n'", "remote_bind_not_loopback", false},
+		{"wildcard bind", "printf '00000000\\n'", "remote_bind_not_loopback", false},
 		{"probe timeout", "exec sleep 3600", "remote_bind_unverified", false},
 		{"probe failure", "printf 'awk unavailable\\n' >&2; exit 23", "remote_bind_unverified", false},
-		{"cancellation failure", "printf 'unsafe\\n'", "remote_bind_not_loopback", true},
+		{"cancellation failure", "printf '00000000\\n'", "remote_bind_not_loopback", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cancelScript := ""
@@ -184,7 +193,7 @@ func TestPublishedForwardReadinessFailures(t *testing.T) {
 			adapter.readyTimeout, adapter.waitDelay = 500*time.Millisecond, 50*time.Millisecond
 			master := newTestMaster(t, false)
 			adapter.master = master
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 			defer cancel()
 			ready := false
 			err := adapter.Forward(ctx, core.ForwardTarget{Direction: core.LocalToRemote, LocalPort: 9222, RemotePort: 19222}, func() { ready = true })

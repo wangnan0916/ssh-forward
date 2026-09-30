@@ -32,7 +32,7 @@ and expected impact.
   SSH master is stopped so its listeners cannot remain reachable.
 - The manager socket and state files are accessible only to the current OS
   user.
-- Remote scanner frames, stderr retention, and observed listener counts are
+- Remote scanner snapshots, stderr retention, and observed listener counts are
   bounded.
 
 The Manager exposes an imported remote service on every local IPv4 interface,
