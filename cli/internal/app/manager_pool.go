@@ -77,9 +77,6 @@ func (p *managerPool) reload(ctx context.Context, host string) error {
 		intent := effectiveIntent(config, alias)
 		intent.ReservedLocalPorts = reserved
 		if manager := p.managers[alias]; manager != nil {
-			if targets[alias].Diagnostic != "" {
-				continue
-			}
 			if err := manager.UpdateIntent(ctx, intent); err != nil {
 				return fmt.Errorf("update %s: %w", alias, err)
 			}
@@ -114,9 +111,6 @@ func (p *managerPool) AllStatuses(ctx context.Context) ([]core.Status, error) {
 		status, err := manager.Status(ctx)
 		if err != nil {
 			return nil, err
-		}
-		if target := p.targets[string(status.Host)]; target.Diagnostic != "" {
-			status.Discovery.Diagnostic = target.Diagnostic
 		}
 		statuses = append(statuses, status)
 	}

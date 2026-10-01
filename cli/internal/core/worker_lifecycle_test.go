@@ -1,7 +1,6 @@
 package core
 
 import (
-	"context"
 	"errors"
 	"testing"
 	"time"
@@ -17,6 +16,6 @@ func TestRemoveFailedForwardDoesNotWaitForRetry(t *testing.T) {
 		states := managerStatus(t, manager).Forwards
 		return len(states) == 1 && states[0].State == ForwardFailed
 	})
-	require.NoError(t, manager.UpdateIntent(context.Background(), ForwardingIntent{}))
+	require.NoError(t, manager.UpdateIntent(t.Context(), ForwardingIntent{}))
 	eventually(t, func() bool { return len(managerStatus(t, manager).Forwards) == 0 })
 }

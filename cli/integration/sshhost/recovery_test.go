@@ -30,7 +30,7 @@ func TestForwardsRecoverAfterSilentConnectionLoss(t *testing.T) {
 	output, err := exec.Command(environment.ssh, "-F", environment.config, "-G", environment.host).Output()
 	require.NoError(t, err)
 	hostname, port := "", ""
-	for _, line := range strings.Split(string(output), "\n") {
+	for line := range strings.SplitSeq(string(output), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) != 2 {
 			continue
@@ -57,10 +57,11 @@ func TestForwardsRecoverAfterSilentConnectionLoss(t *testing.T) {
 	local := availableLocalPort(t)
 	published := fixturePort(t, "SSH_FORWARD_FIXTURE_PORT_REVERSE")
 	service := startLocalEchoServer(t)
-	manager := core.NewManager(core.HostAlias(environment.host), adapter, core.ForwardingIntent{
+	manager, err := core.NewManager(core.HostAlias(environment.host), adapter, core.ForwardingIntent{
 		RememberedForwards: []core.RememberedForward{{RemotePort: remote, LocalPort: local}},
 		PublishedForwards:  []core.PublishedForward{{LocalPort: service, RemotePort: published}},
 	})
+	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 	active := func(status core.Status) bool {
 		return status.Discovery.State == core.DiscoveryActive && len(status.Forwards) == 2 && allForwardsActive(status.Forwards)
@@ -82,7 +83,7 @@ func blackholeProxy(t *testing.T, target string) (net.Listener, func()) {
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	require.NoError(t, err)
 	var generation atomic.Int64
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	var workers sync.WaitGroup
 	done := make(chan struct{})
 	go func() {
@@ -92,9 +93,7 @@ func blackholeProxy(t *testing.T, target string) (net.Listener, func()) {
 			if err != nil {
 				return
 			}
-			workers.Add(1)
-			go func() {
-				defer workers.Done()
+			workers.Go(func() {
 				defer client.Close()
 				stopClient := context.AfterFunc(ctx, func() { _ = client.Close() })
 				defer stopClient()
@@ -125,7 +124,7 @@ func blackholeProxy(t *testing.T, target string) (net.Listener, func()) {
 				copyTraffic(client, server)
 				_ = client.Close()
 				<-copied
-			}()
+			})
 		}
 	}()
 	t.Cleanup(func() {

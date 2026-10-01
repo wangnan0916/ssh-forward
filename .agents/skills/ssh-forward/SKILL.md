@@ -51,10 +51,10 @@ each `forwards` entry by direction:
 
 - `listeners` contains remote ports currently listening;
 - `forwards[].state` is `starting`, `active`, or `failed`;
-- `local_to_remote` publishes the Local Service at Development Host
+- `direction` `local_to_remote` publishes the Local Service at Development Host
   `127.0.0.1:remote_port`;
-- every other entry is `remote_to_local` for compatibility; its local endpoint
-  is `127.0.0.1:local_port`, or `127.0.0.1:port` in the legacy shape;
+- `direction` `remote_to_local` exposes the remote listener at
+  `127.0.0.1:local_port`;
 - `discovery.diagnostic` and `forwards[].diagnostic` explain failures.
 
 For a Published Forward, `active` means sshd installed its remote listener; the

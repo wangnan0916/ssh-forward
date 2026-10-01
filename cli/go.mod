@@ -9,7 +9,6 @@ require (
 	github.com/gofrs/flock v0.13.1
 	github.com/google/renameio/v2 v2.0.2
 	github.com/kardianos/service v1.3.0
-	github.com/kevinburke/ssh_config v1.6.0
 	github.com/shirou/gopsutil/v4 v4.26.8
 	github.com/stretchr/testify v1.12.1
 	github.com/tailscale/hujson v0.0.0-20260727124030-b80ff77dac4f

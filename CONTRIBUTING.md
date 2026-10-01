@@ -8,8 +8,8 @@ Keep changes inside the one-sentence contract in [ARCHITECTURE.md](ARCHITECTURE.
 ./scripts/check
 ```
 
-The script checks shell syntax, then runs unit and race tests, vet, formatting
-and module-tidiness checks, plus the Manager and OpenSSH scanner benchmarks.
+The script checks shell syntax, then runs unit and race tests, vet, formatting,
+and module-tidiness checks.
 
 Preview the latest CLI against the installed Manager with
 `./scripts/dev status`. Use `./scripts/dev --full status` when the Manager also

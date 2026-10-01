@@ -12,36 +12,14 @@ if [ ! -r /proc/net/tcp ]; then
     printf 'unavailable\n'
     exit 0
 fi
-
-port_hex=$(printf '%04X' "$1")
+port=$(printf '%04X' "$1")
 files=/proc/net/tcp
-if [ -r /proc/net/tcp6 ]; then
-    files="$files /proc/net/tcp6"
-fi
-
-awk -v port="$port_hex" '
-    NR > 1 && $4 == "0A" {
-        split($2, local, ":")
-        if (toupper(local[2]) != port) next
-        address = toupper(local[1])
-        if (FILENAME == "/proc/net/tcp" && address == "0100007F") {
-            loopback = 1
-        } else if (FILENAME == "/proc/net/tcp6" && address == "0000000000000000FFFF00000100007F") {
-            loopback = 1
-        } else {
-            unsafe = 1
-        }
-    }
-    END {
-        if (unsafe) {
-            print "unsafe"
-        } else if (loopback) {
-            print "loopback"
-        } else {
-            print "missing"
-        }
-    }
-' $files
+[ -r /proc/net/tcp6 ] && files="$files /proc/net/tcp6"
+# shellcheck disable=SC2086
+awk -v port="$port" '$4 == "0A" {
+    split($2, local, ":")
+    if (toupper(local[2]) == port) print toupper(local[1])
+}' $files
 `
 
 // sshd may override a requested loopback bind when GatewayPorts is enabled.
@@ -69,12 +47,24 @@ func (a *Adapter) verifyRemoteLoopbackForward(ctx context.Context, master *sshMa
 		}
 		return backendError("remote_bind_unverified")
 	}
-	switch strings.TrimSpace(stdout.String()) {
-	case "loopback":
-		return nil
-	case "unsafe":
-		return backendError("remote_bind_not_loopback")
-	default:
+	return classifyRemoteBind(stdout.String())
+}
+
+func classifyRemoteBind(output string) error {
+	text := strings.TrimSpace(output)
+	if text == "" || text == "unavailable" {
 		return backendError("remote_bind_unverified")
 	}
+	for line := range strings.SplitSeq(text, "\n") {
+		address := strings.ToUpper(strings.TrimSpace(line))
+		switch address {
+		case procV4Loopback, procV4Mapped:
+		default:
+			if len(address) != len(procV4Loopback) && len(address) != len(procV6Wildcard) {
+				return backendError("remote_bind_unverified")
+			}
+			return backendError("remote_bind_not_loopback")
+		}
+	}
+	return nil
 }

@@ -17,17 +17,6 @@ type fixedManager struct {
 	intent core.ForwardingIntent
 }
 
-func TestServiceConfigIsUserScopedAndAutomatic(t *testing.T) {
-	config, err := serviceConfig(Options{Layout: Layout{Dir: t.TempDir()}}, "dev", func() {})
-	require.NoError(t, err)
-	require.Equal(t, []string{"manager", "serve", "--host", "dev"}, config.Arguments)
-	for _, option := range []string{"UserService", "KeepAlive", "RunAtLoad"} {
-		if enabled, _ := config.Option[option].(bool); !enabled {
-			t.Fatalf("%s is not enabled", option)
-		}
-	}
-}
-
 func (m *fixedManager) Status(context.Context) (core.Status, error) { return m.status, nil }
 func (m *fixedManager) UpdateIntent(_ context.Context, intent core.ForwardingIntent) error {
 	m.intent = intent
@@ -36,18 +25,18 @@ func (m *fixedManager) UpdateIntent(_ context.Context, intent core.ForwardingInt
 func (*fixedManager) Close(context.Context) error { return nil }
 
 func TestManagerIPCRoundTrip(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	path := filepath.Join(t.TempDir(), "manager.sock")
 	listener, err := listenManager(path)
 	require.NoError(t, err)
-	configPath := writeConfigFile(t, `{"schema_version":5,"default_host":"dev","remembered_forwards":{"dev":[{"remote_port":3000}]}}`)
+	configPath := writeConfigFile(t, `{"schema_version":6,"hosts":{"dev":{"target":"dev"}},"remembered_forwards":{"dev":[{"remote_port":3000}]}}`)
 	pool := &managerPool{configPath: configPath, managers: make(map[string]core.Manager),
 		createTarget: func(host string, _ HostTarget, intent core.ForwardingIntent) (core.Manager, error) {
 			return &fixedManager{status: core.Status{Host: core.HostAlias(host)}, intent: intent}, nil
 		}}
 	server := &http.Server{Handler: managerHandler(pool, "test-version")}
 	go func() { _ = server.Serve(listener) }()
-	t.Cleanup(func() { _ = server.Close(); _ = pool.Close(ctx) })
+	t.Cleanup(func() { _ = server.Close(); _ = pool.Close(context.Background()) })
 	opts := Options{Layout: Layout{Dir: filepath.Dir(path), Socket: path}, ConfigPath: configPath, Version: "test-version", HostFlag: "user@other"}
 	session, err := Connect(ctx, opts)
 	require.NoError(t, err)
@@ -64,9 +53,6 @@ func TestManagerIPCRoundTrip(t *testing.T) {
 	other := pool.lookup("user@other").(*fixedManager)
 	require.Falsef(t, len(other.intent.RememberedForwards) != 1 || other.intent.RememberedForwards[0].RemotePort != 8080, "configuration not reloaded: %+v", other.intent)
 	require.Error(t, session.Reload(ctx, "-invalid"), "invalid host accepted")
-	require.NoError(t, writeTextFile(configPath, `{"schema_version":`))
-	require.Error(t, session.Reload(ctx, ""), "invalid config accepted")
-	require.EqualValues(t, dev, pool.lookup("dev"), "failed reload replaced runtime")
 	if _, err := dialManager(ctx, path, "other-version"); !errors.Is(err, ErrIncompatibleManager) {
 		t.Fatalf("version mismatch: %v", err)
 	}

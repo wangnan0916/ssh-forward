@@ -43,16 +43,19 @@ type manager struct {
 
 // NewManager observes host and reconciles remembered, automatic, and
 // published forwards.
-func NewManager(host HostAlias, backend Backend, intent ForwardingIntent) Manager {
+func NewManager(host HostAlias, backend Backend, intent ForwardingIntent) (Manager, error) {
 	return newManager(managerOptions{host: host, backend: backend, intent: intent})
 }
 
-func newManager(options managerOptions) *manager {
+func newManager(options managerOptions) (*manager, error) {
+	intent, err := normalizeIntent(options.intent)
+	if err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	if options.retryDelay <= 0 {
 		options.retryDelay = defaultRetryDelay
 	}
-	intent := normalizedForwardingIntent(options.intent)
 	m := &manager{
 		host:               options.host,
 		backend:            options.backend,
@@ -68,19 +71,11 @@ func newManager(options managerOptions) *manager {
 		closeDone:          make(chan struct{}),
 	}
 
-	if m.backend == nil || m.host == "" {
-		m.discovery = DiscoveryStatus{State: DiscoveryFailed, Diagnostic: "not_configured"}
-		desiredForwards := buildDesiredForwards(m.intent.RememberedForwards, m.intent.PublishedForwards, m.listeners, m.intent.WorkingDirectoryRules, m.intent.IgnoredApps, m.intent.AutoForwards...)
-		for key, desired := range desiredForwards {
-			m.states[key] = forwardStatus(desired, ForwardFailed, "not_configured", desired.preferred)
-		}
-		return m
-	}
 	m.mu.Lock()
 	m.reconcileForwardsLocked()
 	m.mu.Unlock()
 	m.tasks.Go(m.observe)
-	return m
+	return m, nil
 }
 
 // UpdateIntent reconciles new persistent intent without disturbing forwards
@@ -89,7 +84,10 @@ func (m *manager) UpdateIntent(ctx context.Context, intent ForwardingIntent) err
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	intent = normalizedForwardingIntent(intent)
+	intent, err := normalizeIntent(intent)
+	if err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := ctx.Err(); err != nil {

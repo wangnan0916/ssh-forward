@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
-	"time"
 )
 
 type controlForward struct {
@@ -23,11 +22,6 @@ func (a *Adapter) runControl(ctx context.Context, operation string, forward *con
 	return a.runControlCommand(ctx, arguments)
 }
 
-func (a *Adapter) runLegacyControl(ctx context.Context, operation string) error {
-	arguments := append(a.configArguments(), "-S", legacyControlSocketTemplate, "-O", operation, a.target)
-	return a.runControlCommand(ctx, arguments)
-}
-
 func (a *Adapter) runControlCommand(ctx context.Context, arguments []string) error {
 	ctx, cancel := context.WithTimeout(ctx, a.controlTimeout)
 	defer cancel()
@@ -37,36 +31,6 @@ func (a *Adapter) runControlCommand(ctx context.Context, arguments []string) err
 	command.Stderr = stderr
 	if err := command.Run(); err != nil {
 		return classifyError(err, stderr.String())
-	}
-	return nil
-}
-
-func (a *Adapter) stopLegacyMaster(ctx context.Context) error {
-	cleanupCtx, cancel := context.WithTimeout(ctx, a.waitDelay)
-	defer cancel()
-	if err := a.runLegacyControl(cleanupCtx, "exit"); err != nil {
-		return legacyCleanupError(ctx, cleanupCtx)
-	}
-	ticker := time.NewTicker(25 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-cleanupCtx.Done():
-			return legacyCleanupError(ctx, cleanupCtx)
-		case <-ticker.C:
-			if err := a.runLegacyControl(cleanupCtx, "check"); err != nil {
-				return legacyCleanupError(ctx, cleanupCtx)
-			}
-		}
-	}
-}
-
-func legacyCleanupError(parent, cleanup context.Context) error {
-	if err := parent.Err(); err != nil {
-		return err
-	}
-	if cleanup.Err() != nil {
-		return backendError("master_start_timeout")
 	}
 	return nil
 }

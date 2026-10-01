@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -13,8 +14,14 @@ import (
 // Run equivalent updates, promotion from automatic to fixed intent, removal,
 // and remapping against one live runtime so unintended restarts are observable.
 func TestManagerIntentLifecycle(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		testManagerIntentLifecycle(t)
+	})
+}
+
+func testManagerIntentLifecycle(t *testing.T) {
 	backend := newFakeBackend()
-	manager := testManager(t, backend, ForwardingIntent{RememberedForwards: []RememberedForward{{}, {RemotePort: 3000}, {RemotePort: 3000}}})
+	manager := testManager(t, backend, ForwardingIntent{RememberedForwards: []RememberedForward{{RemotePort: 3000}}})
 	first := ForwardTarget{Direction: RemoteToLocal, RemotePort: 3000, LocalPort: 3000}
 	wantTarget(t, backend.started, first)
 	awaitActive(t, manager, first) // fixed intent works without any listener
@@ -25,7 +32,7 @@ func TestManagerIntentLifecycle(t *testing.T) {
 		return status.Discovery.State == DiscoveryActive && slices.Equal(status.Listeners, []Listener{listener})
 	})
 	intent := ForwardingIntent{RememberedForwards: samePortForwards(3000), WorkingDirectoryRules: []string{"/workspace/**"}}
-	require.NoError(t, manager.UpdateIntent(context.Background(), intent))
+	require.NoError(t, manager.UpdateIntent(t.Context(), intent))
 	second := ForwardTarget{Direction: RemoteToLocal, RemotePort: 5173, LocalPort: 5173}
 	wantTarget(t, backend.started, second)
 	status := awaitActive(t, manager, first, second)
@@ -33,25 +40,25 @@ func TestManagerIntentLifecycle(t *testing.T) {
 	wantNoEvent(t, backend.stopped)
 
 	intent.RememberedForwards = samePortForwards(3000, 5173)
-	require.NoError(t, manager.UpdateIntent(context.Background(), intent))
+	require.NoError(t, manager.UpdateIntent(t.Context(), intent))
 	require.False(t, awaitActive(t, manager, first, second).Forwards[1].Automatic)
 	backend.listeners <- nil // a promoted fixed forward outlives its listener
 	wantNoEvent(t, backend.stopped)
 	wantNoEvent(t, backend.started)
 
 	intent.RememberedForwards = samePortForwards(5173)
-	require.NoError(t, manager.UpdateIntent(context.Background(), intent))
+	require.NoError(t, manager.UpdateIntent(t.Context(), intent))
 	wantTarget(t, backend.stopped, first)
 	awaitActive(t, manager, second)
 	wantNoEvent(t, backend.started)
 
 	mapped := ForwardTarget{Direction: RemoteToLocal, RemotePort: 5173, LocalPort: 15173}
 	intent.RememberedForwards = []RememberedForward{{RemotePort: 5173, LocalPort: 15173}}
-	require.NoError(t, manager.UpdateIntent(context.Background(), intent))
+	require.NoError(t, manager.UpdateIntent(t.Context(), intent))
 	wantTarget(t, backend.stopped, second)
 	wantTarget(t, backend.started, mapped)
 	awaitActive(t, manager, mapped)
-	require.NoError(t, manager.Close(context.Background()))
+	require.NoError(t, manager.Close(t.Context()))
 	wantTarget(t, backend.stopped, mapped)
 }
 
@@ -59,17 +66,23 @@ func TestManagerCloseClosesBackendOnceAndReturnsItsError(t *testing.T) {
 	backend := newFakeBackend()
 	backend.closeErr = errors.New("close backend")
 	manager := testManager(t, backend, ForwardingIntent{})
-	require.ErrorIs(t, manager.Close(context.Background()), backend.closeErr)
+	require.ErrorIs(t, manager.Close(t.Context()), backend.closeErr)
 	select {
 	case <-backend.closed:
 	default:
 		t.Fatal("backend was not closed")
 	}
-	require.ErrorIs(t, manager.Close(context.Background()), backend.closeErr)
+	require.ErrorIs(t, manager.Close(t.Context()), backend.closeErr)
 	require.Equal(t, 1, backend.closeCalls)
 }
 
 func TestAutomaticForwardTracksListenerAndRuleRemoval(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		testAutomaticForwardTracksListenerAndRuleRemoval(t)
+	})
+}
+
+func testAutomaticForwardTracksListenerAndRuleRemoval(t *testing.T) {
 	backend := newFakeBackend()
 	manager := testManager(t, backend, ForwardingIntent{WorkingDirectoryRules: []string{"/workspace/app/**"}})
 	backend.listeners <- []Listener{{Port: 3000, WorkingDirectory: "/workspace/application"}}
@@ -91,11 +104,17 @@ func TestAutomaticForwardTracksListenerAndRuleRemoval(t *testing.T) {
 	wantEvent(t, backend.stopped, 5173)
 	wantEvent(t, backend.started, 5173)
 	wantNoEvent(t, backend.started)
-	require.NoError(t, manager.UpdateIntent(context.Background(), ForwardingIntent{}))
+	require.NoError(t, manager.UpdateIntent(t.Context(), ForwardingIntent{}))
 	wantEvent(t, backend.stopped, 5173)
 }
 
 func TestManagerReportsActualFallbackPortWithoutChangingIntent(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		testManagerReportsActualFallbackPortWithoutChangingIntent(t)
+	})
+}
+
+func testManagerReportsActualFallbackPortWithoutChangingIntent(t *testing.T) {
 	backend := newFakeBackend()
 	backend.forwardError = conflictOnLocalPort(13000)
 	forward := RememberedForward{RemotePort: 3000, LocalPort: 13000, AllowFallback: true}
@@ -109,7 +128,7 @@ func TestManagerReportsActualFallbackPortWithoutChangingIntent(t *testing.T) {
 	status := awaitActive(t, manager, fallback).Forwards[0]
 	require.EqualValues(t, 13000, status.PreferredLocalPort)
 	require.True(t, status.AllowFallback)
-	require.NoError(t, manager.UpdateIntent(context.Background(), ForwardingIntent{RememberedForwards: []RememberedForward{forward}}))
+	require.NoError(t, manager.UpdateIntent(t.Context(), ForwardingIntent{RememberedForwards: []RememberedForward{forward}}))
 	status = managerStatus(t, manager).Forwards[0]
 	require.Falsef(t, status.LocalPort != 13001 || status.PreferredLocalPort != 13000, "status after equivalent update = %#v", status)
 	wantNoEvent(t, backend.started)
@@ -117,6 +136,12 @@ func TestManagerReportsActualFallbackPortWithoutChangingIntent(t *testing.T) {
 }
 
 func TestManagerPublishesLocalPortAndHidesItsRemoteListener(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		testManagerPublishesLocalPortAndHidesItsRemoteListener(t)
+	})
+}
+
+func testManagerPublishesLocalPortAndHidesItsRemoteListener(t *testing.T) {
 	backend := newFakeBackend()
 	published := PublishedForward{LocalPort: 9222, RemotePort: 19222}
 	manager := testManager(t, backend, ForwardingIntent{
@@ -153,6 +178,12 @@ func TestPublishedLocalPortIsSkippedByRememberedFallback(t *testing.T) {
 }
 
 func TestPublishedForwardWaitsForActiveFallbackBindingToStop(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		testPublishedForwardWaitsForActiveFallbackBindingToStop(t)
+	})
+}
+
+func testPublishedForwardWaitsForActiveFallbackBindingToStop(t *testing.T) {
 	backend := newFakeBackend()
 	stopGate := make(chan struct{})
 	backend.stopGate = stopGate
@@ -175,15 +206,15 @@ func TestPublishedForwardWaitsForActiveFallbackBindingToStop(t *testing.T) {
 	awaitActive(t, manager, fallback)
 
 	published := PublishedForward{LocalPort: fallback.LocalPort, RemotePort: 19001}
-	require.NoError(t, manager.UpdateIntent(context.Background(), ForwardingIntent{RememberedForwards: []RememberedForward{remembered}, PublishedForwards: []PublishedForward{published}}))
+	require.NoError(t, manager.UpdateIntent(t.Context(), ForwardingIntent{RememberedForwards: []RememberedForward{remembered}, PublishedForwards: []PublishedForward{published}}))
 	wantNoEvent(t, backend.started)
-	require.NoError(t, manager.UpdateIntent(context.Background(), ForwardingIntent{RememberedForwards: []RememberedForward{remembered}, PublishedForwards: []PublishedForward{published}}))
+	require.NoError(t, manager.UpdateIntent(t.Context(), ForwardingIntent{RememberedForwards: []RememberedForward{remembered}, PublishedForwards: []PublishedForward{published}}))
 	wantNoEvent(t, backend.started)
-	require.NoError(t, manager.UpdateIntent(context.Background(), ForwardingIntent{RememberedForwards: []RememberedForward{remembered}}))
+	require.NoError(t, manager.UpdateIntent(t.Context(), ForwardingIntent{RememberedForwards: []RememberedForward{remembered}}))
 	for _, forward := range managerStatus(t, manager).Forwards {
 		require.Falsef(t, forward.Direction == LocalToRemote, "unpublished wait-only forward remains in status: %#v", forward)
 	}
-	require.NoError(t, manager.UpdateIntent(context.Background(), ForwardingIntent{RememberedForwards: []RememberedForward{remembered}, PublishedForwards: []PublishedForward{published}}))
+	require.NoError(t, manager.UpdateIntent(t.Context(), ForwardingIntent{RememberedForwards: []RememberedForward{remembered}, PublishedForwards: []PublishedForward{published}}))
 	wantNoEvent(t, backend.started)
 
 	close(stopGate)
@@ -196,6 +227,12 @@ func TestPublishedForwardWaitsForActiveFallbackBindingToStop(t *testing.T) {
 }
 
 func TestStrictRememberedForwardFailsOnPublishedLocalPortReservation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		testStrictRememberedForwardFailsOnPublishedLocalPortReservation(t)
+	})
+}
+
+func testStrictRememberedForwardFailsOnPublishedLocalPortReservation(t *testing.T) {
 	backend := newFakeBackend()
 	manager := testManager(t, backend, ForwardingIntent{
 		RememberedForwards: []RememberedForward{{RemotePort: 3000, LocalPort: 9222}},

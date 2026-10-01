@@ -3,7 +3,6 @@
 package sshhost
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net"
@@ -78,7 +77,7 @@ func waitForStatus(t *testing.T, manager core.Manager, condition func(core.Statu
 	var status core.Status
 	for time.Now().Before(deadline) {
 		var err error
-		status, err = manager.Status(context.Background())
+		status, err = manager.Status(t.Context())
 		require.NoError(t, err)
 		if condition(status) {
 			return status
@@ -87,16 +86,4 @@ func waitForStatus(t *testing.T, manager core.Manager, condition func(core.Statu
 	}
 	t.Fatalf("manager status did not converge: %#v", status)
 	return core.Status{}
-}
-
-func isSocat(listener core.Listener) bool {
-	return strings.HasPrefix(listener.App, "socat")
-}
-
-func listenersByPort(listeners []core.Listener) map[uint16]core.Listener {
-	indexed := make(map[uint16]core.Listener, len(listeners))
-	for _, listener := range listeners {
-		indexed[listener.Port] = listener
-	}
-	return indexed
 }

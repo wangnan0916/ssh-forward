@@ -5,13 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	sshconfig "github.com/kevinburke/ssh_config"
 )
 
 // ConfiguredHosts returns literal Host aliases in OpenSSH file order.
-// ssh_config parses Host syntax; this function only walks Include directives
-// because the library deliberately keeps included configs internal.
+// Include directives are walked here; Host tokens are split on whitespace.
 func ConfiguredHosts(path string) ([]string, error) {
 	hosts, err := configuredHosts(path, make(map[string]bool), 0)
 	return dedupeHosts(hosts), err
@@ -38,22 +35,19 @@ func configuredHosts(path string, seen map[string]bool, depth int) ([]string, er
 	seen[resolved] = true
 
 	var hosts []string
-	for _, line := range strings.Split(string(content), "\n") {
+	for line := range strings.SplitSeq(string(content), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) == 0 || strings.HasPrefix(fields[0], "#") {
 			continue
 		}
 		switch {
 		case strings.EqualFold(fields[0], "Host"):
-			config, err := sshconfig.Decode(strings.NewReader(line + "\n"))
-			if err != nil {
-				return nil, err
-			}
-			for _, host := range config.Hosts {
-				for _, pattern := range host.Patterns {
-					if alias := pattern.String(); literalHost(alias) {
-						hosts = append(hosts, alias)
-					}
+			for _, alias := range fields[1:] {
+				if strings.HasPrefix(alias, "#") {
+					break
+				}
+				if alias = strings.Trim(alias, `"'`); literalHost(alias) {
+					hosts = append(hosts, alias)
 				}
 			}
 		case strings.EqualFold(fields[0], "Include"):
@@ -90,8 +84,8 @@ func expandInclude(pattern string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		if strings.HasPrefix(pattern, "~/") {
-			pattern = filepath.Join(home, pattern[2:])
+		if rest, ok := strings.CutPrefix(pattern, "~/"); ok {
+			pattern = filepath.Join(home, rest)
 		} else {
 			pattern = filepath.Join(home, ".ssh", pattern)
 		}

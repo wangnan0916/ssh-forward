@@ -44,13 +44,13 @@ type DiscoveryStatus struct {
 type ForwardStatus struct {
 	Direction           ForwardDirection `json:"direction"`
 	RemotePort          uint16           `json:"remote_port"`
-	PreferredRemotePort uint16           `json:"preferred_remote_port,omitempty"`
-	PreferredLocalPort  uint16           `json:"preferred_local_port,omitempty"`
+	PreferredRemotePort uint16           `json:"preferred_remote_port,omitzero"`
+	PreferredLocalPort  uint16           `json:"preferred_local_port,omitzero"`
 	LocalPort           uint16           `json:"local_port"`
 	State               ForwardState     `json:"state"`
 	Diagnostic          string           `json:"diagnostic,omitempty"`
-	Automatic           bool             `json:"automatic,omitempty"`
-	AllowFallback       bool             `json:"allow_fallback,omitempty"`
+	Automatic           bool             `json:"automatic,omitzero"`
+	AllowFallback       bool             `json:"allow_fallback,omitzero"`
 }
 
 // Listener is a remote TCP listener reachable through the IPv4 loopback
@@ -75,7 +75,7 @@ type Status struct {
 type RememberedForward struct {
 	RemotePort    uint16 `json:"remote_port"`
 	LocalPort     uint16 `json:"local_port"`
-	AllowFallback bool   `json:"allow_fallback,omitempty"`
+	AllowFallback bool   `json:"allow_fallback,omitzero"`
 }
 
 // WithDefaults applies the implicit same-port fallback policy used when the
@@ -141,8 +141,7 @@ type BackendError struct {
 func (e *BackendError) Error() string { return e.Diagnostic }
 
 func ErrorDiagnostic(err error) string {
-	var backend *BackendError
-	if errors.As(err, &backend) && backend.Diagnostic != "" {
+	if backend, ok := errors.AsType[*BackendError](err); ok && backend.Diagnostic != "" {
 		return backend.Diagnostic
 	}
 	return "transport_unavailable"

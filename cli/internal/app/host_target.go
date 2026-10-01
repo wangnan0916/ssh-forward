@@ -15,11 +15,9 @@ import (
 )
 
 // HostTarget stores connection parameters, never commands or process environments.
-// Diagnostic is reserved for persisted candidates that must not be connected.
 type HostTarget struct {
-	Target     string   `json:"target"`
-	Arguments  []string `json:"arguments,omitempty"`
-	Diagnostic string   `json:"diagnostic,omitempty"`
+	Target    string   `json:"target"`
+	Arguments []string `json:"arguments,omitempty"`
 }
 
 // keepValidArguments drops options that cannot be replayed safely. The Target

@@ -1,7 +1,9 @@
 package core
 
 import (
-	"maps"
+	"cmp"
+	"errors"
+	"fmt"
 	"path"
 	"slices"
 	"strings"
@@ -26,67 +28,131 @@ func (forward desiredForward) key() forwardKey {
 	return keyFor(forward.preferred.Direction, forward.preferred.LocalPort, forward.preferred.RemotePort)
 }
 
-func normalizedForwardingIntent(intent ForwardingIntent) ForwardingIntent {
-	intent.AutoForwards = normalizedManagerRememberedForwards(intent.AutoForwards)
-	intent.RememberedForwards = normalizedManagerRememberedForwards(intent.RememberedForwards)
-	intent.PublishedForwards = normalizedManagerPublishedForwards(intent.PublishedForwards)
-	patterns := make([]string, 0, len(intent.WorkingDirectoryRules))
-	for _, pattern := range intent.WorkingDirectoryRules {
-		if path.IsAbs(pattern) && doublestar.ValidatePattern(pattern) {
-			patterns = append(patterns, pattern)
-		}
+var ErrInvalidWorkingDirectoryRule = errors.New("invalid working-directory glob")
+var ErrInvalidAppName = errors.New("invalid app name")
+
+// normalizeIntent canonicalizes one host's rules. Zero ports and duplicates are
+// rejected. Omitted bind ports still receive the same-port default.
+func normalizeIntent(intent ForwardingIntent) (ForwardingIntent, error) {
+	var err error
+	if intent.AutoForwards, err = NormalizeRememberedForwards(intent.AutoForwards); err != nil {
+		return ForwardingIntent{}, err
 	}
-	slices.Sort(patterns)
-	intent.WorkingDirectoryRules = slices.Compact(patterns)
-	intent.IgnoredApps = normalizedIgnoredApps(intent.IgnoredApps)
-	return intent
+	if intent.RememberedForwards, err = NormalizeRememberedForwards(intent.RememberedForwards); err != nil {
+		return ForwardingIntent{}, err
+	}
+	if intent.PublishedForwards, err = NormalizePublishedForwards(intent.PublishedForwards); err != nil {
+		return ForwardingIntent{}, err
+	}
+	if intent.WorkingDirectoryRules, err = NormalizeWorkingDirectoryRules(intent.WorkingDirectoryRules); err != nil {
+		return ForwardingIntent{}, err
+	}
+	if intent.IgnoredApps, err = NormalizeIgnoredApps(intent.IgnoredApps); err != nil {
+		return ForwardingIntent{}, err
+	}
+	return intent, nil
 }
 
-// ValidAppName accepts one executable name as shown in the status APP column.
-func ValidAppName(name string) bool {
+// validAppName accepts one executable name as shown in the status APP column.
+func validAppName(name string) bool {
 	return name != "" && len(name) <= 255 && utf8.ValidString(name) &&
-		!strings.ContainsAny(name, " \t\r\n/") &&
+		!strings.Contains(name, "/") &&
 		strings.IndexFunc(name, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }) < 0
 }
 
-func normalizedIgnoredApps(apps []string) []string {
-	valid := make([]string, 0, len(apps))
-	for _, app := range apps {
-		if ValidAppName(app) {
-			valid = append(valid, app)
+func NormalizeIgnoredApps(apps []string) ([]string, error) {
+	return normalizeRuleNames(apps, ValidIgnoredApp)
+}
+
+func ValidIgnoredApp(name string) error {
+	if !validAppName(name) {
+		return fmt.Errorf("%w: %q", ErrInvalidAppName, name)
+	}
+	return nil
+}
+
+func NormalizeWorkingDirectoryRules(patterns []string) ([]string, error) {
+	return normalizeRuleNames(patterns, ValidWorkingDirectoryRule)
+}
+
+// normalizeRuleNames validates every entry before sorting and deduplicating.
+func normalizeRuleNames(values []string, valid func(string) error) ([]string, error) {
+	if len(values) == 0 {
+		return values, nil
+	}
+	for _, value := range values {
+		if err := valid(value); err != nil {
+			return nil, err
 		}
 	}
-	return slices.Compact(slices.Sorted(slices.Values(valid)))
+	return slices.Compact(slices.Sorted(slices.Values(values))), nil
+}
+
+func ValidWorkingDirectoryRule(pattern string) error {
+	if !path.IsAbs(pattern) {
+		return fmt.Errorf("%w: must be an absolute remote path", ErrInvalidWorkingDirectoryRule)
+	}
+	if !doublestar.ValidatePattern(pattern) {
+		return fmt.Errorf("%w: malformed pattern", ErrInvalidWorkingDirectoryRule)
+	}
+	return nil
+}
+
+func NormalizeRememberedForwards(forwards []RememberedForward) ([]RememberedForward, error) {
+	return normalizeForwards(forwards, normalizeRememberedForward,
+		func(forward RememberedForward) (uint16, uint16) { return forward.RemotePort, forward.LocalPort }, "remote", "local")
+}
+
+func normalizeRememberedForward(forward RememberedForward) (RememberedForward, error) {
+	if forward.RemotePort == 0 {
+		return RememberedForward{}, errors.New("remote port must be between 1 and 65535")
+	}
+	return forward.WithDefaults(), nil
+}
+
+func NormalizePublishedForwards(forwards []PublishedForward) ([]PublishedForward, error) {
+	return normalizeForwards(forwards, normalizePublishedForward,
+		func(forward PublishedForward) (uint16, uint16) { return forward.LocalPort, forward.RemotePort }, "published local", "published remote")
+}
+
+func normalizePublishedForward(forward PublishedForward) (PublishedForward, error) {
+	if forward.LocalPort == 0 {
+		return PublishedForward{}, errors.New("local port must be between 1 and 65535")
+	}
+	return forward.WithDefaults(), nil
+}
+
+func normalizeForwards[T any](items []T, defaults func(T) (T, error), ports func(T) (uint16, uint16), service, bind string) ([]T, error) {
+	if len(items) == 0 {
+		return items, nil
+	}
+	normalized := make([]T, 0, len(items))
+	services, bindings := make(map[uint16]bool), make(map[uint16]uint16)
+	for _, item := range items {
+		item, err := defaults(item)
+		if err != nil {
+			return nil, err
+		}
+		source, target := ports(item)
+		if services[source] {
+			return nil, fmt.Errorf("duplicate %s port %d", service, source)
+		}
+		if previous, found := bindings[target]; found {
+			return nil, fmt.Errorf("%s port %d is used by %s ports %d and %d", bind, target, service, previous, source)
+		}
+		services[source], bindings[target] = true, source
+		normalized = append(normalized, item)
+	}
+	slices.SortFunc(normalized, func(a, b T) int {
+		left, _ := ports(a)
+		right, _ := ports(b)
+		return cmp.Compare(left, right)
+	})
+	return normalized, nil
 }
 
 func appIgnored(ignored []string, app string) bool {
 	return app != "" && slices.Contains(ignored, app)
-}
-
-func normalizedManagerRememberedForwards(forwards []RememberedForward) []RememberedForward {
-	return normalizeByPort(forwards, RememberedForward.WithDefaults, func(f RememberedForward) uint16 { return f.RemotePort })
-}
-
-func normalizedManagerPublishedForwards(forwards []PublishedForward) []PublishedForward {
-	normalized := normalizeByPort(forwards, PublishedForward.WithDefaults, func(f PublishedForward) uint16 { return f.LocalPort })
-	used := make(map[uint16]bool, len(normalized))
-	return slices.DeleteFunc(normalized, func(f PublishedForward) bool {
-		duplicate := used[f.RemotePort]
-		used[f.RemotePort] = true
-		return duplicate
-	})
-}
-
-// Manager input is permissive: discard zero ports, keep the last service-port
-// mapping, and return deterministic order. Disk validation is deliberately strict.
-func normalizeByPort[T any](forwards []T, defaults func(T) T, port func(T) uint16) []T {
-	indexed := make(map[uint16]T, len(forwards))
-	for _, forward := range forwards {
-		if key := port(forward); key != 0 {
-			indexed[key] = defaults(forward)
-		}
-	}
-	return slices.SortedFunc(maps.Values(indexed), func(a, b T) int { return int(port(a)) - int(port(b)) })
 }
 
 func reservedLocalPorts(forwards []PublishedForward, additional ...uint16) map[uint16]struct{} {

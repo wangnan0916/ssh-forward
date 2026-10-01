@@ -4,10 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
-	"syscall"
 	"time"
 
 	"github.com/kardianos/service"
@@ -23,9 +19,6 @@ func ensureService(svc managerService, layout Layout) error {
 	status, err := svc.Status()
 	switch {
 	case errors.Is(err, service.ErrNotInstalled):
-		if _, err := stopLegacyManager(layout); err != nil {
-			return err
-		}
 		return installAndStart(svc)
 	case err != nil:
 		return err
@@ -61,9 +54,6 @@ func reinstallService(svc managerService, layout Layout) error {
 	if err := uninstallService(svc, layout); err != nil {
 		return err
 	}
-	if _, err := stopLegacyManager(layout); err != nil {
-		return err
-	}
 	return installAndStart(svc)
 }
 
@@ -87,8 +77,7 @@ type serviceUninstaller interface {
 func uninstallService(svc serviceUninstaller, layout Layout) error {
 	status, err := svc.Status()
 	if errors.Is(err, service.ErrNotInstalled) {
-		_, err = stopLegacyManager(layout)
-		return err
+		return nil
 	}
 	if err != nil {
 		return err
@@ -106,30 +95,4 @@ func uninstallService(svc serviceUninstaller, layout Layout) error {
 		_ = os.Remove(layout.Socket)
 	}
 	return nil
-}
-
-// stopLegacyManager is a one-way migration from v0.1. New Managers do not
-// create or use PID files.
-func stopLegacyManager(layout Layout) (bool, error) {
-	if !socketLive(layout.Socket) {
-		_ = os.Remove(filepath.Join(layout.Dir, "manager.pid"))
-		return false, nil
-	}
-	raw, err := os.ReadFile(filepath.Join(layout.Dir, "manager.pid"))
-	if err != nil {
-		return false, ErrIncompatibleManager
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
-	if err != nil || pid <= 0 {
-		return false, ErrIncompatibleManager
-	}
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
-		return false, err
-	}
-	waitSocketGone(layout.Socket, 2*time.Second)
-	if socketLive(layout.Socket) {
-		return false, ErrIncompatibleManager
-	}
-	_ = os.Remove(filepath.Join(layout.Dir, "manager.pid"))
-	return true, nil
 }
