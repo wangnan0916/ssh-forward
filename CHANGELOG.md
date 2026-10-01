@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.13.0](https://github.com/wangnan0916/ssh-forward/compare/v0.12.1...v0.13.0) (2026-10-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* drop legacy config, discovery, and control-socket paths ([#35](https://github.com/wangnan0916/ssh-forward/issues/35))
+
+### Code Refactoring
+
+* drop legacy config, discovery, and control-socket paths ([#35](https://github.com/wangnan0916/ssh-forward/issues/35)) ([e3073a9](https://github.com/wangnan0916/ssh-forward/commit/e3073a91180877cc019f1421e2b76e8375f02634))
+
 ## [0.12.1](https://github.com/wangnan0916/ssh-forward/compare/v0.12.0...v0.12.1) (2026-09-28)
 
 
