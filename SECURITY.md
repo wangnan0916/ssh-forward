@@ -28,8 +28,11 @@ and expected impact.
   endpoints at both ends. After creating a Published Forward, the Adapter
   verifies the actual Development Host socket through procfs before reporting
   it active; wildcard binds forced by `GatewayPorts yes` are canceled and
-  reported. If cancellation of an installed forward fails, the product-owned
-  SSH master is stopped so its listeners cannot remain reachable.
+  reported. If installation has an uncertain outcome (for example, a timeout
+  after the master committed the request), or cancellation cannot be confirmed,
+  the original product-owned SSH master is stopped before returning so its
+  listeners cannot remain reachable. Other forwards on that master reconnect;
+  an explicitly rejected installation does not stop them.
 - The manager socket and state files are accessible only to the current OS
   user.
 - Remote scanner snapshots, stderr retention, and observed listener counts are

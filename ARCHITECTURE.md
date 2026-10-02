@@ -50,8 +50,9 @@ without an additional lifecycle framework.
 Every test keeps the lowest layer that can observe its fact. A rule decided in
 the manager is not re-run against a more realistic double, and an assertion that
 restates a return value is removed. The Docker/OpenSSH fixture therefore covers
-only what real transport alone shows: bytes crossing the tunnel, and recovery in
-both directions after a silent connection loss.
+only what real transport alone shows: bytes crossing the tunnel, recovery in
+both directions after a silent connection loss, and committed listeners closing
+when a successful control result is withheld from the Adapter.
 
 ## Configuration and discovery
 
@@ -106,8 +107,13 @@ so configured forwards and control paths cannot be inherited. Imports use
 Imports first check loopback occupancy to prevent macOS split binds. Publications
 verify the resulting procfs socket before reporting active: `GatewayPorts yes`
 can override a requested bind. Unsafe/unverifiable binds are canceled. Failed
-cancellation tears down the private master; a rejected installation does not.
-Install and cancel operations check the master generation under the same lock.
+cancellation tears down the private master; an explicitly rejected installation
+does not. An installation timeout, cancellation, or lost confirmation leaves its
+outcome uncertain, so the original master is retired under the installation lock
+before returning. This closes any committed listeners without canceling an
+unowned tuple; other workers reconnect. Cancellation warnings are checked even
+when the mux client exits zero. Install and cancel operations check the master
+generation under the same lock.
 
 Keepalives (5 seconds, 3 unanswered probes) detect silent loss; independent retry
 loops reestablish the master, observation, and desired forwards. Commands have
