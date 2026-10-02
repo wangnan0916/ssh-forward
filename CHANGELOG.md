@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1](https://github.com/wangnan0916/ssh-forward/compare/v0.13.0...v0.13.1) (2026-10-02)
+
+
+### Bug Fixes
+
+* prevent lost configuration updates and stale forwarding state ([da5a1e7](https://github.com/wangnan0916/ssh-forward/commit/da5a1e77fdc1a4c9750db14dcd499ff7c73a28f0))
+
 ## [0.13.0](https://github.com/wangnan0916/ssh-forward/compare/v0.12.1...v0.13.0) (2026-10-01)
 
 
