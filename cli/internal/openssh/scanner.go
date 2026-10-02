@@ -94,7 +94,7 @@ type bannerSnapshot struct {
 func scanListeners(stdout io.Reader, stdin io.Writer, emit func([]core.Listener)) error {
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 256), maxScannerLineBytes)
-	knownSSH := make(map[uint16]struct{})
+	knownSSH := make(map[uint16]snapshotSocket)
 	for scanner.Scan() {
 		var snapshot capabilitySnapshot
 		if len(scanner.Bytes()) == 0 || json.Unmarshal(scanner.Bytes(), &snapshot) != nil || snapshot.UID == "" {
@@ -120,7 +120,7 @@ func scanListeners(stdout io.Reader, stdin io.Writer, emit func([]core.Listener)
 	return scanner.Err()
 }
 
-func (snapshot capabilitySnapshot) classify(knownSSH map[uint16]struct{}) ([]core.Listener, []uint16, map[uint16]struct{}) {
+func (snapshot capabilitySnapshot) classify(knownSSH map[uint16]snapshotSocket) ([]core.Listener, []uint16, map[uint16]snapshotSocket) {
 	owners := make(map[uint64]uint64, len(snapshot.Owners))
 	for _, owner := range snapshot.Owners {
 		if owner.Inode != 0 && owner.PID != 0 && owners[owner.Inode] == 0 {
@@ -161,13 +161,15 @@ func (snapshot capabilitySnapshot) classify(knownSSH map[uint16]struct{}) ([]cor
 
 	listeners := make([]core.Listener, 0, len(reachable))
 	probe := make([]uint16, 0)
-	present := make(map[uint16]struct{}, len(reachable))
+	present := make(map[uint16]snapshotSocket, len(reachable))
 	for _, socket := range reachable {
 		port := uint16(socket.Port)
-		present[port] = struct{}{}
-		if _, cached := knownSSH[port]; cached {
+		present[port] = socket
+		// A port can be reused by a different listener between snapshots.
+		if cached, ok := knownSSH[port]; ok && cached == socket {
 			continue
 		}
+		delete(knownSSH, port)
 		process := processes[owners[socket.Inode]]
 		app, directory := "", process.Cwd
 		if process.Exe != "" {
@@ -194,14 +196,14 @@ func (snapshot capabilitySnapshot) classify(knownSSH map[uint16]struct{}) ([]cor
 	return listeners, probe, present
 }
 
-func applyBanners(listeners []core.Listener, banners []snapshotBanner, probe []uint16, knownSSH, present map[uint16]struct{}) []core.Listener {
+func applyBanners(listeners []core.Listener, banners []snapshotBanner, probe []uint16, knownSSH, present map[uint16]snapshotSocket) []core.Listener {
 	for _, banner := range banners {
-		if slices.Contains(probe, banner.Port) && strings.HasPrefix(banner.Banner, "SSH-") {
-			knownSSH[banner.Port] = struct{}{}
+		if socket, ok := present[banner.Port]; ok && slices.Contains(probe, banner.Port) && strings.HasPrefix(banner.Banner, "SSH-") {
+			knownSSH[banner.Port] = socket
 		}
 	}
-	for port := range knownSSH {
-		if _, ok := present[port]; !ok {
+	for port, cached := range knownSSH {
+		if socket, ok := present[port]; !ok || socket != cached {
 			delete(knownSSH, port)
 		}
 	}
