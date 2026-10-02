@@ -97,7 +97,15 @@ reading exact native argv and excluding its own process tree. It remembers new
 targets in a locked `discovered-hosts.json` registry; closing the original SSH
 session does not forget them. Supported options include port, user, absolute
 identity/config paths, jump hosts, and selected `-o` settings. Different settings
-receive distinct IDs. Targets that OpenSSH resolves to the same user and hostname are one host.
+receive distinct connection-record IDs, not necessarily distinct hosts. Targets
+that OpenSSH resolves to the same user and hostname are one host. The Manager
+persists that resolved identity separately from connection arguments, so deleting
+a temporary `-F` configuration does not split a known host into several records.
+A currently resolvable connection wins over an expired alternative. Legacy
+automatically discovered connections with a missing `-F` file and no known
+identity are omitted until the file returns; their registry records are retained.
+Explicitly configured hosts are never omitted this way. A missing connection
+config is reported as `ssh_config_missing`, not `invalid_alias`.
 Port, jump host, and identity files do not split that machine. The SSH
 config alias is kept, such as `ubuntu` when `Host ubuntu` already sets `User`.
 If several aliases match, the host recorded in config.jsonc is kept.

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
+	"github.com/wangnan0916/ssh-forward/cli/internal/diagnostics"
 )
 
 func TestNewRejectsSharedWritableControlDirectory(t *testing.T) {
@@ -63,8 +65,108 @@ func TestEnsureMasterValidatesAliasBeforeStarting(t *testing.T) {
 	adapter, logPath := newLoggingAdapter(t, "exit 1\n")
 
 	_, err := adapter.ensureMaster(t.Context())
-	require.Error(t, err)
+	var backend *core.BackendError
+	require.ErrorAs(t, err, &backend)
+	require.Equal(t, "invalid_alias", backend.Diagnostic)
 	require.NotContains(t, readCommands(t, logPath), "-M")
+}
+
+func TestEnsureMasterMissingSSHConfig(t *testing.T) {
+	for _, source := range []string{"config file", "connection arguments", "relative path", "last argument missing"} {
+		t.Run(source, func(t *testing.T) {
+			adapter, logPath := newLoggingAdapter(t, "")
+			missing := filepath.Join(adapter.controlDirectory, "deleted-config")
+			switch source {
+			case "connection arguments":
+				adapter.connectionArguments = []string{"-F", missing}
+			case "relative path":
+				adapter.configFile = "deleted-config"
+			case "last argument missing":
+				adapter.connectionArguments = []string{"-F", "/dev/null", "-F", missing}
+			default:
+				adapter.configFile = missing
+			}
+
+			master, err := adapter.ensureMaster(t.Context())
+			require.Nil(t, master)
+			var backend *core.BackendError
+			require.ErrorAs(t, err, &backend)
+			require.Equal(t, "ssh_config_missing", backend.Diagnostic)
+			require.NotContains(t, err.Error(), missing)
+			_, err = os.Stat(logPath)
+			require.ErrorIs(t, err, os.ErrNotExist, "must not invoke SSH, including control exit or master start")
+		})
+	}
+	require.Contains(t, diagnostics.Text("ssh_config_missing"), "config file")
+	detail, fix := diagnostics.DoctorAdvice("ssh_config_missing", "dev")
+	require.Contains(t, detail, "-F")
+	require.Contains(t, fix, "Restore")
+	require.Contains(t, fix, "host connection settings")
+}
+
+func TestValidateAliasSSHConfig(t *testing.T) {
+	for _, name := range []string{"existing", "none", "dev null", "arguments override", "last config wins", "last none wins", "other stat error"} {
+		t.Run(name, func(t *testing.T) {
+			adapter, logPath := newLoggingAdapter(t, "")
+			config := filepath.Join(adapter.controlDirectory, "config")
+			require.NoError(t, os.WriteFile(config, []byte("Host dev\n"), 0o600))
+			adapter.configFile = config
+			switch name {
+			case "none":
+				adapter.configFile = "none"
+			case "dev null":
+				adapter.configFile = "/dev/null"
+			case "arguments override":
+				adapter.configFile = filepath.Join(adapter.controlDirectory, "missing")
+				adapter.connectionArguments = []string{"-F", config}
+			case "last config wins":
+				adapter.connectionArguments = []string{"-F", filepath.Join(adapter.controlDirectory, "missing"), "-F", config}
+			case "last none wins":
+				adapter.connectionArguments = []string{"-F", filepath.Join(adapter.controlDirectory, "missing"), "-F", "none"}
+			case "other stat error":
+				// ENOTDIR is deterministic even in root CI, unlike permissions.
+				adapter.configFile = filepath.Join(config, "child")
+				_, err := os.Stat(adapter.configFile)
+				require.Error(t, err)
+				require.False(t, errors.Is(err, os.ErrNotExist))
+			}
+			require.NoError(t, adapter.validateAlias(t.Context(), "dev"))
+			require.Contains(t, readCommands(t, logPath), "-G dev")
+		})
+	}
+}
+
+func TestEnsureMasterExistingConfigValidationFailure(t *testing.T) {
+	adapter, logPath := newLoggingAdapter(t, "printf 'Permission denied\\n' >&2; exit 1\n")
+	adapter.configFile = filepath.Join(adapter.controlDirectory, "config")
+	require.NoError(t, os.WriteFile(adapter.configFile, nil, 0o600))
+	_, err := adapter.ensureMaster(t.Context())
+	var backend *core.BackendError
+	require.ErrorAs(t, err, &backend)
+	require.Equal(t, "invalid_alias", backend.Diagnostic)
+	require.NotContains(t, readCommands(t, logPath), "-M")
+}
+
+func TestEnsureMasterMissingConfigPreservesCancellationAndExistingMaster(t *testing.T) {
+	adapter, logPath := newLoggingAdapter(t, "")
+	adapter.configFile = filepath.Join(adapter.controlDirectory, "missing")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := adapter.ensureMaster(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+
+	master := &sshMaster{done: make(chan struct{})}
+	adapter.master = master
+	got, err := adapter.ensureMaster(t.Context())
+	require.NoError(t, err)
+	require.Same(t, master, got)
+	select {
+	case <-master.done:
+		t.Fatal("missing config stopped existing master")
+	default:
+	}
+	_, err = os.Stat(logPath)
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestForwardEndpointsAndRejectedInstallation(t *testing.T) {

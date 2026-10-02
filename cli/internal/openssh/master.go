@@ -38,6 +38,9 @@ func (a *Adapter) ensureMaster(ctx context.Context) (*sshMaster, error) {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
+		if errors.Is(err, errSSHConfigMissing) {
+			return nil, backendError("ssh_config_missing")
+		}
 		return nil, backendError("invalid_alias")
 	}
 

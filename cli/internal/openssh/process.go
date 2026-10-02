@@ -2,9 +2,11 @@ package openssh
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -30,11 +32,31 @@ func (a *Adapter) configureCommand(command *exec.Cmd) {
 	command.WaitDelay = a.waitDelay
 }
 
+var errSSHConfigMissing = errors.New("referenced SSH client config does not exist")
+
 func (a *Adapter) validateAlias(ctx context.Context, alias string) error {
 	if !core.ValidHostName(alias) {
 		return ErrInvalidAlias
 	}
-	arguments := append(a.configArguments(), "-G", alias)
+	arguments := a.configArguments()
+	path := ""
+	for i := 0; i+1 < len(arguments); i++ {
+		if arguments[i] == "-F" {
+			i++
+			path = arguments[i] // OpenSSH uses the last -F, including "none".
+		}
+	}
+	if path != "" && path != "none" {
+		// Match command.Dir for relative config paths. Other stat failures
+		// still go through OpenSSH and retain the existing classification.
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(a.controlDirectory, path)
+		}
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			return errSSHConfigMissing
+		}
+	}
+	arguments = append(arguments, "-G", alias)
 	command := a.commandContext(ctx, arguments...)
 	command.Stdout = io.Discard
 	command.Stderr = io.Discard

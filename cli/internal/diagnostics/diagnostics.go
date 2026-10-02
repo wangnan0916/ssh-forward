@@ -13,6 +13,11 @@ type entry struct {
 }
 
 var catalog = map[string]entry{
+	"ssh_config_missing": {
+		text:       "The referenced SSH client config file no longer exists.",
+		doctorText: "The SSH client config file selected with -F is missing",
+		doctorFix:  "Restore the referenced SSH config file or update the host connection settings to use an existing config file.",
+	},
 	"invalid_alias": {
 		text:       "SSH does not know this host alias.",
 		doctorText: "OpenSSH does not recognize this host alias",
