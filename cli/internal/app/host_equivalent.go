@@ -12,11 +12,13 @@ import (
 // The bool is false when the destination cannot be resolved.
 type destinationResolver func(context.Context, string, HostTarget) (string, string, bool)
 
+type identityObserver func(string, HostTarget, hostIdentity)
+
 // collapseSameHosts keeps one target when OpenSSH resolves several to the same
 // user and hostname. Callers use hostTargets; they do not repeat this choice.
 // An SSH config alias wins, then a host recorded in config.
-func collapseSameHosts(ctx context.Context, sshConfig string, targets, explicit map[string]HostTarget, resolve destinationResolver) map[string]HostTarget {
-	if len(targets) < 2 {
+func collapseSameHosts(ctx context.Context, sshConfig string, targets, explicit map[string]HostTarget, resolve destinationResolver, cached map[string]hostIdentity, observe identityObserver) map[string]HostTarget {
+	if len(targets) < 2 && observe == nil {
 		return targets
 	}
 	if sshConfig == "" {
@@ -30,11 +32,23 @@ func collapseSameHosts(ctx context.Context, sshConfig string, targets, explicit 
 	for _, alias := range aliases {
 		aliasSet[alias] = true
 	}
-	groups := make(map[string][]string, len(targets))
+	type groupKey struct {
+		identity   hostIdentity
+		unresolved string
+	}
+	groups := make(map[groupKey][]string, len(targets))
+	resolved := make(map[string]bool, len(targets))
 	for name, target := range targets {
-		key := "\x00" + name
-		if user, hostname, ok := resolve(ctx, sshConfig, target); ok {
-			key = user + "\x1f" + hostname
+		key := groupKey{unresolved: name}
+		if user, hostname, ok := resolve(ctx, sshConfig, target); ok && user != "" && hostname != "" {
+			identity := hostIdentity{User: user, Hostname: strings.ToLower(hostname)}
+			key = groupKey{identity: identity}
+			resolved[name] = true
+			if observe != nil {
+				observe(name, target, identity)
+			}
+		} else if identity, ok := cached[name]; ok {
+			key = groupKey{identity: identity}
 		}
 		groups[key] = append(groups[key], name)
 	}
@@ -42,7 +56,13 @@ func collapseSameHosts(ctx context.Context, sshConfig string, targets, explicit 
 	for _, names := range groups {
 		winner := names[0]
 		for _, name := range names[1:] {
-			if preferHost(name, targets[name], winner, targets[winner], explicit, aliasSet) {
+			// A cached identity proves membership, not that its expired
+			// connection can be replayed. Prefer a currently resolved route.
+			if resolved[name] != resolved[winner] {
+				if resolved[name] {
+					winner = name
+				}
+			} else if preferHost(name, targets[name], winner, targets[winner], explicit, aliasSet) {
 				winner = name
 			}
 		}

@@ -43,9 +43,15 @@ func (p *managerPool) reload(ctx context.Context, host string) error {
 	if host != "" {
 		p.requested[host] = HostTarget{Target: host}
 	}
-	targets, err := config.hostTargets(ctx, p.configPath, p.sshConfig, p.requested, p.resolve)
+	learned := make(map[string]discoveredIdentityUpdate)
+	targets, err := config.hostTargets(ctx, p.configPath, p.sshConfig, p.requested, p.resolve, func(name string, target HostTarget, identity hostIdentity, previous *hostIdentity) {
+		learned[name] = discoveredIdentityUpdate{HostTarget: target, Identity: identity, Previous: previous}
+	})
 	if err != nil {
 		return err
+	}
+	if err := rememberHostIdentities(ctx, p.configPath, learned); err != nil {
+		return fmt.Errorf("remember host identities: %w", err)
 	}
 	for name, target := range targets {
 		if slices.Contains(config.IgnoredHosts, name) || slices.Contains(config.IgnoredHosts, target.Target) {
