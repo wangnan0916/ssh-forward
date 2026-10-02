@@ -15,10 +15,8 @@ type destinationResolver func(context.Context, string, HostTarget) (string, stri
 // collapseSameHosts keeps one target when OpenSSH resolves several to the same
 // user and hostname. Callers use hostTargets; they do not repeat this choice.
 // An SSH config alias wins, then a host recorded in config.
-func collapseSameHosts(ctx context.Context, sshConfig string, targets, explicit map[string]HostTarget, resolve destinationResolver) map[string]HostTarget {
-	if len(targets) < 2 {
-		return targets
-	}
+func collapseSameHosts(ctx context.Context, sshConfig string, targets, explicit map[string]HostTarget, resolve destinationResolver, cached map[string]hostIdentity) (map[string]HostTarget, map[string]discoveredHost) {
+	resolved := make(map[string]discoveredHost, len(targets))
 	if sshConfig == "" {
 		sshConfig = DefaultSSHConfigPath()
 	}
@@ -35,6 +33,9 @@ func collapseSameHosts(ctx context.Context, sshConfig string, targets, explicit 
 		key := "\x00" + name
 		if user, hostname, ok := resolve(ctx, sshConfig, target); ok {
 			key = user + "\x1f" + hostname
+			resolved[name] = discoveredHost{HostTarget: target, Identity: &hostIdentity{User: user, Hostname: hostname}}
+		} else if identity, ok := cached[name]; ok {
+			key = identity.User + "\x1f" + identity.Hostname
 		}
 		groups[key] = append(groups[key], name)
 	}
@@ -42,13 +43,16 @@ func collapseSameHosts(ctx context.Context, sshConfig string, targets, explicit 
 	for _, names := range groups {
 		winner := names[0]
 		for _, name := range names[1:] {
-			if preferHost(name, targets[name], winner, targets[winner], explicit, aliasSet) {
+			_, fresh := resolved[name]
+			_, winnerFresh := resolved[winner]
+			// Prefer a replayable route over an expired cached alternative.
+			if fresh && !winnerFresh || fresh == winnerFresh && preferHost(name, targets[name], winner, targets[winner], explicit, aliasSet) {
 				winner = name
 			}
 		}
 		collapsed[winner] = targets[winner]
 	}
-	return collapsed
+	return collapsed, resolved
 }
 
 func preferHost(leftName string, left HostTarget, rightName string, right HostTarget, explicit map[string]HostTarget, aliases map[string]bool) bool {

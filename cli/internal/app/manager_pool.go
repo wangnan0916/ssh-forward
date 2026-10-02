@@ -43,8 +43,11 @@ func (p *managerPool) reload(ctx context.Context, host string) error {
 	if host != "" {
 		p.requested[host] = HostTarget{Target: host}
 	}
-	targets, err := config.hostTargets(ctx, p.configPath, p.sshConfig, p.requested, p.resolve)
+	targets, resolved, err := config.hostTargets(ctx, p.configPath, p.sshConfig, p.requested, p.resolve)
 	if err != nil {
+		return err
+	}
+	if err := mergeDiscovered(ctx, p.configPath, nil, resolved); err != nil {
 		return err
 	}
 	for name, target := range targets {
