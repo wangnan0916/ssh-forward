@@ -170,7 +170,8 @@ file unless a host supplies its own connection settings.
 
 Commands needing a connection install/start the user service automatically.
 Rule changes are saved before connecting, so intent survives a temporary service
-failure. The next connection after an upgrade replaces an incompatible Manager.
+failure. CLI configuration edits use a shared file lock to preserve concurrent
+updates. The next connection after an upgrade replaces an incompatible Manager.
 Use `brew upgrade ssh-forward` normally. Before removing the binary:
 
 ```sh

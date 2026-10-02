@@ -36,24 +36,22 @@ func EditPublishedForward(path, host string, forward *core.PublishedForward, add
 	})
 }
 
-// Every rule edit shares loading, normalization, cross-direction validation,
-// and atomic persistence. A failed edit never writes the configuration.
+// Every rule edit shares locked loading, normalization, cross-direction
+// validation, and atomic persistence. A failed edit never writes the config.
 func editScope(path, host string, edit func(*scopeRules) bool) (bool, error) {
 	if host != "" && !core.ValidHostName(host) {
 		return false, errors.New("invalid host name")
 	}
-	config, err := loadConfigForWrite(path)
-	if err != nil {
-		return false, err
-	}
-	rules := config.scope(host)
-	if !edit(rules) {
-		return false, nil
-	}
-	if err := rules.normalize(); err != nil {
-		return false, err
-	}
-	return true, config.save(path)
+	return editConfig(path, func(config *configuration) (bool, error) {
+		rules := config.scope(host)
+		if !edit(rules) {
+			return false, nil
+		}
+		if err := rules.normalize(); err != nil {
+			return false, err
+		}
+		return true, nil
+	})
 }
 
 func editRule[T comparable, K comparable](items *[]T, value *T, adding bool, key func(T) K) bool {

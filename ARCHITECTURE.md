@@ -23,7 +23,7 @@ status ← GET /v1/status ← all runtimes (including offline hosts)
 | Package | Entry points and responsibilities |
 | --- | --- |
 | `cli` | Kong's typed `commands` grammar dispatches domain `Run` methods. Human status delegates to `statusview`; public JSON uses explicit ports. |
-| `app/config*` | Strict JSONC decoding, schema 6 normalization, atomic rule edits. Configuration is the only source of intent. |
+| `app/config*` | Strict JSONC decoding, schema 6 normalization, locked read-modify-write edits and atomic saves. Configuration is the only source of intent. |
 | `app/host_target` | Target identity, option allowlist, exact SSH argv parsing. |
 | `app/host_discovery` | Same-user process discovery and product-process exclusion. |
 | `app/host_registry` | Locked merge of discovered hosts, explicit hosts, and persistent ignore state. |
@@ -58,7 +58,9 @@ both directions after a silent connection loss.
 Schema 6 is the JSON encoding of one scoped rule map.
 An empty scope is global; publications require a named scope. Every rule edit
 uses the same normalize/validate/save path, including cross-direction conflicts.
-Invalid configuration leaves existing runtimes intact.
+All CLI configuration mutations lock `config.jsonc.lock` before loading and hold
+it through the atomic save. The sidecar survives saves, which replace the config
+inode. Invalid configuration leaves existing runtimes intact.
 
 A five-second scan reads native same-user SSH argv, excluding the product process
 tree and control commands. Discovered targets persist separately under a
