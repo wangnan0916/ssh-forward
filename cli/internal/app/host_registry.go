@@ -81,29 +81,30 @@ func rememberDiscovered(ctx context.Context, configPath string, found map[string
 // EditHost updates connection settings or toggles ignore state. A nil target
 // preserves discovered connection settings when re-enabling a destination.
 func EditHost(path, name string, target *HostTarget, ignore bool) error {
-	config, err := loadConfigForWrite(path)
-	if err != nil {
-		return err
-	}
 	if !core.ValidHostName(name) {
 		return errors.New("invalid host name")
-	}
-	config.IgnoredHosts = slices.DeleteFunc(config.IgnoredHosts, func(s string) bool { return s == name })
-	if ignore {
-		config.IgnoredHosts = append(config.IgnoredHosts, name)
 	}
 	if target != nil {
 		target.Target = cmp.Or(target.Target, name)
 		if err := validateTarget(name, *target); err != nil {
 			return err
 		}
-		if config.Hosts == nil {
-			config.Hosts = make(map[string]HostTarget)
-		}
-		config.Hosts[name] = *target
 	}
-	slices.Sort(config.IgnoredHosts)
-	return config.save(path)
+	_, err := editConfig(path, func(config *configuration) (bool, error) {
+		config.IgnoredHosts = slices.DeleteFunc(config.IgnoredHosts, func(s string) bool { return s == name })
+		if ignore {
+			config.IgnoredHosts = append(config.IgnoredHosts, name)
+		}
+		if target != nil {
+			if config.Hosts == nil {
+				config.Hosts = make(map[string]HostTarget)
+			}
+			config.Hosts[name] = *target
+		}
+		slices.Sort(config.IgnoredHosts)
+		return true, nil
+	})
+	return err
 }
 
 func HostList(path string) (map[string]HostTarget, []string, error) {

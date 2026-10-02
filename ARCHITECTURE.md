@@ -23,7 +23,7 @@ status ← GET /v1/status ← all runtimes (including offline hosts)
 | Package | Entry points and responsibilities |
 | --- | --- |
 | `cli` | Kong's typed `commands` grammar dispatches domain `Run` methods. Human status delegates to `statusview`; public JSON uses explicit ports. |
-| `app/config*` | Strict JSONC decoding, schema 6 normalization, atomic rule edits. Configuration is the only source of intent. |
+| `app/config*` | Strict JSONC decoding, schema 6 normalization, locked read-modify-write edits and atomic saves. Configuration is the only source of intent. |
 | `app/host_target` | Target identity, option allowlist, exact SSH argv parsing. |
 | `app/host_discovery` | Same-user process discovery and product-process exclusion. |
 | `app/host_registry` | Locked merge of discovered hosts, explicit hosts, and persistent ignore state. |
@@ -50,15 +50,18 @@ without an additional lifecycle framework.
 Every test keeps the lowest layer that can observe its fact. A rule decided in
 the manager is not re-run against a more realistic double, and an assertion that
 restates a return value is removed. The Docker/OpenSSH fixture therefore covers
-only what real transport alone shows: bytes crossing the tunnel, and recovery in
-both directions after a silent connection loss.
+only what real transport alone shows: bytes crossing the tunnel, recovery in
+both directions after a silent connection loss, and committed listeners closing
+when a successful control result is withheld from the Adapter.
 
 ## Configuration and discovery
 
 Schema 6 is the JSON encoding of one scoped rule map.
 An empty scope is global; publications require a named scope. Every rule edit
 uses the same normalize/validate/save path, including cross-direction conflicts.
-Invalid configuration leaves existing runtimes intact.
+All CLI configuration mutations lock `config.jsonc.lock` before loading and hold
+it through the atomic save. The sidecar survives saves, which replace the config
+inode. Invalid configuration leaves existing runtimes intact.
 
 A five-second scan reads native same-user SSH argv, excluding the product process
 tree and control commands. Discovered targets persist separately under a
@@ -104,8 +107,13 @@ so configured forwards and control paths cannot be inherited. Imports use
 Imports first check loopback occupancy to prevent macOS split binds. Publications
 verify the resulting procfs socket before reporting active: `GatewayPorts yes`
 can override a requested bind. Unsafe/unverifiable binds are canceled. Failed
-cancellation tears down the private master; a rejected installation does not.
-Install and cancel operations check the master generation under the same lock.
+cancellation tears down the private master; an explicitly rejected installation
+does not. An installation timeout, cancellation, or lost confirmation leaves its
+outcome uncertain, so the original master is retired under the installation lock
+before returning. This closes any committed listeners without canceling an
+unowned tuple; other workers reconnect. Cancellation warnings are checked even
+when the mux client exits zero. Install and cancel operations check the master
+generation under the same lock.
 
 Keepalives (5 seconds, 3 unanswered probes) detect silent loss; independent retry
 loops reestablish the master, observation, and desired forwards. Commands have

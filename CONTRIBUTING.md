@@ -9,7 +9,7 @@ Keep changes inside the one-sentence contract in [ARCHITECTURE.md](ARCHITECTURE.
 ```
 
 The script checks shell syntax, then runs unit and race tests, vet, formatting,
-and module-tidiness checks.
+and module-tidiness checks. CI runs the full script on both macOS and Linux.
 
 Preview the latest CLI against the installed Manager with
 `./scripts/dev status`. Use `./scripts/dev --full status` when the Manager also

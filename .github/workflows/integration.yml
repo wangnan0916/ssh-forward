@@ -1,6 +1,6 @@
 name: integration
 
-# Native macOS unit checks; disposable Linux hosts for real OpenSSH coverage.
+# Full checks on both supported local platforms; real OpenSSH on Linux hosts.
 
 on:
   push:
@@ -10,8 +10,17 @@ on:
   workflow_dispatch: {}
 
 jobs:
-  macos-unit:
-    runs-on: macos-15 # Apple Silicon, matching the local machine
+  unit:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            name: macos-unit
+          - os: ubuntu-latest
+            name: linux-unit
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7

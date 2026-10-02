@@ -2,6 +2,7 @@ package openssh
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"time"
@@ -41,6 +42,13 @@ func (a *Adapter) Forward(ctx context.Context, target core.ForwardTarget, ready 
 	default:
 	}
 	err = a.startForward(ctx, target.Direction, forward)
+	if failure, ok := errors.AsType[*controlCommandError](err); ok && failure.uncertain {
+		// The request may have committed before its acknowledgement was lost.
+		// Retire this generation while still holding the installation lock:
+		// canceling an unowned tuple could affect an existing forward, and a
+		// canceled caller must not prevent cleanup. Other workers reconnect.
+		_ = a.stopMaster(context.Background(), master)
+	}
 	a.mu.Unlock()
 	if err != nil {
 		return err
@@ -79,9 +87,12 @@ func (a *Adapter) startForward(ctx context.Context, direction core.ForwardDirect
 	if err == nil {
 		return nil
 	}
-	// The mux client can report only a generic failure when OpenSSH cannot bind
-	// the requested endpoint. If the master is still healthy, classify the
-	// failure according to the endpoint owned by this direction.
+	if failure, ok := errors.AsType[*controlCommandError](err); !ok || !failure.rejected {
+		return err
+	}
+	// Only an explicit rejection can be attributed to a binding conflict.
+	// A command that never started and an uncertain result must not trigger
+	// fallback, even if a subsequent master health check would succeed.
 	if checkErr := a.runControl(ctx, "check", nil); checkErr == nil {
 		if direction == core.LocalToRemote {
 			err = backendError("remote_port_unavailable")

@@ -2,10 +2,15 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"slices"
+	"time"
+
+	"github.com/gofrs/flock"
 
 	"github.com/wangnan0916/ssh-forward/cli/internal/core"
 )
@@ -157,6 +162,34 @@ func loadConfigForWrite(path string) (configuration, error) {
 
 func (c configuration) save(path string) error {
 	return writeJSONC(path, c)
+}
+
+// editConfig serializes the entire read-modify-write transaction across CLI
+// processes. Lock a stable sidecar: atomic saves replace the config inode.
+func editConfig(path string, edit func(*configuration) (bool, error)) (bool, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return false, err
+	}
+	lock := flock.New(path + ".lock")
+	defer lock.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	locked, err := lock.TryLockContext(ctx, 10*time.Millisecond)
+	if err != nil {
+		return false, err
+	}
+	if !locked {
+		return false, ctx.Err()
+	}
+	config, err := loadConfigForWrite(path)
+	if err != nil {
+		return false, err
+	}
+	changed, err := edit(&config)
+	if err != nil || !changed {
+		return false, err
+	}
+	return true, config.save(path)
 }
 
 // HostIntent returns persistent forwarding intent for host.
