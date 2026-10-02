@@ -98,6 +98,10 @@ targets in a locked `discovered-hosts.json` registry; closing the original SSH
 session does not forget them. Supported options include port, user, absolute
 identity/config paths, jump hosts, and selected `-o` settings. Different settings
 receive distinct IDs. Targets that OpenSSH resolves to the same user and hostname are one host.
+The Manager remembers resolved identities in the discovery registry, so deleting
+a temporary `-F` config does not split a known host. A currently resolvable route
+is preferred. Legacy automatic records with missing configs and no known identity
+are omitted without deleting them; explicitly configured hosts remain visible.
 Port, jump host, and identity files do not split that machine. The SSH
 config alias is kept, such as `ubuntu` when `Host ubuntu` already sets `User`.
 If several aliases match, the host recorded in config.jsonc is kept.
