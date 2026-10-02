@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.2](https://github.com/wangnan0916/ssh-forward/compare/v0.13.1...v0.13.2) (2026-10-02)
+
+
+### Bug Fixes
+
+* preserve discovered host grouping after SSH config expiry ([#40](https://github.com/wangnan0916/ssh-forward/issues/40)) ([d08fada](https://github.com/wangnan0916/ssh-forward/commit/d08fada7ea19185fabb51b9047f438858b668799))
+
 ## [0.13.1](https://github.com/wangnan0916/ssh-forward/compare/v0.13.0...v0.13.1) (2026-10-02)
 
 
